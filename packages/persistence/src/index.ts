@@ -1,2 +1,22 @@
-// @nous/persistence — Event Store, Task Queue DB, Memory Store
-export {};
+// Interfaces
+export type { EventStore, EventQuery } from "./interfaces/event-store.ts";
+export type { TaskStore } from "./interfaces/task-store.ts";
+export type { MemoryStore, MemoryQuery } from "./interfaces/memory-store.ts";
+export type { IntentStore } from "./interfaces/intent-store.ts";
+
+// SQLite implementations
+export { SQLiteEventStore } from "./sqlite/event-store.sqlite.ts";
+export { SQLiteTaskStore } from "./sqlite/task-store.sqlite.ts";
+export { SQLiteMemoryStore } from "./sqlite/memory-store.sqlite.ts";
+export { SQLiteIntentStore } from "./sqlite/intent-store.sqlite.ts";
+
+// Connection utilities
+export {
+	createDatabase,
+	runMigrations,
+	initDatabase,
+} from "./sqlite/connection.ts";
+
+// Backend composition
+export { createPersistenceBackend } from "./backend.ts";
+export type { PersistenceBackend } from "./backend.ts";

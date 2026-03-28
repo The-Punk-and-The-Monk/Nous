@@ -1,2 +1,125 @@
-// @nous/core — Core abstractions: Intent, Task, Agent, Event, Memory
-export {};
+// @nous/core — Core abstractions for the Nous agent framework
+
+// Types
+export type {
+	Intent,
+	AmbientIntent,
+	IntentStatus,
+	StructuredGoal,
+	Constraint,
+	CheckpointPolicy,
+} from "./types/intent.ts";
+
+export type {
+	Task,
+	TaskStatus,
+} from "./types/task.ts";
+export { TASK_TRANSITIONS, TERMINAL_STATES } from "./types/task.ts";
+
+export type {
+	Agent,
+	AgentRole,
+	AgentStatus,
+	AgentPersonality,
+} from "./types/agent.ts";
+
+export type {
+	Event,
+	EventType,
+	EventEntityType,
+} from "./types/event.ts";
+
+export type {
+	ToolDef,
+	ToolResult,
+} from "./types/tool.ts";
+
+export type {
+	MemoryEntry,
+	MemoryTier,
+	ProceduralMemory,
+	ProceduralStep,
+} from "./types/memory.ts";
+
+export type {
+	CapabilitySet,
+	CapabilityName,
+} from "./types/capability.ts";
+export {
+	hasCapability,
+	intersectCapabilities,
+	DENY_ALL,
+} from "./types/capability.ts";
+
+export type {
+	TrustProfile,
+	MaturityStage,
+	GrowthCheckpoint,
+	StageTransition,
+	TransitionEvidence,
+} from "./types/trust.ts";
+
+export type {
+	Sensor,
+	PerceptionSignal,
+	AttentionResult,
+} from "./types/sensor.ts";
+
+export type {
+	NousMessage,
+	NousMessageType,
+	CommunicationPolicy,
+} from "./types/communication.ts";
+export { DEFAULT_COMMUNICATION_POLICY } from "./types/communication.ts";
+
+// State machines
+export {
+	transitionTask,
+	canTransition,
+	validTransitions,
+	InvalidTransitionError,
+} from "./state-machines/task-state-machine.ts";
+
+export {
+	transitionIntent,
+	canTransitionIntent,
+	InvalidIntentTransitionError,
+} from "./state-machines/intent-state-machine.ts";
+
+// Errors
+export {
+	NousError,
+	CapabilityDeniedError,
+	TaskNotFoundError,
+	AgentNotFoundError,
+	IntentNotFoundError,
+	HeartbeatTimeoutError,
+} from "./errors.ts";
+
+// LLM abstractions
+export type {
+	LLMMessage,
+	ContentBlock,
+	TextBlock,
+	ToolUseBlock,
+	ToolResultBlock,
+	LLMToolDef,
+	LLMRequest,
+	LLMResponse,
+	StreamChunk,
+} from "./llm/types.ts";
+export type { LLMProvider } from "./llm/provider.ts";
+export {
+	LLMError,
+	RateLimitError,
+	ContextOverflowError,
+} from "./llm/errors.ts";
+
+// Utilities
+export { ulid, prefixedId } from "./utils/id.ts";
+export { now, parse, diffMs, isOlderThan } from "./utils/timestamp.ts";
+export type { ISOTimestamp } from "./utils/timestamp.ts";
+
+// Logger
+export { createLogger, setLogLevel, getLogLevel } from "./utils/logger.ts";
+export type { Logger, LogLevel } from "./utils/logger.ts";

@@ -1,15 +1,15 @@
 {
-  "name": "@nous/infra",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
-  "dependencies": {
-    "@nous/core": "workspace:*",
-    "@nous/runtime": "workspace:*"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  }
+	"name": "@nous/infra",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"main": "src/index.ts",
+	"types": "src/index.ts",
+	"dependencies": {
+		"@nous/core": "workspace:*",
+		"@nous/runtime": "workspace:*"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	}
 }

@@ -1,0 +1,57 @@
+import type { ISOTimestamp } from "../utils/timestamp.ts";
+
+export type TaskStatus =
+	| "created"
+	| "queued"
+	| "assigned"
+	| "running"
+	| "done"
+	| "failed"
+	| "timeout"
+	| "escalated"
+	| "abandoned";
+
+export interface Task {
+	id: string;
+	intentId: string;
+	parentTaskId?: string;
+	dependsOn: string[];
+
+	description: string;
+	assignedAgentId?: string;
+	capabilitiesRequired: string[];
+
+	status: TaskStatus;
+	retries: number;
+	maxRetries: number;
+	backoffSeconds: number;
+
+	createdAt: ISOTimestamp;
+	queuedAt?: ISOTimestamp;
+	startedAt?: ISOTimestamp;
+	lastHeartbeat?: ISOTimestamp;
+	completedAt?: ISOTimestamp;
+
+	result?: unknown;
+	error?: string;
+	escalationReason?: string;
+}
+
+/** Valid state transitions for the Task state machine */
+export const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+	created: ["queued"],
+	queued: ["assigned"],
+	assigned: ["running"],
+	running: ["done", "failed", "timeout"],
+	done: [],
+	failed: ["queued", "escalated"],
+	timeout: ["queued", "escalated"],
+	escalated: ["queued", "abandoned"],
+	abandoned: [],
+};
+
+/** Terminal states — no further transitions possible */
+export const TERMINAL_STATES: ReadonlySet<TaskStatus> = new Set([
+	"done",
+	"abandoned",
+]);

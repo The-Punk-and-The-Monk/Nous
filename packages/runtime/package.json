@@ -1,14 +1,16 @@
 {
-  "name": "@nous/runtime",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
-  "dependencies": {
-    "@nous/core": "workspace:*"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  }
+	"name": "@nous/runtime",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"main": "src/index.ts",
+	"types": "src/index.ts",
+	"dependencies": {
+		"@anthropic-ai/sdk": "^0.80.0",
+		"@nous/core": "workspace:*",
+		"openai": "^6.33.0"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	}
 }
