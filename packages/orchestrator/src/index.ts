@@ -16,4 +16,8 @@ export { AgentRouter } from "./router/router.ts";
 
 // Orchestrator
 export { Orchestrator } from "./orchestrator.ts";
-export type { OrchestratorConfig, ProgressEvent } from "./orchestrator.ts";
+export type {
+	IntentExecutionOptions,
+	OrchestratorConfig,
+	ProgressEvent,
+} from "./orchestrator.ts";

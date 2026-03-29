@@ -2,7 +2,9 @@ import type { LLMProvider, LogLevel } from "@nous/core";
 import { now, prefixedId, setLogLevel } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
 import { createPersistenceBackend } from "@nous/persistence";
+import { ContextAssembler, renderContextForSystemPrompt } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
+import { ensureNousHome } from "../config/home.ts";
 import { sendDaemonRequest } from "../daemon/client.ts";
 import { NousDaemon } from "../daemon/server.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
@@ -59,11 +61,8 @@ export async function main(args: string[]): Promise<void> {
 	}
 
 	// Initialize persistence
-	const dbPath = process.env.NOUS_DB ?? ".nous/nous.db";
-	// Ensure directory exists
-	const { mkdirSync } = await import("node:fs");
-	const { dirname } = await import("node:path");
-	mkdirSync(dirname(dbPath), { recursive: true });
+	const home = ensureNousHome();
+	const dbPath = process.env.NOUS_DB ?? `${home.stateDir}/nous.db`;
 
 	const backend = createPersistenceBackend(dbPath);
 
@@ -212,6 +211,22 @@ export async function main(args: string[]): Promise<void> {
 
 	// Default: treat the entire argument string as an intent
 	const intentText = args.join(" ");
+	const contextAssembler = new ContextAssembler();
+	const systemPrompt = renderContextForSystemPrompt(
+		contextAssembler.assemble({
+			scope: {
+				workingDirectory: process.cwd(),
+				projectRoot: process.cwd(),
+			},
+			activeIntents: backend.intents.getActive().map((intent) => ({
+				id: intent.id,
+				raw: intent.raw,
+				goal: intent.goal,
+				status: intent.status,
+				source: intent.source,
+			})),
+		}),
+	);
 
 	// Start supervisor
 	const supervisor = new ProcessSupervisor({
@@ -224,7 +239,7 @@ export async function main(args: string[]): Promise<void> {
 		backend.close();
 	});
 
-	await runCommand(orchestrator, intentText);
+	await runCommand(orchestrator, intentText, { systemPrompt });
 
 	orchestrator.stop();
 	supervisor.stop();
@@ -261,7 +276,8 @@ function printUsage(): void {
     OPENAI_PROJECT_ID      Optional OpenAI project ID
     OPENAI_BASE_URL        OpenAI-compatible endpoint (e.g. claude-max-api-proxy)
     NOUS_MODEL             Model for Claude CLI provider (default: sonnet)
-    NOUS_DB                Database path (default: .nous/nous.db)
+    NOUS_HOME              Nous user home (default: ~/.nous)
+    NOUS_DB                Database path (default: ~/.nous/state/nous.db)
     NOUS_LOG_LEVEL         Log level: debug, info, warn, error, silent (default: info)
 
     ${colors.dim("Provider priority: OPENAI_BASE_URL > OPENAI_API_KEY > ANTHROPIC_API_KEY > Claude CLI")}

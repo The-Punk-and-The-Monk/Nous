@@ -25,9 +25,9 @@ export class DaemonController {
 				this.dialogue.detach(message.channel.id);
 				return withRequestId(
 					{
-					type: "ack",
-					timestamp: now(),
-					payload: { channelId: message.channel.id, status: "detached" },
+						type: "ack",
+						timestamp: now(),
+						payload: { channelId: message.channel.id, status: "detached" },
 					},
 					message.id,
 				);
@@ -53,10 +53,10 @@ export class DaemonController {
 				);
 				return withRequestId(
 					{
-					type: snapshot ? "response" : "error",
-					timestamp: now(),
-					threadId: snapshot?.thread.id,
-					payload: snapshot ?? { message: "thread_not_found" },
+						type: snapshot ? "response" : "error",
+						timestamp: now(),
+						threadId: snapshot?.thread.id,
+						payload: snapshot ?? { message: "thread_not_found" },
 					} as DaemonEnvelope<ThreadSnapshot | { message: string }>,
 					message.id,
 				);
@@ -64,9 +64,9 @@ export class DaemonController {
 			case "get_status":
 				return withRequestId(
 					{
-					type: "response",
-					timestamp: now(),
-					payload: this.dialogue.getStatusSnapshot(),
+						type: "response",
+						timestamp: now(),
+						payload: this.dialogue.getStatusSnapshot(),
 					} as DaemonEnvelope<StatusSnapshot>,
 					message.id,
 				);
@@ -76,11 +76,11 @@ export class DaemonController {
 			case "unsubscribe":
 				return withRequestId(
 					{
-					type: "error",
-					timestamp: now(),
-					payload: {
-						message: `not_implemented:${message.type}`,
-					},
+						type: "error",
+						timestamp: now(),
+						payload: {
+							message: `not_implemented:${message.type}`,
+						},
 					},
 					message.id,
 				);

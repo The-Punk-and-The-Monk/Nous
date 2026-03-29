@@ -42,6 +42,11 @@ export interface ProgressEvent {
 	data: Record<string, unknown>;
 }
 
+export interface IntentExecutionOptions {
+	systemPrompt?: string;
+	source?: Intent["source"];
+}
+
 export class Orchestrator {
 	private parser: IntentParser;
 	private planner: TaskPlanner;
@@ -51,6 +56,10 @@ export class Orchestrator {
 	private eventStore: EventStore;
 	private taskStore: TaskStore;
 	private intentStore: IntentStore;
+	private readonly intentExecutionOptions = new Map<
+		string,
+		IntentExecutionOptions
+	>();
 	private progressListeners: ((event: ProgressEvent) => void)[] = [];
 	private log: Logger;
 
@@ -85,14 +94,20 @@ export class Orchestrator {
 	}
 
 	/** Submit a natural language intent and wait for it to complete */
-	async submitIntent(rawText: string): Promise<Intent> {
-		const intent = await this.submitIntentBackground(rawText);
+	async submitIntent(
+		rawText: string,
+		options?: IntentExecutionOptions,
+	): Promise<Intent> {
+		const intent = await this.submitIntentBackground(rawText, options);
 		await this.waitForIntent(intent.id);
 		return this.intentStore.getById(intent.id) ?? intent;
 	}
 
 	/** Submit a natural language intent and return immediately after planning */
-	async submitIntentBackground(rawText: string): Promise<Intent> {
+	async submitIntentBackground(
+		rawText: string,
+		options?: IntentExecutionOptions,
+	): Promise<Intent> {
 		this.log.info("Submitting intent", { raw: rawText.slice(0, 100) });
 
 		// 1. Parse intent
@@ -101,26 +116,31 @@ export class Orchestrator {
 			intentId: intent.id,
 			goal: intent.goal.summary,
 		});
-		this.intentStore.create(intent);
+		const normalizedIntent: Intent = {
+			...intent,
+			source: options?.source ?? intent.source,
+		};
+		this.intentStore.create(normalizedIntent);
+		this.intentExecutionOptions.set(normalizedIntent.id, options ?? {});
 		this.emitEvent("intent.created", "intent", intent.id, { raw: rawText });
 		this.emitProgress({
 			type: "intent.parsed",
-			data: { intentId: intent.id, goal: intent.goal },
+			data: { intentId: normalizedIntent.id, goal: normalizedIntent.goal },
 		});
 
 		// 2. Plan tasks
-		const tasks = await this.planner.plan(intent);
+		const tasks = await this.planner.plan(normalizedIntent);
 		for (const task of tasks) {
 			this.taskStore.create(task);
 			this.emitEvent("task.created", "task", task.id, {
-				intentId: intent.id,
+				intentId: normalizedIntent.id,
 				description: task.description,
 			});
 		}
 		this.emitProgress({
 			type: "tasks.planned",
 			data: {
-				intentId: intent.id,
+				intentId: normalizedIntent.id,
 				taskCount: tasks.length,
 				tasks: tasks.map((t) => ({ id: t.id, description: t.description })),
 			},
@@ -128,7 +148,7 @@ export class Orchestrator {
 
 		// 3. Ensure scheduler is running, then return immediately
 		this.scheduler.start();
-		return intent;
+		return normalizedIntent;
 	}
 
 	async waitForIntent(intentId: string, timeoutMs = 300000): Promise<void> {
@@ -190,6 +210,8 @@ export class Orchestrator {
 			toolExecutor,
 			agentId: agent.id,
 			capabilities: agent.capabilities,
+			systemPrompt: this.intentExecutionOptions.get(task.intentId)
+				?.systemPrompt,
 		});
 
 		this.emitProgress({
@@ -236,10 +258,12 @@ export class Orchestrator {
 				status: "achieved",
 				achievedAt: now(),
 			});
+			this.intentExecutionOptions.delete(intentId);
 			this.emitEvent("intent.achieved", "intent", intentId, {});
 			this.emitProgress({ type: "intent.achieved", data: { intentId } });
 		} else if (anyAbandoned) {
 			this.intentStore.update(intentId, { status: "abandoned" });
+			this.intentExecutionOptions.delete(intentId);
 			this.emitEvent("intent.abandoned", "intent", intentId, {});
 			this.emitProgress({
 				type: "escalation",

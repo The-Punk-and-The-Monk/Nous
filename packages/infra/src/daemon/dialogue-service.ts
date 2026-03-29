@@ -90,7 +90,7 @@ export class DialogueService {
 		payload: SubmitIntentPayload,
 	): Promise<DaemonEnvelope<SubmitIntentAckPayload>> {
 		const acceptedAt = this.clock();
-		const thread = this.ensureThread(payload.threadId, {
+		const thread = this.getOrCreateThread(payload.threadId, {
 			channelId: channel.id,
 			title: inferThreadTitle(payload.text),
 		});
@@ -122,7 +122,7 @@ export class DialogueService {
 		payload: SendMessagePayload,
 	): DaemonEnvelope<SendMessageAckPayload> {
 		const acceptedAt = this.clock();
-		const thread = this.ensureThread(payload.threadId, {
+		const thread = this.getOrCreateThread(payload.threadId, {
 			channelId: channel.id,
 			title: inferThreadTitle(payload.text),
 		});
@@ -138,6 +138,17 @@ export class DialogueService {
 				status: "accepted",
 			},
 		};
+	}
+
+	ensureThread(params: {
+		threadId: string;
+		title: string;
+		channelId?: string;
+	}): DialogueThread {
+		return this.getOrCreateThread(params.threadId, {
+			channelId: params.channelId ?? "daemon",
+			title: params.title,
+		});
 	}
 
 	enqueueAssistantMessage(params: {
@@ -256,7 +267,7 @@ export class DialogueService {
 		});
 	}
 
-	private ensureThread(
+	private getOrCreateThread(
 		threadId: string | undefined,
 		input: { channelId: string; title: string },
 	): DialogueThread {

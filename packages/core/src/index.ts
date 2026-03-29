@@ -64,6 +64,12 @@ export type {
 	PerceptionSignal,
 	AttentionResult,
 } from "./types/sensor.ts";
+export type {
+	AssembledContext,
+	EnvironmentContext,
+	ProjectContext,
+	UserContext,
+} from "./types/context.ts";
 
 export type {
 	NousMessage,

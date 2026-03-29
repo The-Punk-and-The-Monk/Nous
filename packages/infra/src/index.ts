@@ -3,6 +3,12 @@ export { main } from "./cli/app.ts";
 export { createLLMProviderFromEnv } from "./cli/provider.ts";
 export { daemonCommand, isDaemonRunning } from "./cli/commands/daemon.ts";
 export { attachCommand } from "./cli/commands/attach.ts";
+export {
+	ensureNousHome,
+	getNousPaths,
+	loadNousConfig,
+} from "./config/home.ts";
+export type { NousConfig, NousPaths } from "./config/home.ts";
 
 // Agents
 export { createGeneralAgent } from "./agents/general.ts";
@@ -22,6 +28,12 @@ export {
 } from "./daemon/conflict-manager.ts";
 export { DaemonController } from "./daemon/controller.ts";
 export { NousDaemon } from "./daemon/server.ts";
+export {
+	PerceptionService,
+	FileSystemSensor,
+	GitSensor,
+	HeuristicAttentionFilter,
+} from "./daemon/perception.ts";
 
 // Supervisor
 export { ProcessSupervisor } from "./supervisor/supervisor.ts";

@@ -63,6 +63,7 @@ describe("StaticIntentConflictManager", () => {
 
 		expect(first.queued).toBe(false);
 		expect(second.queued).toBe(true);
+		expect(second.verdict).toBe("dependent");
 
 		await Promise.all([first.completion, second.completion]);
 		expect(order).toEqual([
@@ -101,7 +102,57 @@ describe("StaticIntentConflictManager", () => {
 		);
 
 		expect(second.queued).toBe(false);
+		expect(second.verdict).toBe("independent");
 		await Promise.all([first.completion, second.completion]);
 		expect(maxRunning).toBe(2);
+	});
+
+	test("detects semantic dependency and sequences conservatively", async () => {
+		const manager = new StaticIntentConflictManager();
+		const first = manager.schedule(
+			{
+				text: "Refactor src/auth.ts",
+				scope: { projectRoot: "/repo" },
+			},
+			async () => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			},
+		);
+		const second = manager.schedule(
+			{
+				text: "Fix tests for src/auth.ts after refactor",
+				scope: { projectRoot: "/repo" },
+			},
+			async () => {},
+		);
+
+		expect(second.queued).toBe(true);
+		expect(second.verdict).toBe("dependent");
+		await Promise.all([first.completion, second.completion]);
+	});
+
+	test("detects semantic conflict and flags review", async () => {
+		const manager = new StaticIntentConflictManager();
+		const first = manager.schedule(
+			{
+				text: "Add dark mode to src/theme.ts",
+				scope: { projectRoot: "/repo" },
+			},
+			async () => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			},
+		);
+		const second = manager.schedule(
+			{
+				text: "Remove dark mode from src/theme.ts",
+				scope: { projectRoot: "/repo" },
+			},
+			async () => {},
+		);
+
+		expect(second.queued).toBe(true);
+		expect(second.verdict).toBe("conflicting");
+		expect(second.requiresReview).toBe(true);
+		await Promise.all([first.completion, second.completion]);
 	});
 });

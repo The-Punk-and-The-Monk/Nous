@@ -1,8 +1,14 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
+import { ensureNousHome, loadNousConfig } from "../config/home.ts";
 
 export interface DaemonPaths {
 	baseDir: string;
+	configDir: string;
+	daemonDir: string;
+	stateDir: string;
+	logsDir: string;
+	toolsDir: string;
+	skillsDir: string;
 	socketPath: string;
 	pidPath: string;
 	statePath: string;
@@ -12,20 +18,45 @@ export interface DaemonPaths {
 }
 
 export function getDaemonPaths(): DaemonPaths {
-	const baseDir = resolve(process.env.NOUS_HOME ?? ".nous");
-	const socketPath = resolve(process.env.NOUS_SOCKET ?? `${baseDir}/nous.sock`);
-	const pidPath = resolve(process.env.NOUS_PID_FILE ?? `${baseDir}/nous.pid`);
-	const statePath = resolve(
-		process.env.NOUS_STATE_FILE ?? `${baseDir}/daemon.json`,
+	const home = ensureNousHome();
+	const config = loadNousConfig();
+	const socketPath = resolve(
+		process.env.NOUS_SOCKET ??
+			config.daemon.socketPath ??
+			`${home.daemonDir}/nous.sock`,
 	);
-	const dbPath = resolve(process.env.NOUS_DB ?? `${baseDir}/nous.db`);
-	const host = process.env.NOUS_HOST ?? "127.0.0.1";
-	const port = Number.parseInt(process.env.NOUS_PORT ?? "4317", 10);
+	const pidPath = resolve(
+		process.env.NOUS_PID_FILE ??
+			config.daemon.pidPath ??
+			`${home.daemonDir}/nous.pid`,
+	);
+	const statePath = resolve(
+		process.env.NOUS_STATE_FILE ??
+			config.daemon.statePath ??
+			`${home.daemonDir}/daemon.json`,
+	);
+	const dbPath = resolve(
+		process.env.NOUS_DB ?? config.storage.dbPath ?? `${home.stateDir}/nous.db`,
+	);
+	const host = process.env.NOUS_HOST ?? config.daemon.host;
+	const port = Number.parseInt(
+		process.env.NOUS_PORT ?? String(config.daemon.port),
+		10,
+	);
 
-	mkdirSync(dirname(socketPath), { recursive: true });
-	mkdirSync(dirname(pidPath), { recursive: true });
-	mkdirSync(dirname(statePath), { recursive: true });
-	mkdirSync(dirname(dbPath), { recursive: true });
-
-	return { baseDir, socketPath, pidPath, statePath, dbPath, host, port };
+	return {
+		baseDir: home.homeDir,
+		configDir: home.configDir,
+		daemonDir: home.daemonDir,
+		stateDir: home.stateDir,
+		logsDir: home.logsDir,
+		toolsDir: home.toolsDir,
+		skillsDir: home.skillsDir,
+		socketPath,
+		pidPath,
+		statePath,
+		dbPath,
+		host,
+		port,
+	};
 }

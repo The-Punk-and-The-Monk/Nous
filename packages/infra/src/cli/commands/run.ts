@@ -1,10 +1,15 @@
-import type { Orchestrator, ProgressEvent } from "@nous/orchestrator";
+import type {
+	IntentExecutionOptions,
+	Orchestrator,
+	ProgressEvent,
+} from "@nous/orchestrator";
 import { colors } from "../ui/colors.ts";
 import { Spinner } from "../ui/spinner.ts";
 
 export async function runCommand(
 	orchestrator: Orchestrator,
 	intentText: string,
+	options?: IntentExecutionOptions,
 ): Promise<void> {
 	const spinner = new Spinner();
 
@@ -62,7 +67,7 @@ export async function runCommand(
 	spinner.start("Parsing intent...");
 
 	try {
-		await orchestrator.submitIntent(intentText);
+		await orchestrator.submitIntent(intentText, options);
 	} catch (err) {
 		spinner.fail(`Failed: ${(err as Error).message}`);
 		process.exit(1);

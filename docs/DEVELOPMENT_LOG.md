@@ -235,3 +235,194 @@ For significant sessions, capture:
   - End-to-end daemon listening still cannot be validated in the current Codex sandbox because local socket/port listen is blocked (`EPERM`), so the new live path remains unit-tested rather than fully integration-tested here.
   - Context Assembly is still missing from the daemon submission path; attached thread/scope continuity exists, but retrieval/context enrichment is still far below the architecture target.
   - The current Layer 1 conflict logic is intentionally coarse. It is sufficient as an MVP safety rail, but not the final task-level resource-claim system described in architecture.
+
+### Session: Add minimal context assembly and first perception pipeline
+- Context / Trigger:
+  - After daemon/dialogue became usable, the next architectural gap was obvious: Nous could persist and replay conversations, but agents still started work with a very thin world model.
+  - In parallel, the MVP thesis still required a **real perception path**, not just static prose in `ARCHITECTURE.md`.
+- Problem:
+  - Agent execution still lacked environment/project context injection, so “persistent runtime” was improving faster than “scope-aware cognition”.
+  - The repo had sensor types and event vocabulary, but no running FS/Git perception loop and no attention stage that could actually surface ambient signals.
+- Options considered:
+  - Option A: wait for full RAG memory before doing Context Assembly.
+    - Rejected because env/project context is cheap and should not be blocked on Sprint 6 memory work.
+  - Option B: implement a minimal env/project/user context assembler now, then feed its rendering into agent system prompts.
+    - Chosen because it materially improves task execution quality without requiring memory architecture completion.
+  - Option C: delay perception until full Ambient Intent auto-execution is ready.
+    - Rejected because that would again make perception “always next sprint”.
+  - Option D: ship a first perception loop with FS/Git signals, heuristic attention, and ambient notifications before full autonomous ambient intent execution.
+    - Chosen because it creates a real always-on path while keeping cost and complexity bounded.
+- Decision:
+  - Add a reusable `ContextAssembler` that gathers:
+    - environment context
+    - project context
+    - lightweight user context (active intents + memory hints placeholder)
+  - Render assembled context into system prompt text and pass it through orchestrator intent execution options.
+  - Add a first `PerceptionService` with:
+    - observed project roots
+    - `FileSystemSensor`
+    - `GitSensor`
+    - `HeuristicAttentionFilter`
+    - promotion path into daemon dialogue notifications
+- Changes made:
+  - Added `packages/core/src/types/context.ts`
+  - Added `packages/runtime/src/context/assembly.ts`
+  - Exported context assembly utilities from `packages/runtime/src/index.ts`
+  - Added `packages/runtime/tests/context-assembly.test.ts`
+  - Extended `packages/orchestrator/src/orchestrator.ts` with per-intent execution options (`systemPrompt`, `source`)
+  - Updated `packages/orchestrator/src/index.ts`
+  - Updated `packages/infra/src/cli/app.ts` and `packages/infra/src/cli/commands/run.ts` so non-daemon execution also benefits from context assembly
+  - Added `packages/infra/src/daemon/perception.ts`
+  - Updated `packages/infra/src/daemon/server.ts` to:
+    - assemble context on submit
+    - register observed scopes for perception
+    - start/stop the perception loop with the daemon
+    - deliver promoted ambient notices through dialogue/outbox
+  - Extended `packages/infra/src/daemon/dialogue-service.ts` with a public thread ensure path for system/ambient notifications
+  - Added `packages/infra/tests/perception.test.ts`
+- Impact:
+  - Nous now has the first concrete implementation of **scope-aware cognition**:
+    - agents receive project/environment context instead of only raw task text
+    - daemon and direct CLI paths both benefit
+  - Nous also now has the first real **always-on awareness loop** in code:
+    - filesystem and git changes can be observed
+    - signals are evaluated
+    - interesting ones are promoted into persistent dialogue notifications
+  - This is still not the final Ambient Intent design, but it is no longer fair to say the perception pipeline is missing entirely.
+- Open questions / next steps:
+  - User context is still shallow; true memory-backed retrieval remains a Sprint 6 dependency.
+  - The attention stage is heuristic, not yet lightweight-LLM-assisted.
+  - Promoted signals currently become ambient notifications, not fully auto-submitted ambient intents. That is a deliberate stepping stone, not the end state.
+
+### Session: Add ambient intent auto-submit strategy and heuristic semantic conflict layer
+- Context / Trigger:
+  - After the first perception loop landed, the remaining Sprint 5 question was whether Nous could do anything more meaningful than emit passive ambient notifications.
+  - In parallel, conflict sequencing still existed mostly as resource overlap detection, while architecture already promised a second semantic layer.
+- Problem:
+  - Promoted perception signals still stopped at “ambient notice”, which undercut the claim that Ambient Intent is part of the MVP story.
+  - Conflict analysis still had no notion of semantic dependency or contradiction, so many realistic collisions would be treated as plain resource overlap.
+- Options considered:
+  - Option A: keep perception notifications passive until a future full Ambient Intent engine exists.
+    - Rejected because that would keep MVP perception as a mostly observational feature.
+  - Option B: add a limited **auto-submit strategy** for high-confidence, read-only ambient follow-up intents when the system is idle.
+    - Chosen because it creates a safe bridge from perception to orchestration without overcommitting to autonomous mutation or risky actions.
+  - Option C: leave conflict handling at resource overlap only.
+    - Rejected because even a heuristic semantic layer is better than pretending dependency/conflict reasoning does not exist.
+- Decision:
+  - Extend promoted perception outputs with:
+    - confidence
+    - cooldown key
+    - `autoSubmit`
+    - `suggestedIntentText`
+  - Allow the daemon to auto-submit **ambient read-only inspection intents** when a promoted signal is high-value and the system is otherwise idle.
+  - Extend conflict management with heuristic semantic classification:
+    - `independent`
+    - `resource_contention`
+    - `dependent`
+    - `conflicting`
+  - For now, even `conflicting` falls back to conservative sequencing + review flag, because a full human decision queue is not implemented yet.
+- Changes made:
+  - Extended `packages/infra/src/daemon/perception.ts` with:
+    - promotion metadata
+    - cooldown handling
+    - auto-submit candidate generation
+  - Updated `packages/infra/src/daemon/server.ts` to auto-submit ambient intents through orchestrator when strategy allows
+  - Extended `packages/infra/src/daemon/conflict-manager.ts` with heuristic semantic analysis and richer verdicts
+  - Expanded tests in:
+    - `packages/infra/tests/perception.test.ts`
+    - `packages/infra/tests/conflict-manager.test.ts`
+- Impact:
+  - Perception now has a real, though bounded, path into orchestration rather than stopping at notification-only behavior.
+  - Nous can now autonomously launch low-risk follow-up inspection intents from ambient signals, which is much closer to the intended Ambient Intent MVP story.
+  - Conflict handling now distinguishes between “same resource”, “likely dependency”, and “likely contradiction”, even if the current implementation is still heuristic.
+- Open questions / next steps:
+  - The ambient auto-submit policy is intentionally conservative and only suitable for read-only investigative intents right now.
+  - `conflicting` currently sequences conservatively instead of truly entering a decision queue; a real queue remains future work.
+  - The semantic conflict layer is heuristic, not LLM-backed, and should eventually be replaced or augmented by the proper second-layer analyzer described in architecture.
+
+### Session: Establish `~/.nous` home/config model and validate real daemon socket E2E
+- Context / Trigger:
+  - After daemon/dialogue/perception landed, a practical issue became obvious: Nous still behaved too much like a repo-local dev artifact instead of a user-level system.
+  - In parallel, daemon E2E had only been unit-tested because the Codex sandbox blocks `listen()` calls; the user explicitly pushed on whether a real background daemon + Python socket test should work outside that restriction.
+- Problem:
+  - Runtime-configurable behavior was still too implicit in code and too tied to repo execution defaults.
+  - The default storage path still looked project-local, which weakens the “persistent Nous” mental model.
+  - We had no end-to-end proof yet that the daemon protocol actually works as a real local socket service beyond isolated tests.
+- Options considered:
+  - Option A: keep repo-local defaults (`.nous/nous.db`, hardcoded daemon paths) until packaging/distribution is solved.
+    - Rejected because it keeps the runtime model visually and operationally too close to a dev-only CLI tool.
+  - Option B: introduce a true user-level home layout now, even before installer/distribution work is finalized.
+    - Chosen because persistent identity, daemon state, logs, tools, and config should already converge toward a user-home model.
+  - Option C: keep treating E2E listen failures as an unverified future task because the current sandbox blocks sockets.
+    - Rejected because the right move is to separate “sandbox limitation” from “product limitation” and verify the path outside the sandbox when possible.
+- Decision:
+  - Move Nous toward a **user-home-first runtime layout** with default `NOUS_HOME=~/.nous`.
+  - Split concerns explicitly:
+    - binary / launcher location is a packaging concern
+    - persistent state/config/logs live under `~/.nous`
+    - nearest `<project>/.nous` can provide scope-local overrides
+  - Add bootstrap/config loading utilities so configurable behavior is visible and file-backed rather than buried in packaged code.
+  - Add a small Python E2E harness to validate the daemon as a real background service over socket transport.
+- Changes made:
+  - Added `packages/infra/src/config/home.ts`
+    - `getNousPaths()`
+    - `ensureNousHome()`
+    - `loadNousConfig()`
+  - Defined the default user-home layout:
+    - `~/.nous/config`
+    - `~/.nous/daemon`
+    - `~/.nous/state`
+    - `~/.nous/logs`
+    - `~/.nous/tools`
+    - `~/.nous/skills`
+    - `~/.nous/cache`
+    - `~/.nous/secrets`
+  - Added default JSON-backed config bootstrap files:
+    - `config.json`
+    - `providers.json`
+    - `sensors.json`
+    - `ambient.json`
+    - `permissions.json`
+  - Updated daemon path resolution in `packages/infra/src/daemon/paths.ts` to derive:
+    - socket path
+    - pid path
+    - daemon state file
+    - database path
+    from the new home/config layer
+  - Updated CLI/provider resolution so provider priority and model defaults can come from config instead of only code/env fallbacks
+  - Updated CLI help and README to describe:
+    - `NOUS_HOME`
+    - the new default DB path
+    - the `~/.nous` layout
+    - the Python socket E2E harness
+  - Added tests:
+    - `packages/infra/tests/home-config.test.ts`
+    - updated `packages/infra/tests/daemon-paths.test.ts`
+  - Added `scripts/e2e_daemon.py`
+    - starts a real daemon process
+    - reads daemon transport state
+    - connects over Unix socket or TCP fallback
+    - exercises `attach`, `submit_intent`, `get_status`, `get_thread`
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check packages docs README.md scripts` ✅
+  - Real local daemon E2E:
+    - In the default Codex sandbox, daemon `listen()` still fails with `EPERM`, confirming the earlier limitation is environmental.
+    - Re-ran the E2E outside sandbox restrictions and successfully validated:
+      - `python3 scripts/e2e_daemon.py status`
+      - `python3 scripts/e2e_daemon.py demo`
+    - The successful demo proved:
+      - daemon startup and transport state publication
+      - `attach` ack flow
+      - `submit_intent` ack flow
+      - persisted thread/message snapshot retrieval
+      - outbox persistence of assistant-side notification messages
+- Impact:
+  - Nous now looks and behaves much more like a **real persistent user-level runtime** rather than a repo-bound CLI experiment.
+  - Configurability moved closer to the right boundary: file-backed, inspectable, and user-home scoped.
+  - We now have a credible answer to “can this daemon actually run in the background and be spoken to over a real socket?” — yes, outside the sandbox restriction, it works.
+- Open questions / next steps:
+  - The current Python harness validates real transport and persistence flow, but it is still mostly request/response-oriented; a stronger future demo would keep one attached socket open and show push delivery live.
+  - `permissions.json`, `tools/`, `skills/`, and `secrets/` are currently structural placeholders; their governance model still needs deeper design.
+  - Installer/distribution work is still separate: deciding where the launcher/binary lives is a packaging concern, not the same thing as defining the Nous runtime home.

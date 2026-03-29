@@ -24,6 +24,15 @@ export { AgentRuntime } from "./agent/runtime.ts";
 export type { AgentRuntimeConfig, AgentResult } from "./agent/runtime.ts";
 export { ContextManager } from "./agent/context.ts";
 export { HeartbeatEmitter } from "./agent/heartbeat.ts";
+export {
+	ContextAssembler,
+	renderContextForSystemPrompt,
+} from "./context/assembly.ts";
+export { snapshotFiles } from "./context/assembly.ts";
+export type {
+	ContextAssemblyInput,
+	FileSnapshotEntry,
+} from "./context/assembly.ts";
 
 // Memory system
 export { MemoryManager } from "./memory/manager.ts";

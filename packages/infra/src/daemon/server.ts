@@ -10,12 +10,15 @@ import { now } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
 import type { ProgressEvent } from "@nous/orchestrator";
 import { createPersistenceBackend } from "@nous/persistence";
+import { ContextAssembler, renderContextForSystemPrompt } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
+import { loadNousConfig } from "../config/home.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
 import { StaticIntentConflictManager } from "./conflict-manager.ts";
 import { DaemonController } from "./controller.ts";
 import { DialogueService } from "./dialogue-service.ts";
 import { getDaemonPaths } from "./paths.ts";
+import { PerceptionService } from "./perception.ts";
 
 export interface NousDaemonOptions {
 	llm: LLMProvider;
@@ -23,12 +26,15 @@ export interface NousDaemonOptions {
 
 export class NousDaemon {
 	private readonly paths = getDaemonPaths();
+	private readonly nousConfig = loadNousConfig();
 	private readonly backend = createPersistenceBackend(this.paths.dbPath);
 	private readonly orchestrator: Orchestrator;
 	private readonly dialogue: DialogueService;
 	private readonly controller: DaemonController;
 	private readonly supervisor: ProcessSupervisor;
 	private readonly conflicts = new StaticIntentConflictManager();
+	private readonly contextAssembler = new ContextAssembler();
+	private readonly perception: PerceptionService;
 	private readonly threadByIntentId = new Map<string, string>();
 	private readonly sessions = new Map<Socket, ConnectionState>();
 	private server?: ReturnType<typeof createServer>;
@@ -54,6 +60,57 @@ export class NousDaemon {
 			taskStore: this.backend.tasks,
 			eventStore: this.backend.events,
 		});
+		this.perception = new PerceptionService({
+			eventStore: this.backend.events,
+			intentStore: this.backend.intents,
+			pollIntervalMs: this.nousConfig.sensors.pollIntervalMs,
+			cooldownMs: this.nousConfig.sensors.cooldownMs,
+			onPromoted: async (promotion) => {
+				const thread = this.dialogue.ensureThread({
+					threadId: "thread_ambient",
+					title: "Ambient notices",
+					channelId: "daemon",
+				});
+				this.dialogue.enqueueAssistantMessage({
+					threadId: thread.id,
+					content: promotion.message,
+					kind: "notification",
+					metadata: {
+						source: "perception",
+						confidence: promotion.confidence,
+						autoSubmit: promotion.autoSubmit,
+					},
+				});
+				if (
+					this.nousConfig.ambient.enabled &&
+					this.nousConfig.ambient.autoSubmit &&
+					promotion.autoSubmit &&
+					promotion.suggestedIntentText
+				) {
+					this.dialogue.enqueueAssistantMessage({
+						threadId: thread.id,
+						content: `Auto-submitting ambient intent: ${promotion.suggestedIntentText}`,
+						kind: "notification",
+						metadata: { source: "ambient_intent_strategy" },
+					});
+					await this.submitAmbientIntent(
+						thread.id,
+						promotion.suggestedIntentText,
+						{
+							workingDirectory: String(
+								(promotion.signal.payload as { rootDir?: string }).rootDir ??
+									process.cwd(),
+							),
+							projectRoot: String(
+								(promotion.signal.payload as { rootDir?: string }).rootDir ??
+									process.cwd(),
+							),
+						},
+					);
+				}
+				await this.flushPendingDeliveriesForThread(thread.id);
+			},
+		});
 
 		this.orchestrator.onProgress((event) => this.handleProgress(event));
 	}
@@ -61,6 +118,9 @@ export class NousDaemon {
 	async start(): Promise<void> {
 		cleanupSocket(this.paths.socketPath);
 		this.supervisor.start();
+		if (this.nousConfig.sensors.enabled) {
+			this.perception.start();
+		}
 		writeFileSync(this.paths.pidPath, String(process.pid));
 
 		this.server = createServer((socket) => this.handleConnection(socket));
@@ -82,6 +142,9 @@ export class NousDaemon {
 
 		this.orchestrator.stop();
 		this.supervisor.stop();
+		if (this.nousConfig.sensors.enabled) {
+			this.perception.stop();
+		}
 
 		await new Promise<void>((resolve) => {
 			if (!this.server) {
@@ -112,6 +175,9 @@ export class NousDaemon {
 				if (!trimmed) continue;
 				try {
 					const message = JSON.parse(trimmed) as ClientEnvelope;
+					if (this.nousConfig.sensors.enabled) {
+						this.perception.observeScope(message.channel.scope);
+					}
 					const response = await this.controller.handle(message);
 					if (response) {
 						this.updateSessionState(socket, message, response);
@@ -165,6 +231,28 @@ export class NousDaemon {
 		text: string;
 		channel: Channel;
 	}): Promise<void> {
+		const assembledContext = this.contextAssembler.assemble({
+			scope: payload.channel.scope,
+			activeIntents: this.backend.intents.getActive().map((intent) => ({
+				id: intent.id,
+				raw: intent.raw,
+				goal: intent.goal,
+				status: intent.status,
+				source: intent.source,
+			})),
+		});
+		const systemPrompt = renderContextForSystemPrompt(assembledContext);
+		this.dialogue.enqueueAssistantMessage({
+			threadId: payload.threadId,
+			content: `Context assembled for ${assembledContext.project.rootDir} (${assembledContext.project.type}, git: ${assembledContext.project.gitStatus ?? "unknown"}).`,
+			kind: "notification",
+			metadata: {
+				source: "context_assembly",
+				projectRoot: assembledContext.project.rootDir,
+			},
+		});
+		await this.flushPendingDeliveriesForThread(payload.threadId);
+
 		const decision = this.conflicts.schedule(
 			{
 				text: payload.text,
@@ -173,6 +261,9 @@ export class NousDaemon {
 			async () => {
 				const intent = await this.orchestrator.submitIntentBackground(
 					payload.text,
+					{
+						systemPrompt,
+					},
 				);
 				this.dialogue.linkIntentToThread(payload.threadId, intent.id);
 				this.threadByIntentId.set(intent.id, payload.threadId);
@@ -202,6 +293,31 @@ export class NousDaemon {
 			});
 			void this.flushPendingDeliveriesForThread(payload.threadId);
 		});
+	}
+
+	private async submitAmbientIntent(
+		threadId: string,
+		text: string,
+		scope: Channel["scope"],
+	): Promise<void> {
+		const assembledContext = this.contextAssembler.assemble({
+			scope,
+			activeIntents: this.backend.intents.getActive().map((intent) => ({
+				id: intent.id,
+				raw: intent.raw,
+				goal: intent.goal,
+				status: intent.status,
+				source: intent.source,
+			})),
+		});
+		const systemPrompt = renderContextForSystemPrompt(assembledContext);
+		const intent = await this.orchestrator.submitIntentBackground(text, {
+			systemPrompt,
+			source: "ambient",
+		});
+		this.dialogue.linkIntentToThread(threadId, intent.id);
+		this.threadByIntentId.set(intent.id, threadId);
+		void this.orchestrator.waitForIntent(intent.id);
 	}
 
 	private updateSessionState(

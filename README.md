@@ -22,6 +22,38 @@ packages/
   infra/          # Infrastructure: Channel Adapters, Process Supervisor, Observability
 ```
 
+## Runtime Home
+
+Nous now treats `~/.nous` as its default user-level home directory.
+
+Typical layout:
+
+```
+~/.nous/
+  config/         # JSON config files
+  daemon/         # socket / pid / daemon state
+  state/          # sqlite database
+  logs/           # runtime logs
+  tools/          # evolved or user-provided tools
+  skills/         # skill assets
+```
+
+Project-local overrides can live in `<project>/.nous/`.
+
+## Local E2E Harness
+
+For real daemon socket verification outside restricted sandboxes:
+
+```bash
+python3 scripts/e2e_daemon.py demo
+```
+
+You can also point it at a compiled or installed binary:
+
+```bash
+python3 scripts/e2e_daemon.py --nous-cmd "~/.local/bin/nous" demo
+```
+
 ## License
 
 MIT
