@@ -8,6 +8,8 @@ export interface NousPaths {
 	daemonDir: string;
 	stateDir: string;
 	logsDir: string;
+	artifactsDir: string;
+	networkDir: string;
 	toolsDir: string;
 	skillsDir: string;
 	cacheDir: string;
@@ -64,6 +66,8 @@ export function getNousPaths(options: NousConfigLoadOptions = {}): NousPaths {
 	const daemonDir = join(homeDir, "daemon");
 	const stateDir = join(homeDir, "state");
 	const logsDir = join(homeDir, "logs");
+	const artifactsDir = join(homeDir, "artifacts");
+	const networkDir = join(homeDir, "network");
 	const toolsDir = join(homeDir, "tools");
 	const skillsDir = join(homeDir, "skills");
 	const cacheDir = join(homeDir, "cache");
@@ -76,6 +80,8 @@ export function getNousPaths(options: NousConfigLoadOptions = {}): NousPaths {
 		daemonDir,
 		stateDir,
 		logsDir,
+		artifactsDir,
+		networkDir,
 		toolsDir,
 		skillsDir,
 		cacheDir,
@@ -92,6 +98,8 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 		paths.daemonDir,
 		paths.stateDir,
 		paths.logsDir,
+		paths.artifactsDir,
+		paths.networkDir,
 		paths.toolsDir,
 		paths.skillsDir,
 		paths.cacheDir,
@@ -126,11 +134,121 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 			idleOnly: true,
 		},
 	});
-	writeDefaultJsonIfMissing(join(paths.configDir, "permissions.json"), {
-		permissions: {
-			note: "Permission system config placeholder.",
+	writeDefaultJsonIfMissing(join(paths.configDir, "network.json"), {
+		networkEnabled: false,
+		sharing: {
+			enabled: false,
+			autoShare: false,
+			excludeDomains: [],
+			excludeKeywords: [],
+			minLocalConfidence: 0.8,
+		},
+		respondToQueries: {
+			enabled: false,
+			autoRespond: false,
+			maxConsultationsPerDay: 10,
+			allowedDomains: [],
+			blockedInstances: [],
+		},
+		queryOthers: {
+			enabled: false,
+			autoQuery: false,
+			maxQueriesPerDay: 10,
+			preferredSpecialists: [],
+		},
+		collectiveInsights: {
+			enabled: true,
+			autoApply: false,
+			minConfidence: 0.9,
 		},
 	});
+	writeDefaultJsonIfMissing(join(paths.configDir, "permissions.json"), {
+		grantAll: false,
+		rules: [
+			{
+				action: "fs.read",
+				scope: { type: "directory", paths: ["./**"] },
+				approval: "auto_allow",
+			},
+			{
+				action: "fs.write",
+				scope: { type: "directory", paths: ["./**"] },
+				approval: "ask_once",
+			},
+			{
+				action: "shell.exec",
+				scope: {
+					type: "command",
+					allowlist: [
+						"ls",
+						"cat",
+						"head",
+						"tail",
+						"wc",
+						"find",
+						"which",
+						"echo",
+						"date",
+					],
+				},
+				approval: "auto_allow",
+			},
+			{
+				action: "shell.exec",
+				scope: {
+					type: "command",
+					allowlist: ["git", "bun", "npm", "node", "tsc", "biome"],
+				},
+				approval: "ask_once",
+			},
+			{
+				action: "shell.exec",
+				scope: { type: "command", allowlist: [] },
+				approval: "always_ask",
+			},
+			{
+				action: "network.http",
+				scope: { type: "network", domains: [] },
+				approval: "always_ask",
+			},
+			{
+				action: "browser.control",
+				scope: { type: "all" },
+				approval: "always_ask",
+			},
+			{
+				action: "spawn_subagent",
+				scope: { type: "all" },
+				approval: "ask_once",
+			},
+			{
+				action: "memory.write",
+				scope: { type: "all" },
+				approval: "auto_allow",
+			},
+			{
+				action: "evolution.self_mutate",
+				scope: { type: "all" },
+				approval: "always_ask",
+			},
+			{
+				action: "escalate_to_human",
+				scope: { type: "all" },
+				approval: "auto_allow",
+			},
+		],
+	});
+	writeDefaultJsonIfMissing(
+		join(paths.secretsDir, "providers.json"),
+		{
+			providers: {
+				openai: {},
+				anthropic: {},
+				openaiCompat: {},
+			},
+		},
+		0o600,
+	);
 
 	return paths;
 }
@@ -181,9 +299,13 @@ function findNearestNousProjectDir(start: string): string | null {
 	}
 }
 
-function writeDefaultJsonIfMissing(path: string, value: JsonValue): void {
+function writeDefaultJsonIfMissing(
+	path: string,
+	value: JsonValue,
+	mode?: number,
+): void {
 	if (existsSync(path)) return;
-	writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+	writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode });
 }
 
 function readJson(path: string): JsonObject | undefined {

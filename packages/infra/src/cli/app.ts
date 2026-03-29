@@ -2,9 +2,18 @@ import type { LLMProvider, LogLevel } from "@nous/core";
 import { now, prefixedId, setLogLevel } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
 import { createPersistenceBackend } from "@nous/persistence";
-import { ContextAssembler, renderContextForSystemPrompt } from "@nous/runtime";
+import {
+	ContextAssembler,
+	HybridMemoryRetriever,
+	renderContextForSystemPrompt,
+	renderMemoryHints,
+} from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
 import { ensureNousHome } from "../config/home.ts";
+import {
+	loadPermissionPolicy,
+	resolvePermissionCapabilities,
+} from "../config/permissions.ts";
 import { sendDaemonRequest } from "../daemon/client.ts";
 import { NousDaemon } from "../daemon/server.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
@@ -13,6 +22,8 @@ import { attachCommand } from "./commands/attach.ts";
 import { daemonCommand, isDaemonRunning } from "./commands/daemon.ts";
 import { eventsCommand } from "./commands/events.ts";
 import { memoryCommand } from "./commands/memory.ts";
+import { networkCommand } from "./commands/network.ts";
+import { permissionsCommand } from "./commands/permissions.ts";
 import { openDaemonRepl } from "./commands/repl.ts";
 import { runCommand } from "./commands/run.ts";
 import { statusCommand } from "./commands/status.ts";
@@ -119,6 +130,18 @@ export async function main(args: string[]): Promise<void> {
 		return;
 	}
 
+	if (command === "permissions") {
+		permissionsCommand(args.slice(1));
+		backend.close();
+		return;
+	}
+
+	if (command === "network") {
+		await networkCommand(args.slice(1), { eventStore: backend.events });
+		backend.close();
+		return;
+	}
+
 	if (command === "attach") {
 		if (!isDaemonRunning()) {
 			console.log(`\n  ${colors.red("Daemon is not running.")}\n`);
@@ -212,6 +235,11 @@ export async function main(args: string[]): Promise<void> {
 	// Default: treat the entire argument string as an intent
 	const intentText = args.join(" ");
 	const contextAssembler = new ContextAssembler();
+	const memoryRetriever = new HybridMemoryRetriever(backend.memory);
+	const permissionCapabilities = resolvePermissionCapabilities(
+		loadPermissionPolicy(),
+		{ projectRoot: process.cwd() },
+	);
 	const systemPrompt = renderContextForSystemPrompt(
 		contextAssembler.assemble({
 			scope: {
@@ -225,6 +253,16 @@ export async function main(args: string[]): Promise<void> {
 				status: intent.status,
 				source: intent.source,
 			})),
+			recentMemoryHints: renderMemoryHints(
+				memoryRetriever.retrieve({
+					agentId: "nous",
+					query: intentText,
+					scope: {
+						workingDirectory: process.cwd(),
+						projectRoot: process.cwd(),
+					},
+				}),
+			),
 		}),
 	);
 
@@ -239,7 +277,10 @@ export async function main(args: string[]): Promise<void> {
 		backend.close();
 	});
 
-	await runCommand(orchestrator, intentText, { systemPrompt });
+	await runCommand(orchestrator, intentText, {
+		systemPrompt,
+		capabilities: permissionCapabilities,
+	});
 
 	orchestrator.stop();
 	supervisor.stop();
@@ -259,6 +300,8 @@ function printUsage(): void {
     nous agents            List registered agents
     nous events [N]        Show last N events (default: 50)
     nous memory [search]   View stored memories (optional search term)
+    nous permissions       Show or modify permission rules
+    nous network <action>  Manage inter-Nous seed exchange
 
   ${colors.bold("Options:")}
     --log-level <level>    Set log level: debug, info, warn, error, silent
@@ -278,8 +321,10 @@ function printUsage(): void {
     NOUS_MODEL             Model for Claude CLI provider (default: sonnet)
     NOUS_HOME              Nous user home (default: ~/.nous)
     NOUS_DB                Database path (default: ~/.nous/state/nous.db)
+    NOUS_SECRETS_FILE      Override provider secrets file (default: ~/.nous/secrets/providers.json)
     NOUS_LOG_LEVEL         Log level: debug, info, warn, error, silent (default: info)
 
+    ${colors.dim("Provider secrets: env vars override ~/.nous/secrets/providers.json")}
     ${colors.dim("Provider priority: OPENAI_BASE_URL > OPENAI_API_KEY > ANTHROPIC_API_KEY > Claude CLI")}
 
   ${colors.bold("Examples:")}
@@ -288,6 +333,8 @@ function printUsage(): void {
     nous daemon start
     nous attach thread_abc123
     nous attach thread_abc123 --once
+    nous network status
+    nous network procedures
     nous status
 `);
 }

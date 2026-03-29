@@ -196,10 +196,24 @@ export class DialogueService {
 		channelId: string;
 		threadId?: string;
 	}): OutboundDelivery[] {
-		const deliveredAt = this.clock();
+		const deliveries = this.peekPendingDeliveries({
+			channelId: params.channelId,
+			threadId: params.threadId,
+		});
+		this.markDeliveriesDelivered(deliveries);
+		return deliveries;
+	}
+
+	peekPendingDeliveries(params: {
+		channelId?: string;
+		threadId?: string;
+	}): OutboundDelivery[] {
 		const entries = this.config.messageStore
 			.getPendingOutbox()
-			.filter((entry) => isDeliverableToChannel(entry, params.channelId))
+			.filter(
+				(entry) =>
+					!params.channelId || isDeliverableToChannel(entry, params.channelId),
+			)
 			.filter(
 				(entry) => !params.threadId || entry.threadId === params.threadId,
 			);
@@ -214,15 +228,22 @@ export class DialogueService {
 				});
 				continue;
 			}
-			this.config.messageStore.updateOutbox(entry.id, {
-				status: "delivered",
-				deliveredAt,
-				failureReason: undefined,
-			});
 			deliveries.push({ entry, message });
 		}
 
 		return deliveries;
+	}
+
+	markDeliveriesDelivered(deliveries: OutboundDelivery[]): void {
+		if (deliveries.length === 0) return;
+		const deliveredAt = this.clock();
+		for (const delivery of deliveries) {
+			this.config.messageStore.updateOutbox(delivery.entry.id, {
+				status: "delivered",
+				deliveredAt,
+				failureReason: undefined,
+			});
+		}
 	}
 
 	getThreadSnapshot(payload: GetThreadPayload): ThreadSnapshot | undefined {

@@ -33,11 +33,30 @@ describe("Nous home config", () => {
 		expect(paths.configDir.endsWith(".nous/config")).toBe(true);
 		expect(paths.daemonDir.endsWith(".nous/daemon")).toBe(true);
 		expect(paths.stateDir.endsWith(".nous/state")).toBe(true);
+		expect(paths.networkDir.endsWith(".nous/network")).toBe(true);
+		expect(paths.artifactsDir.endsWith(".nous/artifacts")).toBe(true);
 
 		const config = JSON.parse(
 			readFileSync(join(paths.configDir, "config.json"), "utf8"),
 		) as { daemon: { host: string } };
 		expect(config.daemon.host).toBe("127.0.0.1");
+		const secrets = JSON.parse(
+			readFileSync(join(paths.secretsDir, "providers.json"), "utf8"),
+		) as {
+			providers: { openai: object; anthropic: object; openaiCompat: object };
+		};
+		expect(secrets.providers.openai).toEqual({});
+		const permissions = JSON.parse(
+			readFileSync(join(paths.configDir, "permissions.json"), "utf8"),
+		) as { grantAll: boolean; rules: Array<{ action: string }> };
+		expect(permissions.grantAll).toBe(false);
+		expect(permissions.rules.some((rule) => rule.action === "fs.read")).toBe(
+			true,
+		);
+		const network = JSON.parse(
+			readFileSync(join(paths.configDir, "network.json"), "utf8"),
+		) as { networkEnabled: boolean };
+		expect(network.networkEnabled).toBe(false);
 	});
 
 	test("loads project-local overrides from nearest .nous directory", () => {

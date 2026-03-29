@@ -111,6 +111,37 @@ describe("DialogueService", () => {
 		expect(snapshot?.pendingOutbox).toHaveLength(0);
 	});
 
+	test("peekPendingDeliveries does not mutate outbox until marked delivered", async () => {
+		const stores = createFixture();
+		const service = new DialogueService({ messageStore: stores.messageStore });
+		const channel = makeChannel();
+		const ack = await service.submitIntent(channel, {
+			text: "Inspect repository state",
+		});
+
+		service.enqueueAssistantMessage({
+			threadId: ack.payload.threadId,
+			content: "First live push candidate.",
+		});
+
+		const deliveries = service.peekPendingDeliveries({
+			threadId: ack.payload.threadId,
+		});
+		expect(deliveries).toHaveLength(1);
+
+		let snapshot = service.getThreadSnapshot({
+			threadId: ack.payload.threadId,
+		});
+		expect(snapshot?.pendingOutbox).toHaveLength(1);
+
+		service.markDeliveriesDelivered(deliveries);
+
+		snapshot = service.getThreadSnapshot({
+			threadId: ack.payload.threadId,
+		});
+		expect(snapshot?.pendingOutbox).toHaveLength(0);
+	});
+
 	test("getStatusSnapshot reports connected channels and pending outbox count", async () => {
 		const stores = createFixture();
 		const service = new DialogueService({

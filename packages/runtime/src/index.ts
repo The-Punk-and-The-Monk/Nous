@@ -39,6 +39,15 @@ export { MemoryManager } from "./memory/manager.ts";
 export { WorkingMemory } from "./memory/working.ts";
 export { EpisodicMemory } from "./memory/episodic.ts";
 export { SemanticMemory } from "./memory/semantic.ts";
+export {
+	HybridMemoryRetriever,
+	LocalEmbeddingModel,
+	renderMemoryHints,
+} from "./memory/retrieval.ts";
+export type {
+	MemoryRetrievalInput,
+	RetrievedMemory,
+} from "./memory/retrieval.ts";
 
 // Growth engine
 export { GrowthEngine } from "./growth/engine.ts";

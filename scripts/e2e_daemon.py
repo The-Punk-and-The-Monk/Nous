@@ -38,7 +38,7 @@ def parse_args():
     )
     parser.add_argument(
         "mode",
-        choices=["demo", "status", "thread"],
+        choices=["demo", "live", "status", "thread"],
         nargs="?",
         default="demo",
     )
@@ -77,6 +77,40 @@ def request(home: Path, payload: dict):
             raise RuntimeError("daemon returned no response")
         line = data.split(b"\n", 1)[0].decode().strip()
         return json.loads(line)
+
+
+def connect_client(home: Path):
+    transport = read_transport(home)
+    if transport["mode"] == "unix":
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(transport["socketPath"])
+    else:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((transport["host"], int(transport["port"])))
+    return client
+
+
+def recv_json_lines(client: socket.socket, timeout: float = 5.0):
+    client.settimeout(timeout)
+    data = b""
+    messages = []
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            chunk = client.recv(65536)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        data += chunk
+        while b"\n" in data:
+            line, data = data.split(b"\n", 1)
+            line = line.decode().strip()
+            if line:
+                messages.append(json.loads(line))
+        if messages:
+            break
+    return messages
 
 
 def read_log_tail(log_path: Path, lines: int = 40) -> str:
@@ -170,6 +204,55 @@ def main():
                 },
             )
             print(json.dumps(response, indent=2))
+            return
+
+        if args.mode == "live":
+            with connect_client(home) as client:
+                timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                attach_payload = {
+                    "id": "req_attach",
+                    "type": "attach",
+                    "channel": channel,
+                    "payload": {
+                        "channel": {
+                            **channel,
+                            "status": "connected",
+                            "connectedAt": timestamp,
+                            "lastSeenAt": timestamp,
+                            "subscriptions": ["progress", "result", "notification"],
+                        },
+                        "replayPending": True,
+                    },
+                    "timestamp": timestamp,
+                }
+                client.sendall((json.dumps(attach_payload) + "\n").encode())
+                attach_messages = recv_json_lines(client, timeout=3.0)
+                print("ATTACH_STREAM")
+                print(json.dumps(attach_messages, indent=2))
+
+                submit_payload = {
+                    "id": "req_submit",
+                    "type": "submit_intent",
+                    "channel": channel,
+                    "payload": {
+                        "text": args.intent,
+                        "scope": channel["scope"],
+                    },
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                client.sendall((json.dumps(submit_payload) + "\n").encode())
+                first_messages = recv_json_lines(client, timeout=5.0)
+                print("LIVE_MESSAGES_1")
+                print(json.dumps(first_messages, indent=2))
+
+                second_messages = recv_json_lines(client, timeout=5.0)
+                if second_messages:
+                    print("LIVE_MESSAGES_2")
+                    print(json.dumps(second_messages, indent=2))
+
+                print(f"NOUS_HOME={home}")
+                if log_path is not None:
+                    print(f"DAEMON_LOG={log_path}")
             return
 
         attach = request(

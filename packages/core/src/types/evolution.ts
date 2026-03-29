@@ -1,0 +1,26 @@
+import type { ISOTimestamp } from "../utils/timestamp.ts";
+
+export type ValidationState = "proposed" | "validated";
+
+export interface ExecutionTrace {
+	id: string;
+	intentId: string;
+	threadId?: string;
+	intentText: string;
+	status: "achieved" | "escalated";
+	projectRoot?: string;
+	focusedFile?: string;
+	outputs: string[];
+	createdAt: ISOTimestamp;
+}
+
+export interface ProcedureCandidate {
+	id: string;
+	fingerprint: string;
+	title: string;
+	sampleIntent: string;
+	successCount: number;
+	traceIds: string[];
+	validationState: ValidationState;
+	lastUpdatedAt: ISOTimestamp;
+}

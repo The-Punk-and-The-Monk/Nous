@@ -320,6 +320,163 @@ The system's world is defined by these core abstractions. Getting these wrong me
 - **Observability**: Metrics, tracing, structured logging — all derived from Event Store
 - **Nous Relay Client**: Handles Relay Network registration, discovery queries, P2P connection establishment, and E2E encryption. Governed by the user's `CommunicationPolicy`
 
+### Storage Boundary Principles
+
+Nous should not treat "persistence" as a single storage bucket. Different classes of information have different architectural roles:
+
+- some are for **human governance and inspection**
+- some are for **live runtime state and query-heavy coordination**
+- some are **large artifacts or rebuildable caches**
+- some are **high-sensitivity secrets**
+
+If we blur these boundaries, Nous will either collapse into a pile of ad hoc files or into an opaque black-box database. Both are wrong for the product thesis.
+
+#### Core rule
+
+> **Use the filesystem for declaration, packaging, artifacts, cache, and operator-facing logs. Use the database/index layer for live state, relations, retrieval, audit, and governance.**
+
+#### What belongs where
+
+| Data class | Primary store | Why |
+|-----------|---------------|-----|
+| User-editable config | Filesystem (`~/.nous/config/*.json`, project `.nous/*.json`) | Human-readable, diffable, override-friendly |
+| Live dialogue / intent / task / outbox state | SQLite / Message Store / Task Queue DB | Strong state transitions, concurrent writes, query-heavy |
+| Event / audit history | Event Store (structured) + log files (operator view) | Canonical truth needs queryability; humans still need plain logs |
+| Memory substrate | SQLite + vector + graph indexes | Retrieval, ranking, provenance relations, metabolism |
+| Skills / procedures / templates | Filesystem artifacts + DB metadata | Publishable/shareable asset, but still governed by validation state |
+| Large artifacts / attachments / exports | Filesystem | Blob-heavy, easier to move, snapshot, sign, and archive |
+| Caches | Filesystem | Rebuildable, disposable, size-oriented |
+| Secrets | OS keychain / encrypted secret store | Too sensitive for plain config files |
+
+#### Why dialogue and memory are not "just files"
+
+The following should **not** degrade into scattered JSON files:
+
+- `DialogueThread`
+- `DialogueMessage`
+- `MessageOutbox`
+- `Intent`
+- `Task`
+- `ConflictAnalysis`
+- `Event`
+- `MemoryEntry`
+- `EvolutionProposal`
+
+These objects have explicit state machines, causal links, ranking/retrieval requirements, or concurrency semantics. They belong in queryable stores, not in directory conventions.
+
+#### Why config, skills, and artifacts should stay visible
+
+The following should stay file-backed:
+
+- configuration
+- published skills/procedures/templates
+- generated reports and exports
+- crash logs / daemon logs / perception logs
+- downloaded tools / helper binaries
+
+This preserves a key Nous property: **local-first transparency**. The user should be able to inspect, back up, diff, move, and selectively share important assets without reverse-engineering the runtime database.
+
+#### Dual-layer objects: governed in DB, materialized in files
+
+Some objects need both worlds:
+
+- **Skill / Procedure**
+  - DB stores: provenance, validation state, trust, rollout status, evidence
+  - files store: manifest, executable template, prompt/tool contract
+- **Artifacts**
+  - DB stores: metadata, ownership, scope, provenance, references
+  - files store: the actual blob
+- **Observability**
+  - Event Store stores: canonical structured events
+  - log files store: operator-facing diagnostics
+
+This pattern is deliberate:
+
+> **DB governs; files publish.**
+
+#### Secret handling rule
+
+`~/.nous/secrets/` may exist, but it should not become a bucket of plaintext API keys.
+
+Target order:
+
+1. OS keychain / platform secret manager
+2. encrypted local secret blobs
+3. plaintext files only as a temporary bootstrap fallback, never the intended end state
+
+But v1 needs a more practical rule:
+
+- v1 may use **file-backed secrets** under `~/.nous/secrets/`
+- this is a usability-first choice for provider API keys and auth tokens
+- however, code should still depend on a **SecretStore boundary**, not on ad hoc file reads
+- the initial implementation can be `FileSecretStore`
+- later implementations can move to keychain / encrypted storage without refactoring provider selection or runtime boundaries
+
+So the architectural rule is:
+
+> **Use file-backed secrets in v1 if that is what makes the system usable, but do not let "temporary plaintext file" become the permanent secret architecture.**
+
+#### Default `~/.nous` layout
+
+```text
+~/.nous/
+  config/
+    config.json
+    providers.json
+    sensors.json
+    ambient.json
+    permissions.json
+    memory.json
+    logging.json
+
+  daemon/
+    nous.sock
+    nous.pid
+    daemon.json
+
+  state/
+    nous.db
+    indexes/
+    checkpoints/
+
+  logs/
+    daemon/
+    provider/
+    perception/
+    crash/
+    audit/
+
+  skills/
+    manifests/
+    procedures/
+    templates/
+
+  tools/
+    bin/
+    manifests/
+
+  artifacts/
+    attachments/
+    reports/
+    exports/
+    snapshots/
+
+  cache/
+    llm/
+    embedding/
+    http/
+    repo/
+
+  secrets/
+    providers.json
+    handles.json
+    encrypted/
+
+  tmp/
+```
+
+`<project>/.nous/` remains an override boundary, not a second persistent identity. It should contain scope-local configuration and optional project-local assets, but not split Nous into separate per-project brains.
+
 ---
 
 ## Core Data Models
@@ -2929,9 +3086,12 @@ const agent = defineAgent({
 **Secrets management:**
 
 ```
-v1: Environment variables + .env files (standard, simple, works with every tool)
-    Nous NEVER logs or stores env var values.
-    Permission rules control which env vars are visible to which agent.
+v1: Environment variables + file-backed SecretStore (~/.nous/secrets/providers.json)
+    Env still has highest priority for CI / temporary overrides.
+    File-backed secrets are allowed for usability.
+    Nous NEVER logs secret values.
+    Provider/runtime code depends on SecretStore, not direct file reads.
+    Permission rules control which secrets or env vars are visible to which agent.
 
 v2: Encrypted local secret store (age or libsodium)
     → nous secrets set ANTHROPIC_API_KEY

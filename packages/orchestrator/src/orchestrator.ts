@@ -7,7 +7,12 @@ import type {
 	Logger,
 	Task,
 } from "@nous/core";
-import { createLogger, now, prefixedId } from "@nous/core";
+import {
+	createLogger,
+	intersectCapabilities,
+	now,
+	prefixedId,
+} from "@nous/core";
 import type { EventStore, IntentStore, TaskStore } from "@nous/persistence";
 import { AgentRuntime } from "@nous/runtime";
 import type { AgentRuntimeConfig } from "@nous/runtime";
@@ -45,6 +50,7 @@ export interface ProgressEvent {
 export interface IntentExecutionOptions {
 	systemPrompt?: string;
 	source?: Intent["source"];
+	capabilities?: CapabilitySet;
 }
 
 export class Orchestrator {
@@ -202,6 +208,15 @@ export class Orchestrator {
 		registerBuiltinTools(toolRegistry, toolExecutor);
 
 		// Create runtime and execute
+		const effectiveCapabilities = this.intentExecutionOptions.get(task.intentId)
+			?.capabilities
+			? intersectCapabilities(
+					agent.capabilities,
+					this.intentExecutionOptions.get(task.intentId)?.capabilities ??
+						agent.capabilities,
+				)
+			: agent.capabilities;
+
 		const runtime = new AgentRuntime({
 			llm: this.llm,
 			eventStore: this.eventStore,
@@ -209,7 +224,7 @@ export class Orchestrator {
 			toolRegistry,
 			toolExecutor,
 			agentId: agent.id,
-			capabilities: agent.capabilities,
+			capabilities: effectiveCapabilities,
 			systemPrompt: this.intentExecutionOptions.get(task.intentId)
 				?.systemPrompt,
 		});

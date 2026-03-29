@@ -70,6 +70,11 @@ export type {
 	ProjectContext,
 	UserContext,
 } from "./types/context.ts";
+export type {
+	ExecutionTrace,
+	ProcedureCandidate,
+	ValidationState,
+} from "./types/evolution.ts";
 
 export type {
 	NousMessage,

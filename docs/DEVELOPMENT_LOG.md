@@ -426,3 +426,319 @@ For significant sessions, capture:
   - The current Python harness validates real transport and persistence flow, but it is still mostly request/response-oriented; a stronger future demo would keep one attached socket open and show push delivery live.
   - `permissions.json`, `tools/`, `skills/`, and `secrets/` are currently structural placeholders; their governance model still needs deeper design.
   - Installer/distribution work is still separate: deciding where the launcher/binary lives is a packaging concern, not the same thing as defining the Nous runtime home.
+
+### Session: Add file-first SecretStore boundary and lock the road to V1
+- Context / Trigger:
+  - After defining the storage model, one practical disagreement surfaced clearly: a future secure secret store is architecturally correct, but **v1 usability** still strongly favors file-managed provider credentials.
+  - At the same time, "keep going until v1" needed to become an actual execution plan, not just an implied sequence inside the architecture doc.
+- Problem:
+  - If we insist on keychain/encrypted secrets too early, we risk shifting implementation energy away from the persistent runtime and memory/perception core.
+  - If we simply throw plaintext provider keys into random files with no abstraction, we create the wrong long-term boundary and make later migration painful.
+  - The repo also lacked a crisp "current state → v1 done" finish-line document.
+- Options considered:
+  - Option A: keep the previous target-state language ("secret store later") but do not change runtime behavior yet.
+    - Rejected because the current user workflow still needs a real file-based path now.
+  - Option B: use file-based secrets in v1, but hide the decision behind a proper `SecretStore` boundary so secure backends can replace it later.
+    - Chosen because it balances usability with architectural hygiene.
+  - Option C: continue relying only on environment variables.
+    - Rejected because provider credential management becomes unnecessarily awkward for local-first daily use.
+- Decision:
+  - V1 secrets are now explicitly **file-first but not file-coupled**:
+    - file-backed secrets are allowed under `~/.nous/secrets/`
+    - env vars still override for CI and temporary injection
+    - runtime/provider code depends on `SecretStore`, not direct ad hoc file reads
+  - Add a dedicated V1 finish-line document that maps current implementation to the remaining work packages.
+- Changes made:
+  - Added `packages/infra/src/config/secrets.ts`
+    - `SecretStore`
+    - `FileSecretStore`
+    - `loadNousSecrets()`
+  - Updated `packages/infra/src/config/home.ts`
+    - `ensureNousHome()` now bootstraps `~/.nous/secrets/providers.json`
+    - secrets file is created with a tighter file mode for the bootstrap path
+  - Updated provider resolution in `packages/infra/src/cli/provider.ts`
+    - file-based provider secrets now participate in provider selection
+    - env vars still take precedence
+  - Updated exports in `packages/infra/src/index.ts`
+  - Added tests:
+    - `packages/infra/tests/secrets.test.ts`
+    - expanded `packages/infra/tests/provider.test.ts`
+    - expanded `packages/infra/tests/home-config.test.ts`
+  - Updated documentation:
+    - `ARCHITECTURE.md`
+    - `docs/STORAGE.md`
+    - `README.md`
+    - added `docs/V1_PLAN.md`
+- Impact:
+  - Nous now has the correct architectural boundary for secrets without forcing a premature encrypted-store implementation.
+  - Provider credentials are more ergonomic for real local use while staying structurally migratable to a future secure backend.
+  - The project now has a concrete "what remains before v1 is actually done" map instead of relying only on broad sprint prose.
+- Open questions / next steps:
+  - The next runtime-facing gap is still live push delivery on attached daemon sessions; that is the strongest remaining Sprint 5 credibility gap.
+  - Sprint 6 memory closure remains the largest intelligence gap between the current repo and a believable v1.
+  - File-backed secrets are explicitly a v1 usability choice, not the end-state security story.
+
+### Session: Strengthen live attach push semantics for the daemon path
+- Context / Trigger:
+  - After formalizing the V1 path, the most immediate runtime gap remained the same: Nous already had daemon persistence and outbox replay, but "live attach" was still under-proven.
+  - The core question was no longer "can the daemon store thread state?" but "can one attached client really behave like a continuing communication channel and receive asynchronous pushes from the daemon?"
+- Problem:
+  - Delivery logic was still effectively one-socket-at-a-time and underused the channel subscription model.
+  - The repo had request/response E2E and thread snapshot E2E, but lacked a stronger live-stream proof on a single attached connection.
+- Decision:
+  - Make delivery flow less RPC-shaped and more channel-shaped:
+    - outbox messages can be peeked before mutation
+    - daemon delivery fan-out can target all relevant attached sockets for the same thread
+    - session subscriptions participate in deciding whether a message should be pushed
+  - Add a dedicated `live` E2E mode to validate push behavior on one persistent socket.
+- Changes made:
+  - Extended `packages/infra/src/daemon/dialogue-service.ts` with:
+    - `peekPendingDeliveries()`
+    - `markDeliveriesDelivered()`
+  - Updated `packages/infra/src/daemon/server.ts` so:
+    - thread delivery can fan out to all relevant attached sockets
+    - session subscriptions are tracked and respected
+    - delivery mutation happens after recipient selection, not before
+  - Expanded `packages/infra/tests/dialogue-service.test.ts`
+  - Extended `scripts/e2e_daemon.py` with `live` mode
+  - Updated `README.md` with the new live E2E command
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check ...` ✅
+  - Real local validation outside sandbox:
+    - `python3 scripts/e2e_daemon.py live` ✅
+    - verified attach ack and daemon-pushed notification arriving on the same persistent connection
+- Impact:
+  - Sprint 5 is now much closer to its intended behavioral shape:
+    - attach is no longer just "inspect persisted thread state"
+    - it is a real continuing channel that can receive daemon-originated messages
+  - The daemon path now better matches Unified Presence semantics: one continuing Nous, with attached channels receiving live updates rather than acting as stateless requesters.
+- Open questions / next steps:
+  - Push delivery is now materially better, but the largest remaining V1 intelligence gap is still memory retrieval / RAG closure.
+  - Multi-channel delivery semantics may need a richer per-channel acknowledgment model later if we want stronger guarantees than today's best-effort push + replay.
+
+### Session: Add the first semantic-hybrid memory retrieval loop
+- Context / Trigger:
+  - After live push attach was strengthened, the largest remaining V1 gap was no longer runtime continuity but intelligence continuity.
+  - Nous could persist dialogue and background execution, but it still lacked a believable "remember and reuse" loop in the daemon path.
+- Problem:
+  - Context assembly still only had a memory-hints placeholder.
+  - The memory subsystem stored entries and FTS worked, but there was no semantic retrieval layer, no hybrid ranking, and no automatic memory capture from daemon execution.
+- Decision:
+  - Add a first **semantic-hybrid retrieval substrate** now, without waiting for a full external embedding pipeline.
+  - Use a local embedding-style vectorizer + lexical overlap + scope boost as the initial retrieval engine.
+  - Feed retrieved memory hints directly into context assembly for daemon and direct CLI execution.
+  - Start capturing memory automatically from intent submission and intent outcome so the retrieval path has something useful to work with.
+- Changes made:
+  - Added `packages/runtime/src/memory/retrieval.ts`
+    - `LocalEmbeddingModel`
+    - `HybridMemoryRetriever`
+    - `renderMemoryHints()`
+  - Exported the retriever from `packages/runtime/src/index.ts`
+  - Added tests:
+    - `packages/runtime/tests/memory-retrieval.test.ts`
+  - Updated `packages/infra/src/daemon/server.ts` to:
+    - retrieve memory hints before assembling the system prompt
+    - capture episodic memory from incoming human intents
+    - capture semantic/episodic outcome memories from completed or escalated intents
+  - Updated `packages/infra/src/cli/app.ts` so direct non-daemon execution also benefits from retrieved memory hints
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check ...` ✅
+- Impact:
+  - Nous now has the first real implementation of "remember relevant prior work and feed it back into the next run."
+  - Memory is still not yet a full RAG stack with external embedding infrastructure, but it is no longer fair to describe retrieval as FTS-only at the runtime level.
+  - This materially raises the ceiling for later permission, ambient, and evolution work, because those systems now have a place to retrieve prior context from.
+- Open questions / next steps:
+  - The current embedding model is local and heuristic; it is a semantic substrate, not the final embedding architecture.
+  - Proper chunking, reranking, and stronger provenance-aware retrieval remain part of the next memory iterations.
+
+### Session: Clarify filesystem vs database boundaries for a persistent Nous
+- Context / Trigger:
+  - After introducing `~/.nous`, the next design question was not “what directory names should exist,” but “which classes of Nous data should be file-backed at all.”
+  - This matters because Nous is not just a local CLI cache; it is meant to become a persistent runtime and eventually a self-evolving collective intelligence substrate.
+- Problem:
+  - If everything goes into files, the system loses queryability, state-machine integrity, and governance clarity.
+  - If everything goes into SQLite, the system becomes opaque, less inspectable, and much worse at packaging/exporting/shareable capability assets.
+  - The architecture needed an explicit storage boundary doctrine, not just ad hoc path choices.
+- Options considered:
+  - Option A: treat all persistent data as “SQLite unless impossible”.
+    - Rejected because config, skills, artifacts, and operator logs need human visibility and portability.
+  - Option B: treat `~/.nous` as a mostly file-native workspace with SQLite as a detail inside it.
+    - Rejected because live dialogue/task/memory/evolution state has strong query, relation, and concurrency requirements.
+  - Option C: define a split model — filesystem for declaration/externalization, DB/indexes for cognition/governance.
+    - Chosen because it aligns with both local-first transparency and persistent-runtime rigor.
+- Decision:
+  - State the core rule explicitly:
+    - **filesystem for declaration, packaging, artifacts, cache, and operator-facing logs**
+    - **database/index layer for live state, retrieval, relations, audit, and governance**
+  - Treat some entities as dual-layer objects:
+    - DB governs
+    - files publish / materialize
+  - Keep secrets out of ordinary plaintext config flow; target OS keychain or encrypted local storage.
+- Changes made:
+  - Updated `ARCHITECTURE.md` with a new **Storage Boundary Principles** section covering:
+    - the core rule
+    - data-class-to-store mapping
+    - why dialogue/memory/evolution objects should not degrade into scattered files
+    - why config/skills/artifacts/logs should remain visible
+    - secret-handling rule
+    - a canonical `~/.nous` layout
+  - Added `docs/STORAGE.md` as a focused storage contract document:
+    - what belongs in filesystem
+    - what belongs in SQLite / structured stores
+    - dual-layer objects
+    - secret policy
+    - default home layout
+- Impact:
+  - `~/.nous` is no longer just a directory convention; it now has a storage philosophy behind it.
+  - Nous gets a cleaner answer to a key product question:
+    - it is neither “a pile of JSON files” nor “an opaque monolithic DB”
+    - it is a governed cognitive core with a transparent externalization layer
+  - This also better supports the North Star:
+    - capability artifacts can be exported/shared as files
+    - runtime cognition, provenance, and validation remain structured and auditable
+- Open questions / next steps:
+  - Secret storage still needs an implementation decision per platform (macOS Keychain, Linux Secret Service, Windows Credential Manager, or encrypted-file fallback).
+  - Skill/procedure materialization format is still only conceptual; future work should define manifest schema and publication lifecycle.
+  - The memory store’s “DB governs, files publish” equivalent may later need explicit export/snapshot formats for cross-instance exchange.
+
+### Session: Close the static permission boundary for V1
+- Context / Trigger:
+  - After memory retrieval landed, the next blocking issue for a believable local-first runtime was no longer “can Nous remember?” but “can Nous act inside a bounded authority model?”
+  - The architecture already said permissions were user-controlled and scope-aware, but the runtime still lacked a real file-backed policy surface and concrete enforcement.
+- Problem:
+  - Without a real permission boundary, the daemon/orchestrator path could drift toward “global power by default,” which would directly undermine the project’s OS-style capability thesis.
+  - Without a CLI-visible policy file, the user had no durable control plane for what Nous is allowed to do.
+- Decision:
+  - Ship a **static permission boundary** for V1:
+    - file-backed rules under `~/.nous/config/permissions.json`
+    - inspectable and mutable via CLI
+    - enforced at runtime/tool execution boundaries
+  - Explicitly defer interactive `ask_once` / approval-queue semantics to post-V1. For V1, only `auto_allow` becomes executable runtime capability.
+- Changes made:
+  - Added `packages/infra/src/config/permissions.ts`
+    - permission policy model
+    - default rule bootstrap
+    - policy persistence
+    - capability resolution from policy + scope
+  - Added `packages/infra/src/cli/commands/permissions.ts`
+    - `nous permissions`
+    - `nous permissions grant-all`
+    - `nous permissions reset`
+    - `nous permissions revoke <action>`
+    - `nous permissions allow <action>`
+  - Updated runtime enforcement:
+    - `packages/runtime/src/tools/capability-guard.ts`
+    - `packages/runtime/src/tools/executor.ts`
+  - Updated orchestration/direct execution path:
+    - `packages/orchestrator/src/orchestrator.ts`
+    - `packages/infra/src/cli/app.ts`
+    - `packages/infra/src/daemon/server.ts`
+  - Added tests:
+    - `packages/infra/tests/permissions.test.ts`
+    - `packages/runtime/tests/tool-permissions.test.ts`
+- Impact:
+  - Nous now has a real V1 safety boundary:
+    - default-deny-ish policy posture
+    - explicit file control surface
+    - runtime/tool enforcement instead of architecture-only promises
+  - The repo is now much less likely to drift into an “OpenClaw-style gateway with implicit authority” shape.
+- Open questions / next steps:
+  - Interactive approval / decision queue is still absent.
+  - Permission event audit surfaces and richer per-command reasoning can be expanded after V1.
+
+### Session: Add the first evolution seed loop
+- Context / Trigger:
+  - The architecture says growth is not permission escalation; it is governed self-improvement.
+  - After the permission boundary was closed for V1, the next missing substrate was the smallest loop that could honestly be called “evolution seed.”
+- Problem:
+  - Nous had no persistent representation of repeated successful execution patterns.
+  - Without trace capture and promotion rules, “self-evolution” would remain narrative rather than implemented substrate.
+- Decision:
+  - Ship a minimal governed learning loop:
+    - capture execution traces
+    - group traces into a `ProcedureCandidate`
+    - require repeated success before promotion
+    - materialize a local reusable procedure artifact only after validation threshold is reached
+  - Keep the seed intentionally narrow:
+    - simple fingerprinting
+    - local file materialization
+    - no autonomous code mutation
+- Changes made:
+  - Added `packages/core/src/types/evolution.ts`
+    - `ExecutionTrace`
+    - `ProcedureCandidate`
+    - `ValidationState`
+  - Added `packages/infra/src/evolution/local-procedure-seed.ts`
+    - trace persistence
+    - candidate accumulation
+    - promotion to `skills/procedures/`
+  - Wired the daemon to record traces after intent outcomes in `packages/infra/src/daemon/server.ts`
+  - Added `packages/infra/tests/procedure-seed.test.ts`
+- Impact:
+  - Nous now has the first real “experience → governed reusable artifact” path.
+  - This is still seed-level, but it turns evolution into an auditable data path instead of a future aspiration.
+- Open questions / next steps:
+  - Fingerprinting is intentionally simple and should later become scope/provenance-aware.
+  - Procedure manifests, validation richness, and rollback/retirement policies remain future work.
+
+### Session: Ship the inter-Nous seed and mark the local-first V1 cut line reached
+- Context / Trigger:
+  - After daemon continuity, memory, permissions, and evolution seed all landed, the last remaining V1 gap was collective seed.
+  - The architecture’s North Star requires eventual collective intelligence, but V1 only promised a thin, governed exchange path for one bounded asset class.
+- Problem:
+  - Existing network primitives (`identity`, `policy`, `relay-client`, `discovery`) were future-facing building blocks, but there was no real end-to-end artifact exchange loop.
+  - Without a concrete exchange path, the repo would still stop one step short of the stated V1 ship criteria.
+- Decision:
+  - Ship a **local file-backed inter-Nous seed** rather than pretending full relay/P2P networking is already V1.
+  - Use **validated procedure summaries** as the first governed exchange unit because they already sit on top of local validation and are much safer than raw logs or unrestricted skill state.
+- Changes made:
+  - Extended `~/.nous` bootstrap in `packages/infra/src/config/home.ts`
+    - added `artifacts/`
+    - added `network/`
+    - added default `config/network.json`
+  - Added `packages/infra/src/config/network.ts`
+    - communication policy loading/saving
+    - network enable/disable
+    - persistent local instance identity bootstrap
+  - Added `packages/infra/src/network/exchange.ts`
+    - validated procedure summary export
+    - import/materialization into local `skills/imported/`
+    - communication event logging
+    - status reporting
+  - Added CLI surface in `packages/infra/src/cli/commands/network.ts`
+    - `nous network status`
+    - `nous network enable`
+    - `nous network pause`
+    - `nous network policy`
+    - `nous network procedures`
+    - `nous network export <fingerprint>`
+    - `nous network import <bundlePath>`
+    - `nous network log`
+  - Added tests:
+    - `packages/infra/tests/network-config.test.ts`
+    - `packages/infra/tests/network-exchange.test.ts`
+  - Updated docs:
+    - `README.md`
+    - `docs/V1_PLAN.md`
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check packages README.md docs ARCHITECTURE.md scripts` ✅
+  - direct CLI smoke check:
+    - `NOUS_HOME=<tmp> bun run bin/nous.ts network status` ✅
+- Impact:
+  - Nous now has a bounded but real collective seed:
+    - persistent instance identity
+    - explicit communication policy
+    - governed export/import of one validated artifact class
+  - This is enough to satisfy the local-first V1 promise without prematurely collapsing the architecture into a fake “distributed swarm” story.
+  - At this point, the repo’s **local-first V1 cut line** is reasonably complete.
+- Open questions / post-V1 work:
+  - interactive approval flow for permissions
+  - stronger RAG: chunking, reranking, provenance-aware retrieval
+  - richer evolution fingerprints and manifest/schema governance
+  - actual relay/discovery/encrypted consultation flows
