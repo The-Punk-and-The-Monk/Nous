@@ -185,9 +185,15 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **Sensor** | Infrastructure | A continuous input source that passively observes the environment (file watcher, calendar, screen, mic, etc.) |
 | **Attention Filter** | Orchestration | Evaluates raw perception signals and decides what is worth processing — the "is this interesting?" gate |
 | **Ambient Intent** | Orchestration | A goal inferred from environment signals, not explicitly stated by a human — system-initiated action |
-| **TrustProfile** | Runtime | Bidirectional, earned trust score that governs capability scope and maturity stage |
-| **GrowthCheckpoint** | Runtime | An explicit proposal for maturity stage transition — requires evidence and user consent |
+| **Skill** | Evolution | A reusable execution path crystallized from successful experience — the unit of learned competence |
+| **CapabilityGap** | Evolution | A systematically identified weakness — what Nous cannot yet do well, with evidence and proposed fix |
+| **EvolutionProposal** | Evolution | A concrete self-improvement plan (new tool, new skill, prompt fix, code patch) — Nous's proposal to make itself better |
+| **PermissionRule** | Infrastructure | A user-controlled authorization rule scoped by directory/system/command/network — what Nous is allowed to do |
 | **CommunicationPolicy** | Infrastructure | User-controlled rules governing all inter-Nous communication — what to share, whom to consult, what to auto-approve |
+| **Channel** | Dialogue | An I/O connection to the user (CLI, IDE, Web) — a viewport into Nous, not an isolated session |
+| **DialogueThread** | Dialogue | A conversation topic that may span multiple channels — groups related messages and intents |
+| **MessageOutbox** | Dialogue | Persistent queue for outbound messages — survives channel disconnects and daemon restarts |
+| **ConflictAnalysis** | Dialogue | Two-layer analysis of inter-task resource and semantic conflicts — prevents concurrent intents from breaking each other |
 | **NousMessage** | Infrastructure | The atomic unit of inter-Nous communication — always E2E encrypted, always audit-logged |
 
 ### What OpenClaw and others lack
@@ -202,8 +208,8 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | Procedural Memory | No | No | No | Yes |
 | Passive Perception (Sensors + Attention) | No | No | No | Yes |
 | Ambient Intent (system-initiated goals) | No | No | No | Yes |
-| Growth maturity model (trust-based stages) | No | No | No | Yes |
-| Memory metabolism (experience → skill) | No | No | No | Yes |
+| Self-evolution (skill crystallization + gap detection + self-mutation) | No | No | No | Yes |
+| Memory metabolism (experience → skill, with RAG retrieval) | No | No | No | Yes |
 | Collective intelligence (cross-instance) | No | No | No | Yes |
 | Inter-instance communication protocol | No | No | No | Yes (hybrid relay + P2P) |
 
@@ -213,34 +219,49 @@ The system's world is defined by these core abstractions. Getting these wrong me
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
+│  Dialogue Layer (above all planes)                          │
+│  Channel Manager · Dialogue Manager · Thread Tracker ·      │
+│  Message Outbox · Conflict Analyzer                         │
+├─────────────────────────────────────────────────────────────┤
 │  L0 — Intent Plane                                          │
 │  Human Intent · Ambient Intent · Constraints · Human        │
 │  Decision Queue (only truly blocking decisions reach human) │
 ├─────────────────────────────────────────────────────────────┤
 │  L1 — Orchestration Plane                                   │
 │  Intent Planner · Task Scheduler · Agent Router ·           │
-│  Attention Filter                                           │
+│  Attention Filter · Context Assembly                        │
 ├─────────────────────────────────────────────────────────────┤
-│  L2 — Runtime Plane                                         │
-│  Agent Runtime (ReAct loop) · Tool Sandbox · Memory Manager │
-│  Growth Engine (trust, capability graduation, metabolism)    │
+│  L2 — Runtime + Evolution Plane                             │
+│  Agent Runtime (ReAct loop) · Tool System (3-tier) ·        │
+│  Memory Manager (RAG pipeline) ·                            │
+│  Evolution Engine (experience → skill → gap → self-mutation)│
 ├─────────────────────────────────────────────────────────────┤
 │  L3 — Persistence Plane                                     │
-│  Event Store · Task Queue DB · Memory Store ·               │
-│  Perception Log                                             │
+│  Event Store · Task Queue DB · Message Store ·              │
+│  Memory Store (FTS + Vector + Graph) · Perception Log ·     │
+│  Evolution Log                                              │
 ├─────────────────────────────────────────────────────────────┤
 │  L4 — Infrastructure Plane                                  │
-│  Channel Adapters · Sensors · Process Supervisor ·          │
-│  Observability · Security · Nous Relay Client               │
+│  Daemon Process · Channel Adapters (CLI, IDE, Web, ...) ·   │
+│  Sensors (FS, Git, ...) · Permission System ·               │
+│  Process Supervisor · Observability · Nous Relay Client     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Three data flow paths exist in parallel:**
+**Four data flow paths exist in parallel:**
+- **Dialogue path** (bidirectional): Channels ↔ Dialogue Manager ↔ Intent Plane (non-blocking, async)
 - **Request path** (top-down): Human Intent → Orchestration → Runtime → Persistence
 - **Perception path** (bottom-up): Sensors → Perception Log → Attention Filter → Ambient Intent
 - **Network path** (lateral): Nous Relay Client ↔ Relay Network ↔ Other Nous Instances (see Inter-Nous Communication Architecture)
 
-**Dependency rule:** Dependencies flow downward only. L0 depends on L1, L1 on L2, etc. No upward dependencies.
+**Dependency rule:** Dependencies flow downward only. The Dialogue Layer sits above L0 and depends on it. L0 depends on L1, L1 on L2, etc. No upward dependencies.
+
+### Dialogue Layer (`packages/dialogue`)
+- **Channel Manager**: Manages all connected I/O channels (CLI, IDE, Web, API). Channels connect and disconnect freely — Nous keeps running regardless. Multiple channels can be active simultaneously. Each channel carries a `scope` (CWD, project, focused file) that influences Context Assembly but does NOT isolate memory or state.
+- **Dialogue Manager**: Maintains multi-turn conversation context across all channels. Groups messages into `DialogueThread`s by topic. A thread can span multiple channels (start a conversation in CLI, continue in IDE). All messages are persisted to L3 Message Store — Nous never loses context.
+- **Thread Tracker**: Tracks active threads, associates them with intents and tasks. When a user sends a message, determines whether it belongs to an existing thread or starts a new one.
+- **Message Outbox**: Persistent queue for outbound messages (results, notifications, questions). When a channel is disconnected, messages accumulate in the outbox. When the channel reconnects (or any channel connects), pending messages are delivered. (See Message Delivery section below)
+- **Conflict Analyzer**: When a new intent arrives, analyzes potential conflicts with currently active intents/tasks — resource conflicts (file locks, shared state), semantic conflicts (contradictory goals), and dependency ordering. Uses both static analysis (resource overlap detection) and LLM-assisted semantic analysis. (See Conflict Detection section below)
 
 ### L0 — Intent Plane (`packages/orchestrator`)
 - Receives natural language goals from humans (**Human Intent**)
@@ -254,26 +275,30 @@ The system's world is defined by these core abstractions. Getting these wrong me
 - **Task Scheduler**: Manages task state machine, dependency resolution, retry with exponential backoff
 - **Agent Router**: Matches task capability requirements to available agents
 - **Attention Filter**: Evaluates perception signals from L3 Perception Log, decides relevance and urgency, and either discards, logs for later, or promotes to Ambient Intent at L0. Uses a lightweight LLM call (fast model) for semantic evaluation
+- **Context Assembly**: Gathers environment context (CWD, OS, shell), project context (git state, directory structure, language/framework, package manager, README), and user context (memory, preferences, history) — injects a rich system prompt into every agent LLM call
 
-### L2 — Runtime Plane (`packages/runtime`)
+### L2 — Runtime + Evolution Plane (`packages/runtime`, `packages/evolution`)
 - **Agent Runtime**: ReAct reasoning loop (Think → Act → Observe → repeat)
-- **Tool Sandbox**: Isolated execution per tool, timeout enforcement, capability-scoped
-- **Memory Manager**: Unified interface to 5-tier memory system (includes memory metabolism — transforming episodic → semantic → procedural)
-- **Growth Engine**: Manages TrustProfile, capability graduation, and maturity stage transitions (see Growth Model below)
+- **Tool System**: 3-tier tool architecture — Primitives (system built-in), Builtins (framework provided, configurable), Evolved (Nous-created tools from Evolution Engine). Isolated execution per tool, timeout enforcement, permission-scoped
+- **Memory Manager**: Unified interface to 5-tier memory system with RAG retrieval pipeline (vector + keyword + graph search, fusion, re-ranking). Includes memory metabolism — transforming episodic → semantic → procedural
+- **Evolution Engine**: The self-improvement system. Four layers: (1) Experience Collection — records every task execution trace, user feedback, and performance metrics; (2) Skill Crystallization — extracts reusable skills from repeated successful patterns via memory metabolism; (3) Gap Detection — analyzes failures and inefficiencies to identify systematic capability weaknesses; (4) Self-Mutation — generates EvolutionProposals to create new tools, compile new skills, improve prompts, or patch its own code
 
 ### L3 — Persistence Plane (`packages/persistence`)
 - **Event Store**: Append-only log of all state transitions (event sourcing)
 - **Task Queue DB**: SQLite-backed task state machine persistence
-- **Memory Store**: Vector + full-text + graph index for semantic memory
+- **Message Store**: All dialogue messages (human and Nous), threads, and the message outbox. Persisted to SQLite. This is what gives Nous continuous memory across channel disconnects and daemon restarts.
+- **Memory Store**: SQLite-backed with three index layers — FTS5 for keyword search, sqlite-vec for vector similarity search, adjacency tables for graph relations. Embedding generation via pluggable Embedding Provider (Anthropic, OpenAI, local Ollama)
 - **Perception Log**: Append-only buffer of raw sensor signals, time-indexed. High-volume, low-retention — older entries are compacted or pruned after Attention Filter has evaluated them
+- **Evolution Log**: Records all capability gaps detected, evolution proposals generated, skills crystallized, and self-mutations applied — the audit trail of how Nous evolved
 
 ### L4 — Infrastructure Plane (`packages/infra`)
-- **Channel Adapters**: Plugin system for I/O channels (CLI, HTTP, WebSocket, etc.)
-- **Sensors**: Continuous environment observers — each Sensor is a long-lived process that watches one input source and emits signals to L3 Perception Log. Examples: file system watcher, calendar poller, email listener, clipboard monitor, screen capture, microphone stream. Sensors are stateless and restartable; they only write, never read.
+- **Daemon Process**: Nous runs as a long-lived daemon process, not a one-shot CLI invocation. The daemon owns the SQLite database, runs the scheduler loop, manages sensors, and accepts connections from channels. `nous daemon start` launches it; `nous daemon stop` shuts it down gracefully. The daemon survives channel disconnects, terminal closures, and IDE restarts — it is the persistent identity of Nous. (See Daemon Architecture section below)
+- **Channel Adapters**: Plugin system for I/O channels. Each adapter connects to the daemon via IPC (Unix socket for local, WebSocket for remote). MVP ships with CLI adapter; IDE and Web adapters follow. Channels are stateless connectors — all state lives in the daemon.
+- **Sensors**: Continuous environment observers — each Sensor is a long-lived process that watches one input source and emits signals to L3 Perception Log. MVP ships with FileSystem Sensor (file create/modify/delete) and Git Sensor (branch switch, new commits, conflicts). Future: calendar poller, email listener, clipboard monitor, screen capture, microphone stream. Sensors are stateless and restartable; they only write, never read.
+- **Permission System**: User-controlled authorization modeled after Claude Code's approach. Default permission set at install; user confirms/expands during interaction; master override to grant-all; user can revoke any permission at any time. Scoped by directory (path patterns), system level (user/root), command allowlist, and network domain. No automatic permission decay or reduction — permissions change only when the user explicitly changes them. (See Permission System section below)
 - **Process Supervisor**: Agent heartbeat monitoring, crash detection, restart (also supervises Sensors)
 - **Observability**: Metrics, tracing, structured logging — all derived from Event Store
-- **Security**: Capability token issuance and enforcement
-- **Nous Relay Client**: Handles Relay Network registration, discovery queries, P2P connection establishment, and E2E encryption. Governed by the user's `CommunicationPolicy`. Only active at maturity Stage 2+ (see Inter-Nous Communication Architecture below)
+- **Nous Relay Client**: Handles Relay Network registration, discovery queries, P2P connection establishment, and E2E encryption. Governed by the user's `CommunicationPolicy`
 
 ---
 
@@ -353,7 +378,7 @@ interface Agent {
   id: string;
   name: string;
   role: "orchestrator" | "specialist" | "executor";
-  capabilities: CapabilitySet;     // What this agent can do
+  capabilitiesRequired: string[];  // What this agent needs (actual access governed by Permission System)
   memoryId: string;                // Pointer to Memory Store
   currentTaskId?: string;
   status: "idle" | "working" | "suspended" | "offline";
@@ -418,30 +443,123 @@ interface AmbientIntent extends Intent {
 
 ---
 
-## Capability Token System
+## Permission System
 
-Agents operate under the principle of least privilege. Capabilities are explicitly granted.
+Permissions control what Nous is allowed to do in the user's environment. **Control is 100% with the user** — permissions never change unless the user explicitly changes them. There is no automatic escalation, no trust-based graduation, and no decay. This is modeled after Claude Code's permission approach.
+
+### Design Principles
+
+1. **Safe defaults**: Out of the box, Nous can read files and run a small set of safe commands. Everything else requires user confirmation.
+2. **Progressive confirmation**: When Nous needs a permission it doesn't have, it asks once. The user can grant it for this action, for this session, or permanently.
+3. **Grant-all escape hatch**: Power users can grant all permissions with a single command. This is a conscious choice, not an earned privilege.
+4. **Instant revocation**: The user can revoke any permission at any time, effective immediately.
+5. **No decay**: Permissions granted stay granted. If the user trusts Nous to write files today, that trust doesn't expire next week.
+
+### Permission Scopes
+
+Permissions are scoped along four dimensions:
 
 ```typescript
-interface CapabilitySet {
-  "shell.exec": false | { allowlist: string[] };
-  "fs.read": false | { paths: string[] };
-  "fs.write": false | { paths: string[] };
-  "browser.control": boolean;
-  "network.http": false | { domains: string[] };
-  "spawn_subagent": boolean;
-  "memory.write": boolean;
-  "escalate_to_human": boolean;
+interface PermissionRule {
+  action: PermissionAction;
+  scope: PermissionScope;
+  approval: "auto_allow" | "ask_once" | "always_ask" | "deny";
+  grantedAt?: string;            // ISO timestamp, for audit
+  grantedContext?: string;       // Why this was granted (optional note)
 }
+
+type PermissionAction =
+  | "fs.read"                    // Read files
+  | "fs.write"                   // Create/modify/delete files
+  | "shell.exec"                 // Execute shell commands
+  | "network.http"               // Make HTTP requests
+  | "browser.control"            // Control a browser
+  | "spawn_subagent"             // Create sub-agents
+  | "memory.write"               // Persist to memory store
+  | "evolution.self_mutate"      // Modify Nous's own code/config
+  | "escalate_to_human";         // Interrupt human with a decision
+
+type PermissionScope =
+  | { type: "directory"; paths: string[] }       // Glob patterns: ["src/**", "tests/**"]
+  | { type: "system"; level: "user" | "root" }   // System-level operations
+  | { type: "command"; allowlist: string[] }      // Specific commands: ["git", "bun", "npm"]
+  | { type: "network"; domains: string[] }        // Allowed domains: ["api.anthropic.com"]
+  | { type: "all" }                               // Grant-all mode
 ```
 
-**Effective capability** at runtime = `AgentCapabilities ∩ TaskRequiredCapabilities ∩ IntentConstraints`
+### Default Permission Set
 
-A task that requires `fs.write` assigned to an agent that only has `fs.read` will fail at assignment time, not at execution time.
+```typescript
+const DEFAULT_PERMISSIONS: PermissionRule[] = [
+  // Read files in current project — safe, always allowed
+  { action: "fs.read", scope: { type: "directory", paths: ["./**"] }, approval: "auto_allow" },
+
+  // Write files — ask first time, then remember choice
+  { action: "fs.write", scope: { type: "directory", paths: ["./**"] }, approval: "ask_once" },
+
+  // Safe read-only commands — auto-allow
+  { action: "shell.exec", scope: { type: "command", allowlist: ["ls", "cat", "head", "tail", "wc", "find", "which", "echo", "date"] }, approval: "auto_allow" },
+
+  // Development commands — ask once
+  { action: "shell.exec", scope: { type: "command", allowlist: ["git", "bun", "npm", "node", "tsc", "biome"] }, approval: "ask_once" },
+
+  // Everything else — always ask
+  { action: "shell.exec", scope: { type: "command", allowlist: [] }, approval: "always_ask" },
+  { action: "network.http", scope: { type: "network", domains: [] }, approval: "always_ask" },
+  { action: "browser.control", scope: { type: "all" }, approval: "always_ask" },
+  { action: "spawn_subagent", scope: { type: "all" }, approval: "ask_once" },
+  { action: "memory.write", scope: { type: "all" }, approval: "auto_allow" },
+  { action: "evolution.self_mutate", scope: { type: "all" }, approval: "always_ask" },
+  { action: "escalate_to_human", scope: { type: "all" }, approval: "auto_allow" },
+];
+```
+
+### Runtime Permission Check
+
+```
+Agent requests action (e.g., fs.write to src/main.ts)
+  │
+  ├── Find matching PermissionRule (most specific scope wins)
+  │
+  ├── approval == "auto_allow"?
+  │   └── Execute immediately. Log to Event Store.
+  │
+  ├── approval == "ask_once"?
+  │   └── First time: prompt user with [Allow / Allow Always / Deny]
+  │       • Allow → execute this time
+  │       • Allow Always → upgrade rule to auto_allow, persist
+  │       • Deny → reject, log reason
+  │
+  ├── approval == "always_ask"?
+  │   └── Every time: prompt user with [Allow / Allow Always / Deny]
+  │
+  └── approval == "deny"?
+      └── Reject immediately. Agent receives denial reason.
+```
+
+### CLI Interface
+
+```bash
+$ nous permissions                    # Show current permission rules
+$ nous permissions grant-all          # Enable all permissions (power user)
+$ nous permissions revoke fs.write    # Revoke file write permission
+$ nous permissions reset              # Reset to defaults
+$ nous permissions log --last 24h     # Audit log of permission checks
+```
+
+### Relationship to Agent Capabilities
+
+Agents still declare what capabilities they *need* (their `capabilitiesRequired`). But whether those capabilities are actually *granted* is determined by the Permission System, not by the agent definition. An agent that needs `fs.write` will be denied at runtime if the user hasn't granted that permission — regardless of the agent's definition.
+
+```
+Effective permission at runtime = AgentDeclaredNeeds ∩ PermissionRules ∩ IntentConstraints
+```
 
 ---
 
-## Memory System (5 Tiers)
+## Memory System (5 Tiers + RAG Retrieval Pipeline)
+
+### The Five Memory Tiers
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -449,9 +567,10 @@ A task that requires `fs.write` assigned to an agent that only has `fs.read` wil
 │  Future commitments: scheduled tasks, pending     │
 │  intents, promises made to the human              │
 ├──────────────────────────────────────────────────┤
-│  Tier 4 — Procedural Memory  ← NEW vs OpenClaw   │
+│  Tier 4 — Procedural Memory  ← KEY DIFFERENTIATOR│
 │  Successful task patterns: what worked before,    │
-│  reusable execution paths, learned shortcuts      │
+│  reusable execution paths, learned shortcuts.     │
+│  Feeds into Skill Crystallization (Evolution)     │
 ├──────────────────────────────────────────────────┤
 │  Tier 3 — Semantic Memory                         │
 │  Facts and knowledge: vector + graph indexed,     │
@@ -466,9 +585,146 @@ A task that requires `fs.write` assigned to an agent that only has `fs.read` wil
 └──────────────────────────────────────────────────┘
 ```
 
-**Tier 4 (Procedural Memory)** is the key differentiator. When an agent successfully completes a task like "add `tabs` permission to Chrome extension manifest.json", that execution path is stored. Next time a similar task appears, the agent retrieves the proven path instead of re-reasoning from scratch.
+**Tier 4 (Procedural Memory)** is the key differentiator. When an agent successfully completes a task like "add `tabs` permission to Chrome extension manifest.json", that execution path is stored. Next time a similar task appears, the agent retrieves the proven path instead of re-reasoning from scratch. Procedural memories that prove reliable are promoted to **Skills** by the Evolution Engine.
 
-**Memory Metabolism:** Memory is not a static store — it is actively transformed. Episodic memories (individual events) are digested into semantic knowledge (general facts), which are compiled into procedural skills (reusable execution paths). Stale memories decay unless reinforced by usage. This process is the engine behind the Growth Model (see below).
+**Memory Metabolism:** Memory is not a static store — it is actively transformed. Episodic memories (individual events) are digested into semantic knowledge (general facts), which are compiled into procedural skills (reusable execution paths). Stale memories decay unless reinforced by usage. This process is the engine behind the Evolution Engine (see below).
+
+### RAG Retrieval Pipeline
+
+FTS5 keyword matching alone is insufficient for semantic memory retrieval. "How do I add linting?" and "set up ESLint in the project" are the same intent expressed differently — keyword matching misses this. The memory system uses a **multi-path retrieval pipeline** with fusion and re-ranking.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                Memory Retrieval Pipeline                  │
+│                                                          │
+│  Query: "How do I add linting to this project?"          │
+│                                                          │
+│  Stage 1: Multi-Path Retrieval (parallel)                │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │
+│  │ Vector       │ │ Keyword      │ │ Graph        │    │
+│  │ Search       │ │ Search       │ │ Traversal    │    │
+│  │              │ │              │ │              │    │
+│  │ sqlite-vec   │ │ FTS5 +       │ │ Entity       │    │
+│  │ cosine sim   │ │ BM25 rank    │ │ relations:   │    │
+│  │ on embedding │ │              │ │ task→agent   │    │
+│  │              │ │              │ │ episode→fact  │    │
+│  │ Finds        │ │ Finds        │ │ skill→episode│    │
+│  │ semantic     │ │ lexical      │ │              │    │
+│  │ similarity   │ │ matches      │ │ Finds related│    │
+│  │              │ │              │ │ entities     │    │
+│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘    │
+│         │                │                │              │
+│         └────────────────┼────────────────┘              │
+│                          ▼                               │
+│  Stage 2: Fusion + Re-ranking                           │
+│  ┌──────────────────────────────────────────────┐       │
+│  │  Reciprocal Rank Fusion (RRF):                │       │
+│  │  Merge all three result sets, deduplicate,    │       │
+│  │  compute unified relevance score              │       │
+│  │                                               │       │
+│  │  LLM Re-rank (fast model):                    │       │
+│  │  Given query + top-K candidates, re-score     │       │
+│  │  for true contextual relevance                │       │
+│  └──────────────────────┬───────────────────────┘       │
+│                         ▼                                │
+│  Stage 3: Context Window Assembly                       │
+│  ┌──────────────────────────────────────────────┐       │
+│  │  Fill token budget with highest-relevance     │       │
+│  │  memories. Priority order:                    │       │
+│  │    1. Procedural (direct execution paths)     │       │
+│  │    2. Semantic (general knowledge)             │       │
+│  │    3. Episodic (specific past events)         │       │
+│  │    4. Prospective (pending commitments)        │       │
+│  └──────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Memory Storage Architecture
+
+The storage layer supports all three retrieval paths within a single SQLite database file, using extensions for specialized indexing:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                Memory Store (unified)                     │
+│                                                          │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │
+│  │ SQLite Core  │ │ sqlite-vec   │ │ SQLite       │    │
+│  │              │ │              │ │ Graph Tables  │    │
+│  │ Structured   │ │ Vector ANN   │ │              │    │
+│  │ data + FTS5  │ │ index on     │ │ Adjacency    │    │
+│  │ keyword      │ │ embeddings   │ │ tables for   │    │
+│  │ search       │ │              │ │ entity rels  │    │
+│  └──────────────┘ └──────────────┘ └──────────────┘    │
+│                                                          │
+│  All in a single .db file. Zero external dependencies.   │
+│  Same process. ACID. Backup = copy file.                 │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Embedding Provider (pluggable interface)          │   │
+│  │  ┌───────────┐ ┌───────────┐ ┌───────────┐      │   │
+│  │  │ Anthropic  │ │ OpenAI    │ │ Local     │      │   │
+│  │  │ Embedding  │ │ Embedding │ │ (Ollama)  │      │   │
+│  │  └───────────┘ └───────────┘ └───────────┘      │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+```typescript
+// Embedding provider abstraction
+interface EmbeddingProvider {
+  embed(text: string): Promise<number[]>;
+  embedBatch(texts: string[]): Promise<number[][]>;
+  dimensions(): number;  // 1536 for OpenAI, 1024 for Voyage, etc.
+}
+
+// Graph relation for entity linking
+interface MemoryRelation {
+  fromId: string;        // Source memory entry
+  fromType: MemoryTier;
+  toId: string;          // Target memory entry
+  toType: MemoryTier;
+  relation: "derived_from"    // semantic derived from episodic
+          | "compiled_into"   // semantic compiled into procedural
+          | "used_in_task"    // memory used during task execution
+          | "contradicts"     // newer evidence contradicts older
+          | "reinforces"      // newer evidence confirms older
+          | "supersedes";     // newer version replaces older
+  createdAt: string;
+}
+```
+
+**Why not replace SQLite with a vector database?** For a single-user local application, SQLite + sqlite-vec provides vector ANN search, full-text search, structured queries, graph traversal, and ACID transactions — all in a single file with zero ops overhead. Introducing Qdrant, ChromaDB, or Milvus adds a separate process, network calls, and deployment complexity. The `EmbeddingProvider` and `MemoryStore` interfaces are abstract — if sqlite-vec proves insufficient at scale, swapping the backend is a new implementation, not a redesign.
+
+### Memory Metabolism
+
+Memory metabolism is the active transformation of lower-tier memories into higher-tier ones:
+
+```
+Tier 2 (Episodic)                    Tier 3 (Semantic)                  Tier 4 (Procedural)
+─────────────────                    ─────────────────                  ─────────────────
+"On March 15, user asked             "This project uses Tailwind       "When adding a new component:
+ me to add a button. I               CSS with a custom design           1. Create file in src/components/
+ created src/components/              system. Components go in           2. Use Tailwind + design tokens
+ Button.tsx with Tailwind             src/components/. Design            3. Add Storybook story
+ classes and design tokens.           tokens are in theme.ts."           4. Export from index.ts"
+ User approved."
+         │                                     │                                │
+         │  pattern extraction                  │  skill compilation             │
+         │  (3+ similar episodes)               │  (5+ similar facts)            │
+         └──────────────►──────────────────────►┘──────────────►────────────────►┘
+                                                                        │
+                              METABOLISM DIRECTION ──────────────────────│───►
+                                                                        ▼
+                                                                  Skill (Evolution)
+                                                                  (directly invocable)
+```
+
+**Metabolism rules:**
+- **Episodic → Semantic**: When 3+ episodes share a structural pattern (detected via vector similarity on embeddings), extract the general fact using LLM synthesis. Mark source episodes as "digested" (retained for audit, deprioritized in retrieval). Create `derived_from` graph edges.
+- **Semantic → Procedural**: When a cluster of 5+ semantic facts describes a repeatable workflow, compile into a procedure using LLM synthesis. Validate via shadow execution on next matching task. Create `compiled_into` graph edges.
+- **Procedural → Skill**: When a procedural memory is validated 3+ times with >80% success rate, the Evolution Engine promotes it to a first-class Skill.
+- **Decay**: Episodic memories older than 90 days that haven't been referenced or metabolized are candidates for pruning. Semantic and procedural memories decay only if contradicted by newer evidence (tracked via `contradicts` graph edges).
+- **Reinforcement**: Every successful use of a memory (retrieved → led to good outcome) increases its retention score and creates a `reinforces` graph edge.
 
 ---
 
@@ -515,6 +771,184 @@ L0 Intent Plane
   │  All tasks complete → Intent status: achieved
   │  Result summary delivered to human
 ```
+
+---
+
+## Context Assembly: Giving Agents a World Model
+
+Current agent frameworks drop agents into tasks with minimal context — like blindfolding someone and asking them to navigate a building. Nous solves this with a **Context Assembly** layer that gathers rich environmental information before every agent execution.
+
+### Why This Matters
+
+Without context assembly, an agent receiving the task "read the README" doesn't know:
+- What directory the user is in
+- What project this is (language, framework, package manager)
+- What the git state is (branch, uncommitted changes)
+- What OS and tools are available
+- What the user's preferences are (from memory)
+
+With context assembly, the agent starts with all of this — like a new team member who has read the project wiki before their first day.
+
+### Three Context Sources
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Context Assembly (runs before every agent task)          │
+│                                                          │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌────────────┐│
+│  │ Environment     │ │ Project         │ │ User       ││
+│  │ Context         │ │ Context         │ │ Context    ││
+│  │                 │ │                 │ │            ││
+│  │ • CWD          │ │ • git state     │ │ • Memories ││
+│  │ • OS / arch    │ │   (branch,      │ │   (semantic││
+│  │ • shell (zsh/  │ │    status,      │ │   + procs) ││
+│  │   bash)        │ │    recent log)  │ │ • History  ││
+│  │ • PATH tools   │ │ • directory     │ │   patterns ││
+│  │   available    │ │   tree (top 3   │ │ • Known    ││
+│  │ • system time  │ │   levels)       │ │   prefs    ││
+│  │ • resources    │ │ • package.json  │ │ • Active   ││
+│  │   (disk, mem)  │ │   / Cargo.toml  │ │   intents  ││
+│  │ • active       │ │   / etc.        │ │            ││
+│  │   processes    │ │ • language /    │ │            ││
+│  │                │ │   framework    │ │            ││
+│  │                │ │ • README (first │ │            ││
+│  │                │ │   200 lines)   │ │            ││
+│  │                │ │ • CLAUDE.md /  │ │            ││
+│  │                │ │   .nous/config │ │            ││
+│  └────────┬───────┘ └────────┬───────┘ └─────┬──────┘│
+│           │                  │                │       │
+│           └──────────────────┼────────────────┘       │
+│                              ▼                        │
+│                 System Prompt Assembly                 │
+│                 (injected into agent's LLM call)      │
+│                                                       │
+│  Result: Agent knows WHERE it is, WHAT the project is,│
+│  and WHO it's working for — before executing a single │
+│  tool call.                                           │
+└───────────────────────────────────────────────────────┘
+```
+
+```typescript
+interface AssembledContext {
+  environment: {
+    cwd: string;
+    os: string;
+    arch: string;
+    shell: string;
+    availableTools: string[];      // Which CLI tools are on PATH
+    timestamp: string;
+  };
+  project: {
+    type: string;                  // "typescript-monorepo" | "python-package" | "rust-crate" | ...
+    rootDir: string;
+    gitBranch?: string;
+    gitStatus?: string;            // Clean / dirty / conflict
+    packageManager?: string;       // "bun" | "npm" | "pip" | "cargo" | ...
+    language: string;
+    framework?: string;
+    directoryTree: string;         // Top 3 levels, truncated
+    readmeSnippet?: string;        // First 200 lines of README
+    configFiles: string[];         // Which config files exist
+  };
+  user: {
+    relevantMemories: MemoryEntry[];  // From RAG retrieval
+    activeIntents: Intent[];          // What the user is currently working on
+    recentFeedbackPatterns: string[]; // "User prefers concise output", etc.
+  };
+}
+```
+
+**Context Assembly is cheap.** Environment and project context are gathered via filesystem reads and shell commands (no LLM calls). User context comes from the RAG pipeline. The total overhead is <100ms.
+
+---
+
+## Tool System (3-Tier Architecture)
+
+Current agent frameworks ship with a fixed set of tools. If the tool you need doesn't exist, you're stuck. Nous has a **3-tier tool architecture** where the system can create new tools for itself.
+
+### Tier 1 — Primitives (System Built-In, Not Replaceable)
+
+The foundational tools that everything else depends on. These are compiled into Nous and cannot be removed or modified at runtime.
+
+| Tool | Capability Required | Description |
+|------|-------------------|-------------|
+| `file_read` | `fs.read` | Read file contents |
+| `file_write` | `fs.write` | Write/create files |
+| `shell` | `shell.exec` | Execute shell commands |
+| `glob` | `fs.read` | Pattern-based file search |
+| `grep` | `fs.read` | Regex search across files |
+
+### Tier 2 — Builtins (Framework Provided, Configurable)
+
+Tools that ship with Nous but can be enabled/disabled/configured by the user. These cover common developer workflows.
+
+| Tool | Capability Required | Description |
+|------|-------------------|-------------|
+| `git_status` | `shell.exec` | Git repository state |
+| `git_diff` | `shell.exec` | Show file differences |
+| `git_log` | `shell.exec` | Commit history |
+| `git_commit` | `shell.exec` | Create commits |
+| `http_request` | `network.http` | Make HTTP requests |
+| `web_search` | `network.http` | Search the web |
+| `browser_navigate` | `browser.control` | Navigate a browser |
+| `browser_screenshot` | `browser.control` | Capture browser state |
+| `test_runner` | `shell.exec` | Run project test suite |
+| `package_install` | `shell.exec` | Install dependencies |
+| `code_analysis` | `fs.read` | AST-based code analysis |
+| `diff_patch` | `fs.write` | Apply patches to files |
+| `memory_search` | `memory.write` | Search Nous's memory |
+| `memory_store` | `memory.write` | Store to memory |
+
+### Tier 3 — Evolved (Nous-Created Tools)
+
+The most distinctive tier. When the Evolution Engine detects a `missing_tool` gap, it can create a new tool to fill it. Evolved tools are written in TypeScript, stored in the user's `.nous/tools/` directory, and registered in the ToolRegistry at runtime.
+
+```typescript
+// Example: Nous detects it frequently needs to parse YAML but has no YAML tool.
+// Evolution Engine generates:
+
+// .nous/tools/yaml_parse.ts
+import { defineTool } from "@nous/core";
+
+export default defineTool({
+  name: "yaml_parse",
+  description: "Parse a YAML file and return its structure as JSON",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path to the YAML file" }
+    },
+    required: ["path"]
+  },
+  requiredCapabilities: ["fs.read"],
+  handler: async (input, context) => {
+    const content = await Bun.file(input.path).text();
+    // Simple YAML parsing (or use a library if available)
+    return { success: true, data: parseYaml(content) };
+  }
+});
+```
+
+**Evolved tool lifecycle:**
+
+```
+Gap detected: "No YAML parsing tool"
+  │
+  ├── Evolution Engine generates tool code
+  ├── Tool is written to .nous/tools/yaml_parse.ts
+  ├── Tool is registered in ToolRegistry
+  ├── Tool is tested on a synthetic input
+  │
+  ├── If test passes:
+  │   └── Tool is available for future tasks
+  │       Logged in Evolution Log
+  │
+  └── If test fails:
+      └── Tool is marked as "failed_validation"
+          Gap remains open for next attempt
+```
+
+**The key principle:** Tier 3 tools are always additive — they cannot modify or replace Tier 1 or Tier 2 tools. They extend Nous's capabilities without risking core functionality. Creating an Evolved tool requires the `evolution.self_mutate` permission.
 
 ---
 
@@ -588,6 +1022,514 @@ for each task in DB:
 
 ---
 
+## Daemon Architecture: Nous as a Persistent Process
+
+### Why a Daemon, Not a CLI Process
+
+Every current agent framework runs as a foreground CLI process: you invoke it, it does work, it exits. This is the fundamental reason for the session-isolation problem.
+
+| Framework | Process Model | What Happens When You Close the Terminal |
+|-----------|-------------|----------------------------------------|
+| **Claude Code** | Foreground CLI | Everything stops. Context lost. |
+| **ChatGPT** | Web server (remote) | Server keeps state, but per-conversation isolation |
+| **Cursor** | IDE plugin process | Tied to IDE lifecycle |
+| **AutoGPT** | Foreground CLI | Everything stops |
+| **Nous** | **Daemon process** | **Nothing stops. Nous keeps working.** |
+
+The daemon model is the only one consistent with our design philosophy: "Nous is an operating system, not a chatbot." Operating systems don't exit when you close a terminal window.
+
+### Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│  User's Machine                                                     │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Nous Daemon (long-lived, single process)                     │  │
+│  │                                                               │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │  │
+│  │  │ Dialogue │ │Orchestr. │ │ Runtime  │ │ Evolution│       │  │
+│  │  │ Layer    │ │ (L0-L1)  │ │ (L2)     │ │ Engine   │       │  │
+│  │  └────┬─────┘ └──────────┘ └──────────┘ └──────────┘       │  │
+│  │       │                                                      │  │
+│  │  ┌────▼─────────────────────────────────────────────────┐   │  │
+│  │  │  SQLite DB (L3) — single file, single writer          │   │  │
+│  │  │  events · tasks · messages · memory · perception      │   │  │
+│  │  └──────────────────────────────────────────────────────┘   │  │
+│  │       │                                                      │  │
+│  │  ┌────▼─────────────────────────────────────────────────┐   │  │
+│  │  │  IPC Server (Unix Domain Socket: ~/.nous/nous.sock)   │   │  │
+│  │  └────┬──────────┬──────────┬───────────────────────────┘   │  │
+│  │       │          │          │                                │  │
+│  └───────┼──────────┼──────────┼────────────────────────────────┘  │
+│          │          │          │                                    │
+│   ┌──────▼───┐ ┌────▼────┐ ┌──▼──────┐                           │
+│   │ CLI      │ │ IDE     │ │ Web     │  ... (future clients)      │
+│   │ Client   │ │ Plugin  │ │ UI      │                            │
+│   │          │ │         │ │         │                            │
+│   │ Terminal │ │ VS Code │ │ Browser │                            │
+│   └──────────┘ └─────────┘ └─────────┘                            │
+│                                                                     │
+│   Clients connect/disconnect freely.                                │
+│   Daemon keeps running. State survives.                             │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Client-Daemon Protocol
+
+Clients communicate with the daemon over a Unix Domain Socket using a simple JSON-RPC-like protocol:
+
+```typescript
+// Client → Daemon
+interface ClientMessage {
+  id: string;                        // Request ID for correlation
+  type: "submit_intent"              // New user goal
+      | "send_message"               // Conversational message (multi-turn)
+      | "get_status"                 // Query active intents/tasks
+      | "get_thread"                 // Retrieve a dialogue thread
+      | "approve_decision"           // Respond to a decision queue item
+      | "cancel_intent"              // Cancel an active intent
+      | "subscribe"                  // Subscribe to push events
+      | "unsubscribe";              // Unsubscribe from push events
+  payload: unknown;
+  channelScope: ChannelScope;        // CWD, project, focused file
+}
+
+// Daemon → Client
+interface DaemonMessage {
+  id?: string;                       // Correlation ID (for request-response)
+  type: "ack"                        // Intent received, processing started
+      | "response"                   // Direct response to a request
+      | "progress"                   // Task progress update
+      | "result"                     // Task/intent completed
+      | "decision_needed"            // Human decision queue item
+      | "notification"               // Proactive message (ambient intent, etc.)
+      | "error";                     // Error
+  payload: unknown;
+  threadId?: string;                 // Which dialogue thread this belongs to
+  intentId?: string;                 // Which intent this relates to
+}
+```
+
+### Lifecycle
+
+```bash
+# Start the daemon (runs in background)
+$ nous daemon start
+  Nous daemon started (PID 12345)
+  Socket: ~/.nous/nous.sock
+  DB: ~/.nous/nous.db
+
+# CLI is now a thin client
+$ nous "Refactor the auth module"
+  Intent submitted. Thread: #auth-refactor
+  Nous is planning... (you can close this terminal)
+
+# In another terminal (or IDE), same Nous
+$ nous status
+  Active intents:
+    #1 "Refactor the auth module" [running, 3/7 tasks done]
+
+  Pending messages:
+    T4 completed: "Extracted AuthService class" (2m ago)
+
+# Attach to a thread to see live progress
+$ nous attach #auth-refactor
+  [live streaming of progress, tool calls, results]
+  [Ctrl+C to detach — does NOT cancel the work]
+
+# Stop the daemon gracefully
+$ nous daemon stop
+  Saving state... Completing current task... Done.
+```
+
+---
+
+## Unified Presence: One Nous, Many Channels
+
+### The Problem with Session-Based Interaction
+
+Every current agent framework inherits the terminal's I/O model: `1 terminal = 1 session = 1 isolated context`. This means:
+
+- Open 3 terminals = 3 agents that don't know about each other
+- Tell agent A "we use Tailwind" → agent B doesn't know
+- Waiting for a response = blocked, can't submit another task
+- Close the terminal = lose the conversation
+
+This is not a design choice — it is a legacy constraint from terminal stdio being a single sequential stream.
+
+### Nous's Model: Unified Presence
+
+Nous is **one entity** with **many communication channels**. All channels share one memory, one state, one understanding of the user. Channels are just viewports into the same mind.
+
+```typescript
+// Channel — an I/O connection to the user
+interface Channel {
+  id: string;
+  type: "cli" | "ide" | "web" | "mobile" | "api";
+  scope: ChannelScope;
+  status: "connected" | "disconnected";
+  connectedAt: string;
+  lastMessageAt: string;
+  subscriptions: string[];          // Which event types this channel receives
+}
+
+// Channel scope — influences context assembly priority, NOT memory isolation
+interface ChannelScope {
+  workingDirectory?: string;        // CLI/IDE have CWD
+  projectRoot?: string;             // Detected project root
+  focusedFile?: string;             // IDE: currently open file
+  // Scope does NOT isolate memory — memory is global
+  // Scope tells Context Assembly what to prioritize
+}
+
+// Dialogue message — unified across all channels
+interface DialogueMessage {
+  id: string;
+  channelId: string;                // Which channel sent/receives this
+  threadId: string;                 // Which conversation thread
+  timestamp: string;
+  role: "human" | "nous";
+  content: string;
+
+  // Context at time of message
+  scope: ChannelScope;              // Snapshot of channel scope when sent
+  intentId?: string;                // If this message created/relates to an intent
+  taskIds?: string[];               // Related tasks
+
+  // Delivery
+  deliveredTo: string[];            // Channel IDs that received this message
+  pending: boolean;                 // true if not yet delivered to target channel
+}
+
+// Dialogue thread — a conversation topic, may span multiple channels
+interface DialogueThread {
+  id: string;
+  topic: string;                    // Auto-inferred or user-named
+  channelIds: string[];             // Which channels have participated
+  intentIds: string[];              // Which intents were born from this thread
+  status: "active" | "idle" | "resolved";
+  createdAt: string;
+  lastActivityAt: string;
+}
+```
+
+### Non-Blocking Interaction
+
+The fundamental behavioral difference from every other framework:
+
+```
+Traditional (blocking):              Nous (non-blocking):
+
+User: "Refactor auth"               User: "Refactor auth"
+  │                                    │
+  ├── [waiting... 5 min...]            ├── Nous: "On it. Thread #auth-refactor."
+  │   (can't do anything)             │   (user is free immediately)
+  │                                    │
+  │                                    ├── User: "Also fix the tests"
+  │                                    │   Nous: "Queued after refactor
+  │                                    │          (shared files). Thread #tests."
+  │                                    │
+  ▼                                    ├── [Nous works in background]
+Agent: "Done"                          │
+                                       ├── Nous → push: "Refactor done. 5 files
+                                       │   changed. Review auth.ts? [Y/N]"
+                                       │
+                                       └── Nous → push: "Starting tests now."
+```
+
+---
+
+## Conflict Detection: Inter-Task Dependency and Resource Analysis
+
+### The Problem No Framework Solves
+
+When a user submits multiple intents concurrently, they may conflict:
+
+| Conflict Type | Example | Risk |
+|--------------|---------|------|
+| **Resource conflict** | Intent A edits `auth.ts`, Intent B also edits `auth.ts` | Overwrites, merge conflicts |
+| **Semantic conflict** | "Add dark mode" + "Remove all CSS" | Contradictory goals |
+| **Dependency** | "Fix the tests" depends on "Refactor auth" completing first | Ordering matters |
+| **Resource exhaustion** | 5 concurrent intents all calling LLM API | Budget/rate limit exceeded |
+
+No current agent framework handles this. Each operates in isolation, unaware of concurrent work.
+
+### How Other Frameworks Compare
+
+| Framework | Concurrent Intents | Conflict Detection | Resolution |
+|-----------|-------------------|-------------------|------------|
+| **Claude Code** | No (single session, blocking) | N/A | N/A |
+| **ChatGPT** | No (single conversation) | N/A | N/A |
+| **AutoGPT** | No (single task loop) | N/A | N/A |
+| **Devin** | Yes (background tasks) | None — tasks can silently conflict | User discovers broken state |
+| **Nous** | **Yes (multiple concurrent intents)** | **Two-layer: static + semantic** | **Auto-sequence or ask user** |
+
+### Two-Layer Conflict Analysis
+
+```
+New intent arrives: "Fix the tests in auth.test.ts"
+  │
+  ▼
+Layer 1: Static Resource Analysis (fast, no LLM)
+  │
+  │  Scan new intent's likely resources (files, commands, services)
+  │  against currently active intents' claimed resources.
+  │
+  │  Resource claims are declared by the Task Planner when creating
+  │  the Task DAG:
+  │
+  │  Active Intent #1: "Refactor auth module"
+  │    Task T3 (running): claims write lock on src/auth.ts
+  │    Task T4 (queued): claims write lock on src/auth.service.ts
+  │
+  │  New intent: "Fix auth tests"
+  │    Would need: read src/auth.ts, write tests/auth.test.ts
+  │
+  │  Overlap detected: src/auth.ts (read vs write)
+  │
+  ├── No overlap → proceed to Layer 2 (lightweight check)
+  │
+  └── Overlap detected → proceed to Layer 2 (detailed analysis)
+       │
+       ▼
+Layer 2: Semantic Conflict Analysis (LLM-assisted)
+  │
+  │  LLM call (fast model) with:
+  │    - New intent description
+  │    - Active intents + their current state
+  │    - Detected resource overlaps
+  │    - Question: "Are these intents conflicting, dependent, or independent?"
+  │
+  │  Possible verdicts:
+  │
+  ├── INDEPENDENT: No conflict. Execute in parallel.
+  │   "These intents touch different aspects of the same file
+  │    but won't interfere."
+  │
+  ├── DEPENDENT: Must be sequenced.
+  │   "Fix tests should run AFTER refactor completes,
+  │    because the refactor will change the API that tests verify."
+  │   → Auto-add dependency edge in the Task DAG
+  │   → Notify user: "Queued after refactor (dependent)."
+  │
+  ├── CONFLICTING: Cannot both succeed.
+  │   "These intents have contradictory goals."
+  │   → Route to Human Decision Queue
+  │   → "Intent A and B conflict. Which takes priority?"
+  │
+  └── RESOURCE_CONTENTION: Can both succeed but not simultaneously.
+      "Both need exclusive write access to auth.ts."
+      → Auto-sequence with shortest-first scheduling
+      → Notify user: "Running sequentially (shared file lock)."
+```
+
+### Resource Claim Model
+
+```typescript
+// Every Task declares what resources it will touch
+interface ResourceClaim {
+  taskId: string;
+  intentId: string;
+  resources: ResourceLock[];
+}
+
+interface ResourceLock {
+  type: "file" | "directory" | "service" | "api" | "port";
+  target: string;                    // File path, service name, API endpoint, etc.
+  mode: "read" | "write" | "exclusive";  // Read can be shared, write/exclusive cannot
+  claimed: boolean;                  // Whether this lock is currently held
+}
+
+// Conflict analysis result
+interface ConflictAnalysis {
+  newIntentId: string;
+  activeIntentIds: string[];
+
+  staticOverlaps: ResourceOverlap[]; // From Layer 1
+  semanticVerdict: "independent" | "dependent" | "conflicting" | "resource_contention";
+
+  resolution: ConflictResolution;
+  confidence: number;                // LLM's confidence in the verdict
+  requiresHumanDecision: boolean;    // true if conflicting or low confidence
+}
+
+interface ConflictResolution {
+  type: "parallel"                   // No conflict, run simultaneously
+     | "sequence"                    // Add dependency, run in order
+     | "cancel_new"                  // New intent superseded by active one
+     | "cancel_active"              // New intent supersedes active one
+     | "human_decide";              // Cannot auto-resolve
+
+  reason: string;                    // Human-readable explanation
+  dependencyEdges?: { from: string; to: string }[];  // If type == "sequence"
+}
+```
+
+### MVP vs. Future
+
+**MVP:** Layer 1 (static resource analysis) is fully implemented. Layer 2 (LLM semantic analysis) exists but uses a simple prompt — not deeply tuned. The `sequence` resolution is the default safe choice when overlap is detected. Full semantic conflict reasoning is refined post-MVP.
+
+**Post-MVP:** Train the semantic analyzer on real conflict patterns from the Evolution Engine's experience collection. Common conflict patterns become Skills — recognized without an LLM call.
+
+---
+
+## Message Delivery: Surviving Channel Disconnects
+
+### The Problem
+
+```
+User (CLI): "Deploy to staging"
+Nous: "Starting deployment..."
+  │
+  [User closes terminal]
+  │
+  [5 minutes later, deployment finishes]
+  │
+  Nous: "Deployment complete. URL: https://staging.app.com"
+        → Where does this message go?
+```
+
+Every current framework loses this message. Nous must not.
+
+### Design: Persistent Message Outbox
+
+All outbound messages from Nous go through a **Message Outbox** in L3 (SQLite). Messages are only deleted after confirmed delivery to at least one channel.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Message Lifecycle                                            │
+│                                                               │
+│  Nous generates a message (result, notification, question)    │
+│    │                                                          │
+│    ▼                                                          │
+│  Message written to Outbox (L3 SQLite)                        │
+│  status: "pending", deliveredTo: []                           │
+│    │                                                          │
+│    ├── Channel connected?                                     │
+│    │   ├── YES → deliver immediately                          │
+│    │   │         status: "delivered"                           │
+│    │   │         deliveredTo: ["channel-123"]                  │
+│    │   │                                                      │
+│    │   └── NO → message waits in outbox                       │
+│    │             │                                            │
+│    │             ├── Channel reconnects later?                 │
+│    │             │   └── YES → deliver all pending messages    │
+│    │             │             for this channel (ordered)      │
+│    │             │                                            │
+│    │             ├── Another channel connects?                 │
+│    │             │   └── YES → deliver there instead           │
+│    │             │             (Nous has one identity,         │
+│    │             │              any channel can receive)       │
+│    │             │                                            │
+│    │             └── TTL expires? (configurable, default 7d)   │
+│    │                 └── status: "expired"                     │
+│    │                     archived, not deleted                 │
+│    │                                                          │
+│    └── Message requires human response? (decision queue)      │
+│        └── Elevated priority. Nous may also use               │
+│            fallback channels (OS notification, email)          │
+│            if configured.                                     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Message Priority and Delivery Strategy
+
+```typescript
+interface OutboxMessage {
+  id: string;
+  threadId: string;
+  intentId?: string;
+
+  // Content
+  content: DaemonMessage;
+  priority: "low" | "normal" | "high" | "urgent";
+
+  // Delivery state
+  status: "pending" | "delivered" | "expired" | "archived";
+  createdAt: string;
+  deliveredAt?: string;
+  deliveredTo: string[];             // Channel IDs
+  ttl: number;                       // Seconds until expiry (default: 7 days)
+
+  // Targeting
+  targetChannelId?: string;          // Prefer specific channel (null = any)
+  requiresResponse: boolean;         // true = decision queue item
+  fallbackStrategy?: "os_notification" | "email" | "none";
+}
+```
+
+| Priority | Behavior | Example |
+|----------|----------|---------|
+| **low** | Deliver when a channel next connects. No fallback. | Progress updates, FYI notifications |
+| **normal** | Deliver to any connected channel, or wait. | Task completion results |
+| **high** | Deliver immediately. If no channel, use OS notification (if configured). | Errors, blocked tasks needing input |
+| **urgent** | Deliver immediately + OS notification + optional email. | Security alerts, data loss risks, deployment failures |
+
+### Reconnection Protocol
+
+When a channel connects to the daemon:
+
+```
+Channel connects
+  │
+  ▼
+Daemon: "Welcome. You have N pending messages."
+  │
+  ├── Deliver pending messages (oldest first, grouped by thread)
+  │
+  ├── Show active intents status summary
+  │
+  └── If any decision queue items are waiting:
+      "I need your input on 2 items:"
+      [1] "Deploy to prod? (waiting 3h)"
+      [2] "auth.ts has a design decision (waiting 15m)"
+```
+
+This means the user experience on reconnect is:
+
+```bash
+$ nous
+  Welcome back. 3 messages pending.
+
+  Thread #auth-refactor:
+    ✓ Refactor complete (2h ago). 5 files changed.
+    ⚠ Design decision needed: Should AuthService be a singleton?
+      [a]pprove singleton  [b] use dependency injection  [v]iew context
+
+  Thread #deploy:
+    ✓ Staging deployment succeeded. URL: https://staging.app.com
+
+  Active: 0 intents running. Nous is idle.
+```
+
+### Daemon Restart Resilience
+
+The daemon may crash or be restarted. Because all state is in SQLite:
+
+- **Messages** in outbox survive restart (they're in L3)
+- **Active tasks** have their last state in the Task Queue DB
+- **Running agents** are detected as stale (heartbeat timeout) and restarted by the Scheduler
+- **Sensors** are stateless and auto-restarted by the Process Supervisor
+- **Channels** must reconnect (they detect daemon restart via socket EOF)
+
+```
+Daemon crashes
+  │
+  ▼
+Daemon restarts (auto via systemd/launchd, or manual)
+  │
+  ├── Reads SQLite: recovers all state
+  ├── Restarts Scheduler loop
+  ├── Restarts Sensors
+  ├── Detects stale tasks → re-queues them
+  ├── Opens IPC socket
+  │
+  └── Channels reconnect → receive any pending messages
+```
+
+---
+
 ## Comparative Analysis: Why Existing Frameworks Fall Short
 
 | Dimension | OpenClaw | LangChain | AutoGPT | Nous |
@@ -597,12 +1539,19 @@ for each task in DB:
 | Intent layer | None (tasks are intents) | None | None | Intent → Plan → Task (3 levels) |
 | Multi-agent coordination | Subagent (no monitoring) | Chain (sequential) | Single agent | Supervisor model + liveness tracking |
 | Memory | 4 tiers (no procedural) | Short-term only | File-based | 5 tiers (with Procedural Memory) |
-| Security | Global permissions | None | None | Capability tokens, least-privilege |
+| Permission model | Global permissions | None | None | User-controlled, directory/command scoped, Claude Code-style |
 | Observability | Log files | Callbacks | Log files | Event sourcing, full causal chain |
 | Human interaction | Chat + Cron | Chat | Chat | Intent layer + minimal-interruption decision queue |
 | Perception | None | None | None | Sensors + Attention Filter + Ambient Intent |
-| Growth model | None | None | None | 5-stage maturity with trust scores + capability graduation |
-| Memory metabolism | None | None | None | Active transformation: episodic → semantic → procedural |
+| Self-evolution | None | None | None | 4-layer: experience → skill → gap detection → self-mutation |
+| Memory + RAG | FTS only | Short-term only | File-based | 5-tier + vector + graph + re-ranking |
+| Tool creation | None | None | None | 3-tier tools: Nous creates new tools from detected gaps |
+| Context awareness | None | None | None | Context Assembly: env + project + user context injection |
+| Process model | CLI (foreground, exits) | Web server (remote) | CLI (foreground, exits) | **Daemon** (persistent, survives terminal close) |
+| Multi-channel | No (1 session = 1 context) | No (1 chat = 1 context) | No | **Unified Presence**: one Nous, many channels, shared state |
+| Concurrent intents | No (blocking) | No (blocking) | No | **Non-blocking**: submit and detach, push results |
+| Conflict detection | N/A | N/A | N/A | Two-layer: static resource locks + LLM semantic analysis |
+| Offline delivery | N/A | N/A | N/A | Persistent message outbox, deliver on reconnect |
 | Cross-instance learning | None | None | None | Federated pattern sharing + specialist consultation |
 | Inter-instance communication | None | None | None | Hybrid relay + P2P, E2E encrypted, user-controlled |
 
@@ -615,526 +1564,382 @@ The latter is more structurally sound. An OS-first design gets reliability, sche
 
 ---
 
-## Growth Model: From Stranger to Extended Self
+## Evolution Engine: How Nous Gets Smarter
 
-Most agent frameworks treat the agent-user relationship as static: configure once, run forever. This is architecturally wrong. The relationship between Nous and its user is **a living system that must grow**, not a tool that gets configured.
+Most agent frameworks are static: they execute the same way on day 1 and day 1000. Nous is fundamentally different — **it evolves**. Every task execution, every user interaction, every failure is fuel for self-improvement.
+
+This is not about earning more permissions (that's the Permission System's job, controlled by the user). This is about Nous becoming genuinely more capable: learning new skills, creating new tools, identifying its own weaknesses, and writing code to fix them.
 
 ### How Current Frameworks Handle Growth (They Don't)
 
-| Framework | Memory Model | Growth Strategy | Trust Model | Cross-Instance Learning |
-|-----------|-------------|----------------|-------------|------------------------|
-| **ChatGPT Memory** | Flat fact list ("user likes Python") | Accumulate facts forever | None — same permissions always | None |
-| **Claude Code** | File-based memory (CLAUDE.md + memory dir) | User manually curates | Static permission modes | None |
-| **LangChain** | Pluggable (buffer, summary, vector) | None — session-scoped by default | None | None |
+| Framework | Memory Model | Skill Learning | Self-Improvement | Cross-Instance Learning |
+|-----------|-------------|----------------|-----------------|------------------------|
+| **ChatGPT Memory** | Flat fact list ("user likes Python") | None | None | None |
+| **Claude Code** | File-based memory (CLAUDE.md + memory dir) | None — user manually curates | None | None |
+| **LangChain** | Pluggable (buffer, summary, vector) | None — session-scoped | None | None |
 | **AutoGPT** | File-based workspace | None | None | None |
-| **OpenClaw** | 4-tier memory (no procedural) | Passive accumulation | Global permissions | None |
+| **OpenClaw** | 4-tier memory (no procedural) | None — passive accumulation | None | None |
 
-**The universal failure:** Every framework treats memory as a **database** — you put things in, you get things out. None models memory as a **metabolism** — raw experience being digested, transformed, and integrated into increasingly sophisticated understanding.
+**The universal failure:** Every framework treats the agent as a **static executor** — it uses the same tools, the same strategies, the same prompts forever. None models the agent as a **living system** that actively metabolizes experience into skill and identifies its own evolutionary path.
 
-The difference is the difference between a notebook and a brain.
+The difference is the difference between a calculator and a brain.
 
-### The Five Maturity Stages
+### The Four Evolution Layers
 
-Nous models its relationship with each user as a maturity progression. Each stage has explicit entry criteria, capability scope, and behavioral characteristics.
-
-```
-Stage 0        Stage 1          Stage 2         Stage 3            Stage 4
-STRANGER ────► ACQUAINTANCE ──► COLLEAGUE ────► TRUSTED PARTNER ─► EXTENDED SELF
-  │               │                │                │                  │
-  │  First        │  Knows basic   │  Understands   │  Makes judgment  │  Handles 80%+
-  │  contact.     │  facts. Less   │  patterns.     │  calls within    │  autonomously.
-  │  Max caution. │  confirmation  │  Proactive     │  boundaries.     │  Surfaces only
-  │  Zero context.│  for routine.  │  suggestions.  │  Ambient aware.  │  the novel.
-  │               │                │                │                  │
-  ▼               ▼                ▼                ▼                  ▼
-  Trust: 0       Trust: 0.2       Trust: 0.5      Trust: 0.8         Trust: 0.95
-  Confirm: ALL   Confirm: MOST    Confirm: SOME   Confirm: RARE      Confirm: NOVEL ONLY
-```
-
-#### Stage 0 — Stranger
-
-The first conversation. Nous knows nothing.
-
-| Aspect | Behavior |
-|--------|----------|
-| **Capabilities** | Minimal defaults only. No file writes, no shell exec, no network. |
-| **Confirmation** | Every non-trivial action requires explicit approval. |
-| **Memory** | Working memory only (context window). Nothing persists yet. |
-| **Perception** | No sensors active. Pure request-response. |
-| **Goal** | Learn who this human is — role, project context, communication style. |
-| **Transition to Stage 1** | After N successful interactions where Nous correctly understood intent, OR user explicitly grants initial trust (e.g., shares a CLAUDE.md / project brief). |
-
-#### Stage 1 — Acquaintance
-
-Nous knows the basics: who you are, what you're working on, how you like to communicate.
-
-| Aspect | Behavior |
-|--------|----------|
-| **Capabilities** | Basic read/write within project scope. Shell exec with allowlist. |
-| **Confirmation** | Routine tasks (file edits, searches) proceed without asking. Novel task types still confirm. |
-| **Memory** | Episodic + Semantic tiers active. Begins building user profile. |
-| **Perception** | File system watcher active for current project. |
-| **Goal** | Build procedural memory — learn which execution paths work for this user's codebase. |
-| **Transition to Stage 2** | Procedural memory reaches critical mass (M successful task patterns stored). User correction rate drops below threshold. |
-
-#### Stage 2 — Colleague
-
-Nous understands not just what you ask, but the patterns behind your requests.
-
-| Aspect | Behavior |
-|--------|----------|
-| **Capabilities** | Broader tool access. Can make multi-file changes. Can run tests autonomously. |
-| **Confirmation** | Only for irreversible or cross-boundary actions. Routine work is autonomous. |
-| **Memory** | All 5 tiers active. Procedural memory drives task execution. Prospective memory tracks commitments. |
-| **Perception** | Calendar + email sensors active. Begins ambient awareness. |
-| **Goal** | Develop predictive capability — anticipate needs before they're voiced. |
-| **Transition to Stage 3** | Proactive suggestions are accepted >70% of the time. User delegates multi-step tasks without specifying method. Nous has demonstrated reliable judgment on ambiguous tasks. |
-
-#### Stage 3 — Trusted Partner
-
-Nous makes judgment calls. You review outcomes, not processes.
-
-| Aspect | Behavior |
-|--------|----------|
-| **Capabilities** | Nearly full capability set. Can create PRs, deploy to staging, communicate with external services. |
-| **Confirmation** | Only for genuinely novel situations or irreversible production changes. |
-| **Memory** | Memory metabolism fully active — episodic experiences are being distilled into semantic knowledge and procedural skills. |
-| **Perception** | Full sensor suite active. Ambient awareness of work context, schedule, and communication. |
-| **Goal** | Minimize human cognitive burden to pure decision-making. |
-| **Transition to Stage 4** | User consistently delegates entire workflows. Nous's autonomous decisions align with user's values and judgment >95% of the time. |
-
-#### Stage 4 — Extended Self
-
-Nous is an extension of you. Like a trusted chief of staff who has worked with you for years.
-
-| Aspect | Behavior |
-|--------|----------|
-| **Capabilities** | Full capability set, dynamically scoped per task. |
-| **Confirmation** | Only for situations Nous has never encountered AND that carry significant consequences. |
-| **Memory** | Self-maintaining. Actively prunes stale knowledge. Generates meta-insights from accumulated experience. |
-| **Perception** | Fully ambient. Knows what you're working on without being told. Anticipates blockers before you hit them. |
-| **Goal** | You provide goals and values. Nous handles everything else. |
-
-### Core Growth Mechanisms
-
-Growth doesn't happen by accumulating data. It happens through four active mechanisms:
-
-#### 1. Trust Score — Bidirectional, Earned, Decayable
-
-Trust is not a config setting. It is a **computed metric** that changes with every interaction.
+Nous's self-improvement operates in four layers, each building on the one below:
 
 ```
-                    ┌─────────────────────────┐
-                    │      Trust Profile       │
-                    │                          │
-  User → Nous:     │  reliability: 0.82       │  ← Did Nous do what it said it would?
-                    │  judgment: 0.61          │  ← Were Nous's autonomous decisions good?
-                    │  proactivity: 0.45       │  ← Were Nous's suggestions welcome?
-                    │                          │
-  Nous → Self:     │  confidence: 0.73        │  ← How often is Nous right about its own certainty?
-                    │  calibration: 0.88       │  ← When Nous says 80% sure, is it right 80% of the time?
-                    │                          │
-                    │  maturityStage: 2        │  ← Derived from above scores
-                    │  lastTransition: <date>  │
-                    └─────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Evolution Engine                               │
+│                                                                   │
+│  Layer 4: Self-Mutation（自我代码迭代）                            │
+│  ┌────────────────────────────────────────────────────────┐      │
+│  │  Nous modifies its own source code                      │      │
+│  │  • Identifies code-level defects → generates patch →    │      │
+│  │    auto-tests → submits for review                      │      │
+│  │  • Creates new Tool implementations → registers in      │      │
+│  │    ToolRegistry                                         │      │
+│  │  • Improves prompt templates and agent definitions      │      │
+│  │  Requires: evolution.self_mutate permission             │      │
+│  └────────────────────────────────────────────────────────┘      │
+│                         ▲ depends on                              │
+│  Layer 3: Gap Detection（能力缺陷识别）                           │
+│  ┌────────────────────────────────────────────────────────┐      │
+│  │  Analyzes failed and suboptimal task executions to       │      │
+│  │  identify systematic weaknesses                         │      │
+│  │  • "I failed 3 consecutive tasks because I lack an      │      │
+│  │    HTTP request tool"                                   │      │
+│  │  • "User edited 60% of my CSS output → weak CSS skill"  │      │
+│  │  • "This task type averages 15 ReAct iterations, too    │      │
+│  │    many — need a procedural shortcut"                   │      │
+│  │  Output: CapabilityGap + EvolutionProposal              │      │
+│  └────────────────────────────────────────────────────────┘      │
+│                         ▲ depends on                              │
+│  Layer 2: Skill Crystallization（技能结晶）                       │
+│  ┌────────────────────────────────────────────────────────┐      │
+│  │  Extracts reusable skills from memory metabolism         │      │
+│  │  episodic → semantic → procedural (memory metabolism)    │      │
+│  │  procedural → Skill (crystallization)                   │      │
+│  │  A Skill is a directly invocable execution path that    │      │
+│  │  skips re-reasoning from scratch                        │      │
+│  └────────────────────────────────────────────────────────┘      │
+│                         ▲ depends on                              │
+│  Layer 1: Experience Collection（经验采集）                       │
+│  ┌────────────────────────────────────────────────────────┐      │
+│  │  Records the complete trace of every task execution      │      │
+│  │  • Which tools were used, in what order                 │      │
+│  │  • User feedback (accept / edit / reject / undo)        │      │
+│  │  • Token consumption, wall-clock time, retry count      │      │
+│  │  • Execution environment context                        │      │
+│  │  • Error messages and failure modes                     │      │
+│  └────────────────────────────────────────────────────────┘      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Trust increases through:**
-- Successful task completion without correction
-- Proactive suggestions that are accepted
-- Accurate self-assessment ("I'm not sure about this" → user confirms it was indeed ambiguous)
+### The Evolution Cycle
 
-**Trust decreases through:**
-- Tasks that require correction or rollback
-- Proactive suggestions that are rejected
-- Confident assertions that turn out wrong (overconfidence penalty is harsh)
-
-**Trust decays over time** if not reinforced. A Nous that hasn't interacted with its user for weeks should not retain Stage 3 trust — the user's codebase and priorities may have changed.
-
-#### 2. Capability Graduation — Dynamic Authorization
-
-Capabilities are not static. They expand with demonstrated reliability in specific domains.
+The four layers form a continuous positive feedback loop:
 
 ```
-Initial state:
-  "fs.write": false
-
-After 10 successful file reads with no issues:
-  → Nous proposes: "I've read 10 files accurately. Can I write files within src/?"
-  → User approves (or Nous auto-graduates if trust threshold met)
-
-  "fs.write": { paths: ["src/**"] }
-
-After 20 successful writes with <5% correction rate:
-  → Graduation: write access expands to full project
-
-  "fs.write": { paths: ["**"] }
+Execute task → Collect experience → Detect patterns → Crystallize skill
+     ↑                                                        │
+     │         Improved Nous executes next task better         │
+     │                                                        ▼
+     └──── Apply skill ◄── Implement proposal ◄── Detect gap ─┘
 ```
 
-This mirrors how you'd onboard a new team member: start with read access, earn write access, eventually get deploy access.
+**This is biological evolution applied to software.** Nous doesn't get better because someone grants it more access. It gets better because it extracts learning from every experience, identifies what it still can't do well, and builds the capability to do it.
 
-#### 3. Memory Metabolism — From Experience to Wisdom
+### Core Evolution Mechanisms
 
-Raw experience is not knowledge. Knowledge is not skill. The memory system must actively **transform** lower-tier memories into higher-tier ones.
+#### 1. Experience Collection — Every Interaction Is Training Data
 
-```
-Tier 2 (Episodic)                    Tier 3 (Semantic)                  Tier 4 (Procedural)
-─────────────────                    ─────────────────                  ─────────────────
-"On March 15, user asked             "This project uses Tailwind       "When adding a new component:
- me to add a button. I               CSS with a custom design           1. Create file in src/components/
- created src/components/              system. Components go in           2. Use Tailwind + design tokens
- Button.tsx with Tailwind             src/components/. Design            3. Add Storybook story
- classes and design tokens.           tokens are in theme.ts."           4. Export from index.ts"
- User approved."
-         │                                     │                                │
-         │  pattern extraction                  │  skill compilation             │
-         │  (after N similar episodes)          │  (after M similar facts)       │
-         └──────────────►──────────────────────►┘──────────────►────────────────►┘
+Every task execution produces an `ExecutionTrace`:
 
-                              METABOLISM DIRECTION ──────────────────────►
-```
+```typescript
+interface ExecutionTrace {
+  taskId: string;
+  intentId: string;
+  agentId: string;
 
-**Metabolism rules:**
-- **Episodic → Semantic**: When 3+ episodes share the same pattern, extract the general fact. Mark episodes as "digested" (retain for audit but deprioritize in retrieval).
-- **Semantic → Procedural**: When a cluster of semantic facts describes a repeatable workflow, compile into a procedure. Test the procedure on the next matching task.
-- **Decay**: Episodic memories older than 30 days that haven't been referenced or metabolized are candidates for pruning. Semantic and procedural memories decay only if contradicted by newer evidence.
-- **Reinforcement**: Every time a memory is successfully used (retrieved and led to good outcome), its retention score increases.
+  // What happened
+  toolCalls: ToolCallRecord[];     // Ordered sequence of tool invocations
+  reasoningSteps: string[];        // Agent's chain of thought (anonymizable)
+  tokensUsed: number;
+  wallClockMs: number;
+  reactIterations: number;
+  retriesCount: number;
 
-#### 4. Growth Checkpoints — Explicit Negotiation
+  // How it ended
+  outcome: "success" | "partial" | "failure" | "timeout" | "escalated";
+  errorMessages?: string[];
 
-Nous does not silently expand its scope. At each maturity transition, it explicitly proposes the change:
+  // User signal
+  userFeedback?: UserFeedback;
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  GROWTH CHECKPOINT                                                       │
-│                                                                          │
-│  Current stage: 1 (Acquaintance)                                         │
-│  Proposed stage: 2 (Colleague)                                           │
-│                                                                          │
-│  Evidence:                                                               │
-│  - 47 tasks completed, 2 required correction (95.7% accuracy)            │
-│  - 12 procedural memories compiled and validated                         │
-│  - User correction rate dropped from 23% → 4% over last 30 days         │
-│                                                                          │
-│  What changes:                                                           │
-│  + Can make multi-file changes without per-file confirmation             │
-│  + Can run test suites autonomously                                      │
-│  + Calendar sensor activates (ambient schedule awareness)                │
-│  + Will begin making proactive suggestions                               │
-│                                                                          │
-│  [Approve]  [Defer]  [Customize — choose which capabilities to grant]    │
-└─────────────────────────────────────────────────────────────────────────┘
+  // Environment snapshot
+  environmentContext: EnvironmentSnapshot;
+}
+
+interface UserFeedback {
+  type: "accept" | "edit" | "reject" | "undo" | "explicit_praise" | "explicit_correction";
+  detail?: string;                 // What the user changed or said
+  editDiff?: string;               // If type=edit, the diff of what user changed
+}
 ```
 
-The user can always override: skip stages, revert to a lower stage, or customize which capabilities to grant at each level.
+Every signal matters, not just explicit corrections. Silence (accept without edit) is weak positive. Editing is informative — the diff is the lesson. Rejection is strong corrective. The system learns from all of them.
 
-#### 5. Feedback Loop — Every Signal Counts
+#### 2. Skill Crystallization — From Repetition to Competence
+
+When the Memory Metabolism process (see Memory System below) produces a Procedural Memory, the Evolution Engine evaluates whether it should be promoted to a **Skill** — a first-class, directly invocable execution path.
+
+```typescript
+interface Skill {
+  id: string;
+  name: string;                      // "setup-eslint-monorepo"
+  description: string;               // Semantic description for retrieval matching
+  embedding: number[];               // Vector embedding for similarity search
+
+  // When to use this skill
+  triggerConditions: string[];       // Natural language conditions
+  applicabilityCheck: string;        // Code/logic to verify conditions are met
+
+  // The procedure
+  steps: SkillStep[];
+
+  // Provenance
+  sourceEpisodeIds: string[];        // Which experiences this was distilled from
+  sourceProceduralId: string;        // Which procedural memory was promoted
+
+  // Quality tracking
+  successCount: number;
+  failureCount: number;
+  avgTokenSaved: number;             // Tokens saved vs. reasoning from scratch
+  userSatisfactionRate: number;      // Accept rate when this skill is applied
+  lastUsed: string;
+
+  // Versioning
+  version: number;
+  supersedes?: string;               // ID of skill this replaced
+}
+
+interface SkillStep {
+  order: number;
+  description: string;
+  toolName: string;
+  toolArgsTemplate: Record<string, string>;  // Parameterized — filled at runtime
+  expectedOutcome: string;
+  fallbackStrategy?: string;         // What to do if this step fails
+}
+```
+
+**Skill vs. Procedural Memory:** A procedural memory is a passive record ("I did X, Y, Z and it worked"). A Skill is an active capability ("When condition C is met, execute steps X, Y, Z with parameters P"). Skills are executable; procedural memories are reference material.
+
+**Skill promotion criteria:**
+- Procedural memory has been validated 3+ times
+- Success rate > 80%
+- User satisfaction > 70%
+- The pattern is generalizable (not tied to one specific file or context)
+
+#### 3. Gap Detection — Self-Diagnosis
+
+After every task (especially failures and low-quality completions), the Evolution Engine runs a lightweight analysis:
+
+```typescript
+interface CapabilityGap {
+  id: string;
+  category: "missing_tool"           // Needed a tool that doesn't exist
+           | "weak_domain"           // Poor performance in a specific domain
+           | "inefficient_pattern"   // Task succeeds but wastes too many tokens/time
+           | "missing_context"       // Lacked environmental awareness
+           | "prompt_weakness";      // System prompt or agent definition is suboptimal
+
+  description: string;               // Human-readable explanation
+  evidence: GapEvidence[];           // Which tasks exposed this weakness
+  frequency: number;                 // How often this gap is encountered
+  impact: "low" | "medium" | "high"; // Effect on task success rate
+
+  // Self-proposed fix
+  proposedFix?: EvolutionProposal;
+  status: "detected" | "proposal_generated" | "fix_applied" | "validated" | "wont_fix";
+}
+
+interface GapEvidence {
+  taskId: string;
+  timestamp: string;
+  failureMode: string;               // What specifically went wrong
+  tokenWaste?: number;               // How many tokens were wasted due to this gap
+}
+```
+
+**Gap detection patterns:**
+
+| Pattern | Detection Logic | Example |
+|---------|----------------|---------|
+| Missing tool | Agent's ReAct loop mentions needing X but no tool exists | "I need to make an HTTP request but have no tool for it" |
+| Weak domain | User edit rate > 50% for tasks in domain D | User rewrites most CSS output → weak CSS domain |
+| Inefficient pattern | Avg ReAct iterations for task type T > 2× median | Simple file renames take 10 iterations instead of 2 |
+| Missing context | Agent asks user for info that should be ambient | "What framework does this project use?" (should know from project analysis) |
+| Prompt weakness | Same misunderstanding pattern across 3+ tasks | Agent consistently misinterprets "refactor" as "rewrite" |
+
+#### 4. Self-Mutation — Writing Code to Fix Yourself
+
+This is the most powerful and most carefully controlled layer. When Nous identifies a gap and generates an EvolutionProposal, it can implement the fix itself.
+
+```typescript
+interface EvolutionProposal {
+  id: string;
+  gapId: string;                     // Which gap this addresses
+  type: "new_tool"                   // Create a new tool implementation
+      | "new_skill"                  // Compile a new skill from patterns
+      | "prompt_improvement"         // Improve a system prompt or agent definition
+      | "code_patch"                 // Patch Nous's own source code
+      | "config_change";             // Modify runtime configuration
+
+  description: string;               // What this proposal does
+  rationale: string;                 // Why this is the right fix
+  implementation: string;            // The actual code/config change
+  testPlan: string;                  // How to validate the fix works
+
+  // Risk assessment
+  risk: "low" | "medium" | "high";
+  reversible: boolean;               // Can this change be undone?
+  affectedComponents: string[];      // Which parts of the system are touched
+
+  // Approval
+  requiresHumanApproval: boolean;    // Derived from risk level + permission
+  status: "proposed" | "approved" | "implementing" | "testing" | "validated" | "rejected" | "rolled_back";
+
+  // Validation results
+  testResults?: {
+    passed: boolean;
+    details: string;
+    beforeMetrics: PerformanceMetrics;
+    afterMetrics: PerformanceMetrics;
+  };
+}
+
+interface PerformanceMetrics {
+  avgTokensPerTask: number;
+  avgReactIterations: number;
+  successRate: number;
+  userSatisfactionRate: number;
+}
+```
+
+**Self-mutation safety rules:**
+
+```
+Can Nous auto-apply this evolution?
+  │
+  ├── type == "new_skill" AND risk == "low"?
+  │   └── YES. Skills are additive — they don't change existing behavior.
+  │       Auto-apply, log to Evolution Log, validate on next matching task.
+  │
+  ├── type == "new_tool" AND risk == "low"?
+  │   └── MAYBE. Check evolution.self_mutate permission.
+  │       If auto_allow → create tool, register, log.
+  │       If always_ask → show proposal to user for approval.
+  │
+  ├── type == "prompt_improvement"?
+  │   └── MAYBE. Check risk level.
+  │       Low risk (minor wording) → auto-apply with A/B test.
+  │       Medium/high risk → user approval required.
+  │
+  ├── type == "code_patch"?
+  │   └── ALWAYS ask user. Code patches are never auto-applied.
+  │       Present: diff, rationale, test plan, risk assessment.
+  │       User decides: apply / reject / modify.
+  │
+  └── type == "config_change"?
+      └── Check specific config key against permission rules.
+```
+
+**The key insight:** Low-risk, additive evolution (new skills, new tools) can be automatic. High-risk, subtractive evolution (code patches, prompt changes) always involves the user. This lets Nous grow rapidly in safe dimensions while remaining human-supervised in dangerous ones.
+
+### Evolution Feedback Loop — Every Signal Counts
 
 Every interaction is a learning signal, not just explicit corrections:
 
-| Signal | What Nous Learns | Weight |
-|--------|-----------------|--------|
-| User accepts result without edit | Execution path was correct | +1 (weak positive) |
-| User edits result | Execution was close but imperfect — diff is the lesson | +2 (informative) |
-| User rejects result entirely | Approach was wrong — analyze what went wrong | +3 (strong corrective) |
-| User says "perfect" / "exactly" | Non-obvious approach validated — remember this judgment call | +4 (strong positive) |
-| User undoes Nous's action | Trust penalty — overstepped or misjudged | -3 (trust damaging) |
-| User ignores Nous's proactive suggestion | Suggestion wasn't valuable — recalibrate proactivity | -1 (weak corrective) |
-| User acts on proactive suggestion | Proactivity was valuable — increase in this domain | +3 (proactivity positive) |
+| Signal | What Nous Learns | Category |
+|--------|-----------------|----------|
+| User accepts result without edit | Execution path was correct — reinforce skill | Weak positive |
+| User edits result | Execution was close but imperfect — the diff is the lesson | Strong informative |
+| User rejects result entirely | Approach was wrong — analyze what went wrong, create gap | Strong corrective |
+| User says "perfect" / "exactly" | Non-obvious approach validated — promote to skill | Strong positive |
+| User undoes Nous's action | Overstepped or misjudged — analyze why, flag pattern | Critical corrective |
+| User ignores proactive suggestion | Suggestion wasn't valuable — recalibrate for this domain | Weak corrective |
+| User acts on proactive suggestion | Proactivity was valuable — reinforce this suggestion pattern | Strong positive |
+| Task takes 3× expected tokens | Inefficiency detected — flag for gap analysis | Efficiency signal |
+| Same error pattern 3 times | Systematic weakness — create CapabilityGap | Gap signal |
 
-### Growth Data Models
+### Evolution Data Models
 
 ```typescript
-type MaturityStage = 0 | 1 | 2 | 3 | 4;
-
-interface TrustProfile {
-  userId: string;
+interface EvolutionState {
   nousInstanceId: string;
 
-  // User → Nous trust (computed from interaction history)
-  reliability: number;        // 0-1: Does Nous do what it says?
-  judgment: number;           // 0-1: Are autonomous decisions good?
-  proactivity: number;        // 0-1: Are suggestions welcome?
+  // Accumulated capabilities
+  skills: Skill[];                   // Crystallized, directly invocable execution paths
+  evolvedTools: ToolDefinition[];    // Tools Nous created for itself
 
-  // Nous → Self trust (metacognitive calibration)
-  confidence: number;         // 0-1: How often is Nous right?
-  calibration: number;        // 0-1: Alignment between stated and actual certainty
+  // Known weaknesses
+  activeGaps: CapabilityGap[];       // Detected but not yet fixed
+  resolvedGaps: CapabilityGap[];     // Fixed and validated
 
-  // Derived
-  maturityStage: MaturityStage;
-  stageTransitions: StageTransition[];  // History of all transitions
+  // Improvement history
+  proposals: EvolutionProposal[];    // All proposals, regardless of status
+  totalTasksAnalyzed: number;
+  totalSkillsCreated: number;
+  totalToolsCreated: number;
+  totalCodePatchesApplied: number;
 
-  // Decay
-  lastInteraction: string;    // ISO timestamp
-  decayRate: number;          // Trust points lost per day of inactivity
-}
-
-interface StageTransition {
-  from: MaturityStage;
-  to: MaturityStage;
-  timestamp: string;
-  trigger: "auto" | "human_approved" | "human_initiated" | "decay";
-  evidence: {
-    tasksCompleted: number;
-    correctionRate: number;
-    proceduralMemoriesCompiled: number;
-    proactiveSuggestionAcceptRate: number;
-  };
-}
-
-interface GrowthCheckpoint {
-  id: string;
-  proposedStage: MaturityStage;
-  evidence: StageTransition["evidence"];
-  capabilityChanges: {
-    added: Partial<CapabilitySet>;
-    removed: Partial<CapabilitySet>;
-  };
-  sensorChanges: {
-    activate: string[];     // Sensor types to enable
-    deactivate: string[];   // Sensor types to disable
-  };
-  status: "proposed" | "approved" | "deferred" | "customized";
-  userResponse?: {
-    decision: "approve" | "defer" | "customize";
-    customizations?: Partial<CapabilitySet>;
-    reason?: string;
-  };
-}
-
-interface MemoryMetabolismRule {
-  source: "episodic" | "semantic";
-  target: "semantic" | "procedural";
-  triggerCondition: {
-    minSimilarEntries: number;    // How many similar memories before extraction
-    minConfidence: number;         // Pattern confidence threshold
-    maxAge?: number;               // Only metabolize entries older than N days
-  };
-  extractionStrategy: "pattern_match" | "llm_synthesis" | "hybrid";
-  validation: {
-    testOnNextMatch: boolean;      // Validate procedure on next matching task
-    requireHumanReview: boolean;   // For high-impact procedures
-  };
+  // Performance trajectory
+  performanceHistory: {
+    period: string;                  // "2026-W13", "2026-W14", ...
+    avgTokensPerTask: number;
+    avgSuccessRate: number;
+    avgUserSatisfaction: number;
+    skillHitRate: number;            // % of tasks where an existing skill was applicable
+  }[];
 }
 ```
 
----
-
-## Collective Intelligence: The Nous Network
-
-A single Nous instance, no matter how mature, is limited by one user's experience. The true power emerges when Nous instances learn from each other — while preserving each user's privacy.
-
-### Why Current Frameworks Can't Do This
-
-No existing agent framework has inter-instance learning. Each instance is an island. This means:
-- Every Nous must rediscover "how to deploy a Next.js app" from scratch
-- Domain expertise (legal, medical, finance) must be rebuilt per user
-- Common failure patterns are never shared — the same mistakes are made independently, forever
-
-This is equivalent to a company where no employee can ever talk to another. Each person must independently learn everything. It is spectacularly inefficient.
-
-### Four Phases of Collective Intelligence
-
-```
-Phase 1              Phase 2                Phase 3                Phase 4
-ISOLATED ──────────► PATTERN SHARING ──────► SPECIALIZATION ──────► EMERGENCE
-
-Nous A ○             Nous A ○───────┐       Nous A ○──Expert:Web──┐  ┌──────────────┐
-                                    │                              │  │              │
-Nous B ○             Nous B ○───────┼──CP   Nous B ○──Expert:ML───┼──│  Collective   │
-                                    │                              │  │  Intelligence │
-Nous C ○             Nous C ○───────┘       Nous C ○──Expert:Ops──┘  │              │
-                                                                     └──────────────┘
-No communication.    Share anonymized       Develop domain          Network-level
-Each learns alone.   procedural patterns.   specializations.        knowledge emerges
-                     (CP = Common Pool)     Consult each other.     that no single
-                                                                     instance holds.
-```
-
-#### Phase 1 — Isolated Instances (Current State)
-
-Each Nous learns only from its own user. No sharing. This is where we start — and it's already valuable, because single-instance growth (the maturity model above) is a massive improvement over the status quo.
-
-#### Phase 2 — Anonymized Pattern Sharing
-
-The first step toward collective intelligence: **procedural memory federation**.
-
-When a Nous compiles a procedural memory (e.g., "how to set up ESLint in a monorepo"), it can contribute an **anonymized, generalized version** to the Common Procedural Pool.
-
-```
-Local procedural memory (Nous A):
-  "In Joey's project /Users/joey/Projects/Nous, when adding ESLint:
-   1. Install @eslint/config in workspace root
-   2. Add .eslintrc.cjs with Joey's preferred rules (strict + no-any)
-   3. Add lint script to root package.json
-   4. Run eslint --fix on existing files"
-
-     │
-     │  anonymize + generalize
-     ▼
-
-Shared procedural pattern:
-  "When adding ESLint to a TypeScript monorepo:
-   1. Install @eslint/config in workspace root
-   2. Create config file with project-appropriate rules
-   3. Add lint script to root package.json
-   4. Run initial lint pass"
-   confidence: 0.78 (validated by 1 instance)
-
-     │
-     │  another Nous validates this pattern independently
-     ▼
-
-  confidence: 0.91 (validated by 3 instances)
-```
-
-**Privacy rules:**
-- User names, file paths, project names, secrets are **never** shared
-- Only structural patterns are extracted
-- Each user can opt out entirely
-- Shared patterns are versioned and auditable
-
-#### Phase 3 — Federated Specialization
-
-Over time, Nous instances develop **domain expertise** based on their users' work:
-- A Nous working with a data scientist becomes expert in ML pipelines
-- A Nous working with a DevOps engineer becomes expert in infrastructure
-- A Nous working with a lawyer becomes expert in legal document patterns
-
-These specialists can be **consulted** by other Nous instances:
-
-```
-Nous A (user is a frontend dev, building a dashboard):
-  Task: "Add real-time data visualization"
-  │
-  ├── Local procedural memory: has React/D3 patterns ✓
-  ├── Needs: streaming data architecture
-  │
-  └── Consults Nous Specialist Registry:
-        "Who has expertise in real-time data pipelines?"
-        → Nous B (DevOps expert) responds with anonymized architecture pattern
-        → Nous A applies pattern to user's specific context
-```
-
-**The Specialist Registry:**
-
-```typescript
-interface NousSpecialistProfile {
-  instanceId: string;           // Anonymous identifier
-  domains: DomainExpertise[];   // What this Nous is good at
-  availablePatterns: number;    // How many shareable procedures
-  consultationCount: number;    // How many times others have consulted
-  avgHelpfulnessRating: number; // Were consultations useful?
-}
-
-interface DomainExpertise {
-  domain: string;               // "ml.pipeline" | "devops.k8s" | "frontend.react" | ...
-  depth: number;                // 0-1: How deep is the expertise
-  breadth: number;              // 0-1: How many sub-topics covered
-  lastActive: string;           // When was this domain last exercised
-  proceduralCount: number;      // How many procedures in this domain
-}
-```
-
-#### Phase 4 — Emergent Collective Intelligence
-
-This is the long-term vision. When enough Nous instances are sharing patterns and consulting each other, **network-level knowledge emerges** that no single instance possesses.
-
-Examples of emergent capabilities:
-- **Cross-domain synthesis**: Nous A (security expert) + Nous B (ML expert) → the network understands ML security, even though no single user works in that intersection
-- **Trend detection**: The network notices that 15 Nous instances are all encountering the same library bug this week → proactively warns other instances
-- **Collective debugging**: When Nous C encounters an error, the network has already seen 7 variants of this error and knows the most effective fix
-- **Evolving best practices**: The network converges on optimal patterns through natural selection — patterns that work get reinforced across instances, patterns that fail get deprecated
-
-**This is not centralized training.** No single entity controls the collective. It is a **federated, privacy-preserving, bottom-up** intelligence that emerges from many individual agents sharing anonymized experience.
-
-### Collective Intelligence Data Models
-
-```typescript
-interface SharedProceduralPattern {
-  id: string;
-  domain: string;
-  description: string;
-  steps: ProceduralStep[];        // Anonymized, generalized steps
-
-  // Provenance
-  contributorCount: number;       // How many instances contributed
-  validationCount: number;        // How many instances validated
-  confidence: number;             // 0-1, increases with validation
-
-  // Lifecycle
-  version: number;
-  createdAt: string;
-  lastValidated: string;
-  deprecatedAt?: string;          // Set when pattern is superseded or found unreliable
-  supersededBy?: string;          // Pattern ID that replaced this one
-}
-
-interface ConsultationRequest {
-  requesterId: string;            // Anonymous Nous instance
-  domain: string;                 // What domain expertise is needed
-  taskDescription: string;        // Anonymized task description
-  localContext: string;           // What the requester already knows (anonymized)
-  urgency: "low" | "medium" | "high";
-}
-
-interface ConsultationResponse {
-  responderId: string;
-  relevantPatterns: SharedProceduralPattern[];
-  additionalContext: string;      // Anonymized domain-specific advice
-  confidence: number;             // How confident the responder is
-  helpfulnessRating?: number;     // Set by requester after applying advice
-}
-
-interface CollectiveInsight {
-  id: string;
-  type: "trend" | "warning" | "best_practice" | "deprecation";
-  description: string;
-  evidence: {
-    instanceCount: number;        // How many instances observed this
-    timespan: string;             // Over what period
-    confidence: number;
-  };
-  actionRecommendation: string;   // What should individual instances do
-  distributedAt: string;
-  acknowledgedBy: number;         // How many instances have seen this
-}
-```
-
-### The Growth Architecture in One Picture
+### The Evolution Architecture in One Picture
 
 ```
                     ┌──────────────────────────────────────────┐
                     │         Nous Collective Network           │
-                    │                                          │
-                    │  ┌──────────┐  ┌──────────┐             │
-                    │  │ Shared   │  │Specialist │             │
-                    │  │Procedural│  │ Registry  │             │
-                    │  │  Pool    │  │           │             │
-                    │  └────┬─────┘  └─────┬────┘             │
-                    │       │              │                    │
-                    └───────┼──────────────┼───────────────────┘
+                    │  Shared Skills · Specialist Registry ·   │
+                    │  Collective Gap Database                  │
+                    │  (anonymized experience flows up)         │
+                    └───────┬──────────────┬───────────────────┘
                             │              │
               ┌─────────────┼──────────────┼─────────────┐
               │             │              │             │
        ┌──────▼──────┐ ┌───▼────────▼───┐ ┌─────▼──────┐
        │   Nous A     │ │    Nous B      │ │   Nous C    │
-       │   Stage 3    │ │    Stage 2     │ │   Stage 4   │
        │              │ │                │ │              │
        │ ┌──────────┐ │ │ ┌──────────┐  │ │ ┌──────────┐│
-       │ │ Growth   │ │ │ │ Growth   │  │ │ │ Growth   ││
+       │ │ Evolution│ │ │ │ Evolution│  │ │ │ Evolution││
        │ │ Engine   │ │ │ │ Engine   │  │ │ │ Engine   ││
        │ │          │ │ │ │          │  │ │ │          ││
-       │ │ Trust ◄──┼─┤ │ │ Trust ◄──┼──┤ │ │ Trust ◄──┼┤
+       │ │ Skills   │ │ │ │ Skills   │  │ │ │ Skills   ││
+       │ │ Gaps     │ │ │ │ Gaps     │  │ │ │ Gaps     ││
+       │ │ Proposals│ │ │ │ Proposals│  │ │ │ Proposals││
        │ │ Memory   │ │ │ │ Memory   │  │ │ │ Memory   ││
-       │ │ Metabolism│ │ │ │ Metabolism│ │ │ │ Metabolism││
-       │ │ Feedback │ │ │ │ Feedback │  │ │ │ Feedback ││
+       │ │ Metabol. │ │ │ │ Metabol. │  │ │ │ Metabol. ││
        │ └──────────┘ │ │ └──────────┘  │ │ └──────────┘│
        │              │ │               │ │              │
+       │  Permission  │ │  Permission   │ │  Permission  │
+       │  (user ctrl) │ │  (user ctrl)  │ │  (user ctrl) │
        └──────┬───────┘ └───────┬───────┘ └──────┬──────┘
               │                 │                 │
          User Alice        User Bob          User Carol
 ```
+
+**Key distinction from the old architecture:** Permission (the outer boundary of what Nous is allowed to do) is separate from Evolution (how capable Nous actually is). A Nous with full permissions but zero skills is powerful but clumsy. A Nous with many skills but restricted permissions is smart but constrained. The ideal state is both: many skills AND user-granted permissions that match the skill level.
 
 ---
 
@@ -1341,10 +2146,10 @@ Can this Nous auto-communicate?
   ├── networkEnabled == false?
   │   └── NO. Full stop.
   │
-  ├── Maturity Stage < 2?
-  │   └── NO. Stranger and Acquaintance stages have no network access.
-  │       (Nous must demonstrate reliability to its own user before
-  │        being trusted to interact with the network.)
+  ├── Validated skills < 5?
+  │   └── NO. Nous with few skills has nothing valuable to share.
+  │       (Nous must demonstrate competence before participating
+  │        in the network.)
   │
   ├── Outbound pattern sharing:
   │   ├── sharing.autoShare == true AND pattern.confidence > sharing.minLocalConfidence?
@@ -1370,7 +2175,7 @@ Can this Nous auto-communicate?
       └── Otherwise: Show to user "The network recommends X because Y. Apply?"
 ```
 
-**The maturity gate is critical:** A Nous at Stage 0 or 1 has not yet proven itself to its own user. It has no business participating in a network. Network access is a Stage 2+ capability, earned through demonstrated reliability. This prevents:
+**The evolution gate is critical:** A Nous with zero crystallized skills has nothing valuable to share. Network access requires at least 5 validated skills — earned through demonstrated competence. This prevents:
 - Newly created Nous instances flooding the network with low-quality patterns
 - Users being surprised by network activity before they understand their Nous
 - Garbage-in-garbage-out in the collective pool
@@ -1512,7 +2317,7 @@ This is the exact pattern WebRTC uses. We don't need to solve NAT traversal in g
 
 ## Design Decisions (Resolved)
 
-These questions were originally open. After reasoning through the full architecture — from first principles, through the growth model, perception layer, and communication architecture — we can now make concrete decisions grounded in **current reality**: existing model capabilities, single-node v1 constraints, and limited resources.
+These questions were originally open. After reasoning through the full architecture — from first principles, through the evolution engine, perception layer, and communication architecture — we can now make concrete decisions grounded in **current reality**: existing model capabilities, single-node v1 constraints, and limited resources.
 
 **Guiding constraint for all decisions:** *Ship a working single-node system first. Design interfaces that allow future evolution. Never paint yourself into a corner, but never over-engineer for day one.*
 
@@ -1551,9 +2356,11 @@ class AnthropicProvider implements LLMProvider { ... }
 |-----------|-------------------|---------------|
 | Event Store | SQLite append-only table with `created_at` index | EventStoreDB or Postgres with partitioning |
 | Task Queue DB | SQLite with WAL mode for concurrent reads | Postgres for multi-node |
-| Memory Store (Semantic) | SQLite FTS5 for full-text search | Qdrant or ChromaDB for vector search |
-| Memory Store (Vector) | sqlite-vec (Bun-compatible SQLite vector extension) | Dedicated vector DB |
+| Memory Store (Keyword) | SQLite FTS5 for full-text search | — (FTS5 is already production-grade) |
+| Memory Store (Vector) | sqlite-vec for ANN search on embeddings | Qdrant or ChromaDB if scale demands |
+| Memory Store (Graph) | SQLite adjacency tables for entity relations | Neo4j or DGraph for heavy graph queries |
 | Perception Log | SQLite with auto-vacuum (short retention) | TimescaleDB or ClickHouse |
+| Evolution Log | SQLite (gaps, proposals, skills, traces) | — |
 
 **Why SQLite:** Single file, zero configuration, embedded in the Bun process, ACID-compliant, handles hundreds of thousands of rows without breaking a sweat. For a single-user, single-node agent framework, SQLite is not a compromise — it is the correct choice. It eliminates an entire class of ops problems (connection pools, migrations, backups are just file copies).
 
@@ -1613,10 +2420,10 @@ export default defineAgent({
 
 ```typescript
 // Tool execution is always in a subprocess
-async function executeTool(tool: Tool, args: unknown, caps: CapabilitySet): Promise<ToolResult> {
-  // 1. Check capability BEFORE spawning
-  if (!isAuthorized(tool.requiredCapabilities, caps)) {
-    return { error: "capability_denied", detail: `Tool ${tool.name} requires ${tool.requiredCapabilities}` };
+async function executeTool(tool: Tool, args: unknown, permissions: PermissionRule[]): Promise<ToolResult> {
+  // 1. Check permission BEFORE spawning
+  if (!isPermitted(tool.requiredCapabilities, permissions)) {
+    return { error: "permission_denied", detail: `Tool ${tool.name} requires ${tool.requiredCapabilities}` };
   }
 
   // 2. Spawn subprocess with timeout
@@ -1626,8 +2433,8 @@ async function executeTool(tool: Tool, args: unknown, caps: CapabilitySet): Prom
   try {
     const proc = Bun.spawn(tool.command, {
       signal: controller.signal,
-      env: filterEnv(caps),           // Only pass allowed env vars
-      cwd: sandboxDir(caps),          // Restrict working directory
+      env: filterEnv(permissions),     // Only pass allowed env vars
+      cwd: sandboxDir(permissions),   // Restrict working directory
     });
     return await collectResult(proc);
   } finally {
@@ -1685,77 +2492,102 @@ interface SubagentPolicy {
 
 ### 6. Human Interface
 
-**Decision: CLI-first for v1. The terminal is where the work happens.**
+**Decision: Daemon + thin CLI client for MVP. Non-blocking, multi-channel architecture. CLI-first, other clients follow.**
 
-```
+The CLI is no longer Nous itself — it is a thin client that connects to the Nous daemon via Unix Domain Socket. This enables non-blocking interaction, persistent execution, and multi-channel support.
+
+```bash
+# Submit an intent (non-blocking — returns immediately)
 $ nous "Add dark mode to this extension"
+  Intent submitted → Thread #dark-mode
+  Plan: 5 tasks (T1→T5). Nous is working.
 
-  Intent parsed: Add dark mode support
-  Plan: 5 tasks (T1→T5)
+# Check status from any terminal
+$ nous status
   ✓ T1: Analyze CSS structure [2.3s]
   ► T2: Create theme toggle component [running...]
   ► T3: Add dark theme CSS variables [running...]
   ○ T4: Wire toggle into popup UI [blocked by T2, T3]
   ○ T5: Test in browser [blocked by T4]
 
-  [Press 'd' for detail on any task, 'p' to pause, 'q' to cancel]
+# Attach to live progress (Ctrl+C to detach, NOT cancel)
+$ nous attach #dark-mode
+  [streaming progress, tool calls, results...]
+
+# Interactive REPL mode (multi-turn conversation)
+$ nous
+  nous> Add dark mode to this extension
+  On it. Thread #dark-mode. Planning...
+  nous> Also make the toggle remember user preference
+  Added to the plan. T6: Persist theme preference (after T4).
+  nous> [Ctrl+D to exit REPL — daemon keeps running]
 ```
 
-**Human Decision Queue surfaces as an interactive prompt:**
+**Human Decision Queue surfaces as push notification:**
 
-```
+```bash
+# If you're attached to a thread:
   ⚠ Decision needed:
   T3 wants to modify manifest.json (irreversible: changes extension permissions)
-
-  Context: Adding "activeTab" permission for CSS injection
-  Risk: Low (standard permission for theme extensions)
-
   [a]pprove  [d]eny  [m]odify  [v]iew diff
+
+# If you're not attached (terminal closed), message waits in outbox:
+$ nous
+  Welcome back. 1 decision pending:
+  [1] T3: modify manifest.json? (waiting 12m) [a]pprove [d]eny [v]iew
 ```
 
-**Why CLI-first:**
-- Developers live in the terminal. Switching to a web browser breaks flow.
-- CLI is a single Bun binary — no web server, no frontend build, no port conflicts.
-- Real-time streaming is natural in a terminal (like Claude Code does today).
-- CLI output is scriptable and pipeable.
+**Why daemon + thin client (not foreground CLI):**
+- Closing the terminal does NOT stop work — Nous is an OS process, not a conversation
+- Multiple terminals = one Nous, shared context, no session isolation
+- Non-blocking: submit intent and go, results push to you
+- Survives crashes: all state in SQLite, daemon auto-recovers
 
-**v2: Web dashboard** for monitoring (long-running tasks, agent status, communication log). Not a replacement for CLI — a complement. Think of it like `htop` vs your shell: you use both.
+**v2: Web dashboard** for monitoring (long-running tasks, agent status, communication log). Connects to the same daemon via WebSocket.
 
-**v2: IDE extension** (VS Code / JetBrains) for inline agent interaction. Like GitHub Copilot, but for orchestration: "I see you're struggling with this function — want me to spawn a specialist agent?"
+**v2: IDE extension** (VS Code / JetBrains) for inline agent interaction. Another client to the same daemon — shares all state, threads, and memory with CLI.
 
 ---
 
 ### 7. Deployment Model
 
-**Decision: Single Bun process for v1. Clean module boundaries for future splitting.**
+**Decision: Single Bun daemon process + thin CLI client. Clean module boundaries for future splitting.**
 
 ```
-v1: Single Process
-┌──────────────────────────────────┐
-│           Bun Process             │
-│                                   │
-│  ┌──────┐ ┌──────┐ ┌──────┐     │
-│  │  L0  │ │  L1  │ │  L2  │     │
-│  │Intent│ │Orch. │ │ Run  │     │
-│  └──┬───┘ └──┬───┘ └──┬───┘     │
-│     │        │        │          │
-│  ┌──▼────────▼────────▼───┐     │
-│  │     L3 Persistence      │     │
-│  │     (SQLite file)       │     │
-│  └─────────────────────────┘     │
-│                                   │
-│  L4: Built-in (CLI adapter,      │
-│      process supervisor)         │
+v1: Daemon + Client
+┌──────────────────────────────────┐     ┌──────────────┐
+│     Nous Daemon (Bun Process)     │     │  CLI Client   │
+│                                   │     │  (thin Bun)   │
+│  ┌──────────┐                    │     │               │
+│  │ Dialogue │                    │◄────│  Connects via │
+│  │  Layer   │                    │     │  Unix Socket  │
+│  └──┬───────┘                    │     │               │
+│  ┌──▼──┐ ┌──────┐ ┌──────┐     │     └──────────────┘
+│  │ L0  │ │  L1  │ │  L2  │     │
+│  │Intent│ │Orch. │ │ Run  │     │     ┌──────────────┐
+│  └──┬───┘ └──┬───┘ └──┬───┘     │     │  IDE Plugin   │
+│     │        │        │          │◄────│  (future)     │
+│  ┌──▼────────▼────────▼───┐     │     └──────────────┘
+│  │  L3 Persistence         │     │
+│  │  (SQLite: events, tasks,│     │     ┌──────────────┐
+│  │   messages, memory)     │     │     │  Web UI       │
+│  └─────────────────────────┘     │◄────│  (future)     │
+│                                   │     └──────────────┘
+│  L4: Sensors, IPC server,        │
+│      Process Supervisor           │
 └──────────────────────────────────┘
 ```
 
-**Why single process:**
+**Why single daemon process:**
 - No network calls between layers — function calls are nanoseconds, HTTP is milliseconds.
 - One thing to deploy, one thing to monitor, one log stream.
 - SQLite requires single-process access anyway (WAL mode allows concurrent reads but single writer).
 - A single Bun process comfortably handles one user's agent workload.
+- **Daemon survives terminal close** — the defining behavioral difference from CLI-only frameworks.
 
-**Preparation for future splitting:** Each layer is a separate package (`packages/orchestrator`, `packages/runtime`, etc.) with explicit interfaces. When the time comes to split, the interface stays the same — only the transport changes (function call → HTTP/gRPC).
+**Why separate CLI client:** The CLI client is ~100 lines: connect to socket, send message, receive response, render output. Keeping it separate means the daemon can be started once (via launchd/systemd or manually) and the CLI is just a lightweight connector.
+
+**Preparation for future splitting:** Each layer is a separate package (`packages/orchestrator`, `packages/runtime`, `packages/dialogue`, etc.) with explicit interfaces. When the time comes to split, the interface stays the same — only the transport changes (function call → HTTP/gRPC).
 
 **When to split:** When Nous needs to survive the user's laptop sleeping (→ move orchestrator to a server), or when multiple users share an orchestrator (→ multi-tenant), or when agent compute needs GPU (→ separate runtime nodes). None of these apply to v1.
 
@@ -1860,37 +2692,33 @@ Pass 2 (slow, only if pass 1 fails): Semantic similarity
 
 ### 10. Security Model
 
-**Decision: Static config for v1, dynamic request-and-grant for v2. Secrets via env vars + encrypted local store.**
+**Decision: Permission System modeled after Claude Code. User-controlled, no auto-escalation, no decay. Secrets via env vars + encrypted local store.**
 
-**v1 (static):**
+**Permission model:** See the Permission System section above for full details. Key design points:
+
+- Default safe permission set at install (read + safe commands auto-allowed)
+- User progressively confirms permissions during interaction (ask_once pattern)
+- Grant-all escape hatch for power users
+- User can revoke any permission at any time, effective immediately
+- No automatic decay or reduction — permissions only change when user explicitly changes them
+- Scoped by directory (glob patterns), command (allowlist), network (domain list), system level
+
+**Agents declare needs, users control access:**
 
 ```typescript
-// Agent capabilities defined at registration time
+// Agent declares what it needs
 const agent = defineAgent({
-  capabilities: {
-    "fs.read": { paths: ["src/**", "tests/**"] },
-    "fs.write": { paths: ["src/**"] },
-    "shell.exec": { allowlist: ["bun", "git", "npm"] },
-    "network.http": { domains: ["api.anthropic.com"] },
-  },
+  name: "code-analyst",
+  capabilitiesRequired: ["fs.read", "shell.exec"],  // What the agent needs
+  // Whether these are GRANTED depends on PermissionRules, not agent definition
 });
 
-// Immutable during runtime — change requires restart
-```
-
-**v2 (dynamic — after Growth Model is implemented):**
-
-```typescript
-// Agent can request elevated capabilities mid-task
-await requestCapability("fs.write", { paths: ["config/**"] }, {
-  reason: "Need to update ESLint config as part of task T3",
-  duration: "task",          // Revoked when task completes
-  riskLevel: "low",          // Self-assessed, verified by Orchestrator
-});
-
-// → Routes to Growth Engine
-// → If trust score sufficient AND risk level matches → auto-grant
-// → Otherwise → Human Decision Queue
+// At runtime:
+// Agent requests fs.read for src/main.ts
+// → Permission System checks PermissionRules
+// → If auto_allow: proceed
+// → If ask_once/always_ask: prompt user
+// → If deny: reject with explanation
 ```
 
 **Secrets management:**
@@ -1898,7 +2726,7 @@ await requestCapability("fs.write", { paths: ["config/**"] }, {
 ```
 v1: Environment variables + .env files (standard, simple, works with every tool)
     Nous NEVER logs or stores env var values.
-    CapabilitySet controls which env vars are visible to which agent.
+    Permission rules control which env vars are visible to which agent.
 
 v2: Encrypted local secret store (age or libsodium)
     → nous secrets set ANTHROPIC_API_KEY
@@ -1906,59 +2734,73 @@ v2: Encrypted local secret store (age or libsodium)
     → Decrypted into agent subprocess env at runtime, never on disk in plaintext
 ```
 
-**Audit log:** Every capability check (granted or denied) is an Event. The CLI can query: `nous audit --agent code-analyst --last 24h` to see every capability usage.
+**Audit log:** Every permission check (granted or denied) is an Event. The CLI can query: `nous permissions log --last 24h` to see every permission usage.
 
 ---
 
-### 11. Growth Model Calibration
+### 11. Evolution Engine Calibration
 
-**Decision: Start conservative, tune empirically. Ship with sensible defaults and a calibration log.**
+**Decision: Start conservative, tune empirically. Ship with sensible defaults and an evolution log.**
 
-**Initial thresholds (deliberately conservative — better to be slow than to over-trust):**
+**Skill crystallization thresholds (deliberately conservative — better to miss a pattern than to create a bad skill):**
 
-| Transition | Minimum Criteria | Notes |
-|-----------|------------------|-------|
-| 0 → 1 (Stranger → Acquaintance) | 5 successful tasks OR user imports project brief | Low bar — just prove basic communication works |
-| 1 → 2 (Acquaintance → Colleague) | 30 tasks, <10% correction rate, 5+ procedural memories | Must demonstrate pattern learning |
-| 2 → 3 (Colleague → Trusted Partner) | 100 tasks, <5% correction rate, proactive suggestions accepted >60% | Must demonstrate good judgment |
-| 3 → 4 (Trusted Partner → Extended Self) | 300 tasks, <2% correction rate, user delegates whole workflows | Highest bar — must demonstrate autonomy |
+| Evolution Action | Minimum Criteria | Notes |
+|-----------------|------------------|-------|
+| Episodic → Semantic extraction | 3+ episodes with >0.85 vector similarity | Pattern must be real, not coincidental |
+| Semantic → Procedural compilation | 5+ semantic facts describing a repeatable workflow | Must cover a complete workflow, not fragments |
+| Procedural → Skill promotion | 3+ validations with >80% success rate, >70% user satisfaction | Skill must be proven reliable |
+| Gap Detection trigger | 3+ tasks exhibiting the same failure pattern OR >50% user edit rate in a domain | Systematic weakness, not one-off failure |
+| Auto-apply Skill | risk == "low" AND type == "new_skill" | Skills are additive — safe to auto-apply |
+| Auto-create Tool | evolution.self_mutate == "auto_allow" AND risk == "low" | User must have granted self-mutation permission |
+| Code Patch | ALWAYS requires human approval | Never auto-apply code changes to Nous's own source |
 
-**Trust decay:** 5% per week of inactivity. After 4 weeks of no interaction, a Stage 3 Nous drops to Stage 2. Rationale: the user's codebase, priorities, and preferences evolve even when Nous is inactive. Stale trust is dangerous trust.
+**No permission decay.** Permissions are user-controlled and do not change automatically. If you granted Nous file write access, it stays until you revoke it.
 
-**Fast-forward:** Yes — a user can import a TrustProfile from another Nous instance (e.g., moving to a new machine). The imported trust starts at 80% of its original value (trust transfer is lossy — the new environment may differ).
+**Evolution portability:** A user can export their Nous's evolved Skills and import them on a new machine. Skills transfer at full fidelity (they are code, not implicit state). Evolved tools also transfer (they are TypeScript files in `.nous/tools/`).
 
-**Trust regression:** A single serious mistake (user undoes an action, data loss, wrong deployment) triggers an immediate one-stage regression with a clear explanation: "I made a significant error on [task]. I'm reducing my autonomy level to Stage N until I re-earn your trust. Here's what I'll now confirm before acting: [list]."
+**Evolution rollback:** Every evolution action (new skill, new tool, prompt change) is logged with a before/after snapshot. `nous evolution rollback <proposal-id>` reverts a specific change. This makes self-mutation safe — every change is reversible.
 
-**Calibration log:** Every trust score change is logged with the specific event that caused it. `nous trust --history` shows the full trajectory. This data is essential for tuning thresholds after real-world usage.
+**Calibration log:** Every evolution action is logged with the specific evidence that triggered it. `nous evolution history` shows the full trajectory — what skills were learned, what gaps were detected, what mutations were applied. This data is essential for tuning thresholds after real-world usage.
 
 ---
 
 ### 12. Memory Metabolism Implementation
 
-**Decision: 3+ similar episodes triggers extraction. Shadow execution for validation. 90-day episodic retention.**
+**Decision: Vector similarity (>0.85) on embeddings triggers extraction. Shadow execution for validation. 90-day episodic retention. sqlite-vec for ANN search.**
 
-**Extraction trigger:**
+**Similarity detection (the core improvement over FTS-only):**
 
 ```
 episodic → semantic:
-  When 3+ episodic memories share a structural pattern
-  (same task type, similar tool sequence, similar outcome)
-  → LLM synthesizes a general fact
-  → Human review: NO (too frequent, would overwhelm)
-  → Validation: the semantic memory must match the next similar episode
+  Step 1: Embed each new episodic memory via EmbeddingProvider
+  Step 2: ANN search via sqlite-vec for existing episodic memories
+          with cosine similarity > 0.85
+  Step 3: When 3+ similar episodes cluster:
+          → LLM synthesizes a general fact from the cluster
+          → Create graph edges (derived_from) linking new semantic → source episodics
+          → Mark source episodes as "digested"
+          → Validation: the semantic memory must match the next similar episode
 
 semantic → procedural:
-  When 5+ semantic facts describe a repeatable workflow
-  → LLM compiles into a step-by-step procedure
-  → Validation: shadow execution on next matching task
+  Step 1: Cluster semantic memories by domain tag + vector similarity
+  Step 2: When 5+ semantic facts in a cluster describe a repeatable workflow:
+          → LLM compiles into a step-by-step procedure
+          → Create graph edges (compiled_into) linking procedural → source semantics
+          → Validation: shadow execution on next matching task
+
+procedural → skill (via Evolution Engine):
+  Step 1: Track procedural memory usage and outcomes
+  Step 2: When validated 3+ times with >80% success rate:
+          → Evolution Engine promotes to Skill (first-class, directly invocable)
 ```
 
 **Shadow execution:** When a new procedural memory is compiled, the next matching task runs the procedure in "shadow mode" — the agent executes normally using its ReAct loop, but the compiled procedure runs in parallel (without actually executing tools). If both produce the same tool calls in the same order, the procedure is validated. If they diverge, the procedure is flagged for review.
 
 **Storage budget:**
 - Episodic: 90-day retention. After metabolism (→ semantic), mark as "digested" and retain for 30 more days (audit trail), then prune.
-- Semantic: No auto-prune. Invalidated only by contradicting evidence.
+- Semantic: No auto-prune. Invalidated only by contradicting evidence (tracked via `contradicts` graph edges).
 - Procedural: No auto-prune. Invalidated by content hash drift or repeated failure.
+- Embeddings: Stored alongside memory entries in sqlite-vec. Dimension matches the EmbeddingProvider (e.g., 1024 for Voyage, 1536 for OpenAI). Re-embedded on provider change.
 
 **Conflicting procedures:** When two successful procedures exist for the same task type, keep both. Tag them with the conditions under which each succeeded. Let the agent choose based on current context. If one consistently outperforms, the other naturally decays in usage and eventually gets flagged as "stale alternative."
 
@@ -2026,7 +2868,7 @@ Why centralized for v1:
 ```bash
 # View network status
 $ nous network status
-  Network: enabled (Stage 2+)
+  Network: enabled (5+ validated skills)
   Shared patterns: 12 contributed, 47 consumed
   Consultations: 3 given, 8 received (this month)
   Blocked instances: 0
@@ -2078,30 +2920,77 @@ $ nous network pending
 
 ---
 
+### 16. Daemon + Dialogue Architecture
+
+**Decision: Daemon from MVP. Unix Domain Socket IPC. Persistent message outbox. Two-layer conflict detection. CLI-first client.**
+
+**Why daemon instead of foreground CLI:**
+
+| Approach | Pros | Cons | Verdict |
+|----------|------|------|---------|
+| Foreground CLI (like Claude Code) | Simple, familiar | Session isolation, blocking, state lost on close | Rejected: violates "OS not chatbot" principle |
+| Web server (like ChatGPT) | Multi-client, persistent | Heavyweight, requires browser, not dev-native | Rejected for MVP: right for v2 Web UI |
+| **Daemon + thin clients** | Persistent, multi-channel, non-blocking, survives terminal close | More complex IPC | **Chosen**: aligns with OS model |
+
+**IPC choice — Unix Domain Socket vs alternatives:**
+
+| Transport | Latency | Complexity | Cross-platform | Verdict |
+|-----------|---------|-----------|----------------|---------|
+| Unix Domain Socket | ~10μs | Low | macOS + Linux (Windows: named pipes) | **Chosen for MVP**: fast, simple, well-supported |
+| TCP localhost | ~50μs | Low | Full | Fallback for Windows |
+| gRPC | ~100μs | Medium | Full | Overkill for single-machine IPC |
+| Shared memory | ~1μs | High | Partial | Overkill for message passing |
+
+**Conflict detection — why two layers:**
+
+Static resource analysis catches 80% of conflicts (file path overlap) with zero LLM cost. LLM semantic analysis handles the remaining 20% (contradictory goals, non-obvious dependencies). This keeps the common case fast and cheap while still handling complex scenarios correctly.
+
+**Offline delivery — why persistent outbox:**
+
+Messages are the atomic unit of human-Nous communication. Losing a message is as bad as losing an event in the Event Store. The outbox pattern (write → deliver → acknowledge) is a well-proven reliability pattern (cf. transactional outbox in distributed systems). The 7-day TTL prevents unbounded storage growth while giving users ample time to reconnect.
+
+**MVP scope:** Daemon + Unix Socket IPC + CLI client + message outbox + Layer 1 conflict detection (static resource overlap). Layer 2 semantic conflict analysis exists but uses a simple prompt. IDE/Web clients deferred to v2.
+
+---
+
 ## Roadmap, Resource Planning & Growth Strategy
 
 This section bridges architecture into execution: what to build first, what resources are needed at each stage, and how Nous bootstraps its own growth — using itself.
 
 ### Phase 0: MVP — The Core Loop
 
-**Goal:** A single-user Nous that can receive an intent, decompose it into tasks, execute them with agents, and learn from the results. Plus: the Relay Network exists from Day 1, so even the first two Nous instances can communicate.
+**Goal:** A single-user Nous that can receive an intent, decompose it into tasks, execute them with agents, and learn from the results. **Ambient Intent is in MVP** — the perception pipeline (FS + Git sensors → Attention Filter → Ambient Intent) ships from day one as a core differentiator. The Relay Network also exists from Day 1, so even the first two Nous instances can communicate.
 
 **MVP scope (what ships):**
 
 ```
 Must Have (MVP)                          Not Yet (v2+)
 ─────────────────                        ────────────────
-L0: Intent parsing (basic)               Ambient Intent
-L1: Task DAG planner                     Attention Filter
-L1: Task Scheduler + state machine       Dynamic capability graduation
-L1: Agent Router (single strategy)       Multi-strategy routing
+Dialogue: Daemon process                 IDE plugin client
+Dialogue: Unix Socket IPC               Web UI client
+Dialogue: CLI client (thin)              Mobile client
+Dialogue: Message outbox (persistent)    Email/SMS fallback notifications
+Dialogue: Thread tracking                —
+Dialogue: Conflict detection (Layer 1)   Layer 2 (LLM semantic analysis, refined)
+Dialogue: Multi-turn conversation        —
+L0: Intent parsing (basic)               —
+L0: Ambient Intent pipeline              Calendar/email/screen sensors
+L1: Task DAG planner                     Multi-strategy routing
+L1: Task Scheduler + state machine       —
+L1: Agent Router (single strategy)       —
+L1: Context Assembly (env + project)     User context from RAG (needs memory)
+L1: Attention Filter (fast model)        —
 L2: Agent Runtime (ReAct loop)           Shadow execution
-L2: Memory Manager (Tier 1-3)            Tier 4-5 (Procedural, Prospective)
-L2: Growth Engine (Stage 0-2 only)       Stage 3-4
-L3: SQLite persistence (all stores)      Memory metabolism
-L4: CLI interface                        Web dashboard, IDE extension
+L2: Tool System (Tier 1 + Tier 2)       Tier 3 (Evolved tools)
+L2: Memory Manager (Tier 1-3 + RAG)     Full metabolism + Tier 4-5
+L2: Evolution Engine (Layer 1-2)         Layer 3-4 (Gap Detection, Self-Mutation)
+L3: SQLite + FTS5 + sqlite-vec          Graph index (later)
+L3: Embedding Provider (Anthropic)       Local embedding (Ollama)
+L3: Message Store (dialogue + outbox)    —
+L4: Permission System                    —
+L4: FS Sensor + Git Sensor               Full sensor suite
 L4: Relay Client                         Direct connection upgrade
-L4: Process Supervisor (basic)           Full sensor suite
+L4: Process Supervisor (basic)           —
 
 Cloud: Relay Network on CF               Federated relays
 Cloud: Shared Procedural Pool (basic)    Trend Aggregator, Collective Insights
@@ -2111,7 +3000,7 @@ Cloud: Shared Procedural Pool (basic)    Trend Aggregator, Collective Insights
 
 | Resource | Specification | Monthly Cost | Purpose |
 |----------|--------------|-------------|---------|
-| **LLM API** | Anthropic Claude API (Sonnet for agents, Haiku for Attention Filter) | $300-500 | Agent ReAct loops, intent parsing, memory extraction |
+| **LLM API** | Anthropic Claude API (Sonnet for agents, Haiku for Attention Filter) | $300-500 | Agent ReAct loops, intent parsing, memory extraction, embedding |
 | **Development Machine** | Already available | $0 | Local development + testing |
 | **Cloudflare** | Workers + D1 + Durable Objects + R2 | $0-5 (free tier) | Relay Network, Shared Pool, Discovery Index |
 | **Domain** | nous.dev or similar | $10/year | Relay endpoint, project website |
@@ -2119,8 +3008,6 @@ Cloud: Shared Procedural Pool (basic)    Trend Aggregator, Collective Insights
 | **npm / JSR** | Free | $0 | Package registry |
 
 **MVP Phase Total: ~$300-500/month** (almost entirely LLM API costs)
-
-**Timeline estimate:** The MVP is a focused system with clear boundaries. The core components (Task state machine, Agent Runtime, Scheduler, Memory Manager, CLI) are well-defined data structures + algorithms. The Relay Network is a small Cloudflare Workers project. The LLM integration layer is one provider implementation.
 
 ---
 
@@ -2260,7 +3147,7 @@ $ curl -fsSL https://nous.dev/install | sh
 $ nous "Help me understand this codebase"
 
 # Nous immediately starts working — no config needed
-# Stage 0 (Stranger) behavior: explains everything, asks permission for everything
+# Default permissions: explains everything, asks permission for non-default actions
 ```
 
 **Community infrastructure:**
@@ -2330,7 +3217,7 @@ $ nous contribute
 This is the inflection point: **contributors' own Nous instances participate in building Nous.**
 
 ```
-Contributor Alice has a Stage 2+ Nous that:
+Contributor Alice has an evolved Nous (with relevant skills) that:
   1. Monitors the Nous repo for issues matching Alice's expertise
   2. Proposes: "Issue #142 looks like something we can fix — similar to
      that React Hook refactor we did last week"
@@ -2437,7 +3324,7 @@ This is the same pattern as:
 - **Linux**: OS developed on Linux, using Linux tools
 - **Git**: Version control system whose source is managed by Git
 
-Nous is the first **AI agent framework designed to be built by its own agents.** The architecture (Growth Model, Shared Pool, Communication Network) isn't just a feature — it's the mechanism by which the framework improves itself.
+Nous is the first **AI agent framework designed to be built by its own agents.** The architecture (Evolution Engine, Shared Pool, Communication Network) isn't just a feature — it's the mechanism by which the framework improves itself.
 
 The human's role converges toward: **set the vision, make the irreversible decisions, and let Nous handle the rest.**
 
@@ -2445,41 +3332,64 @@ The human's role converges toward: **set the vision, make the irreversible decis
 
 ## Implementation Plan: Sprint-by-Sprint
 
-### Sprint Order (Bottom-Up, Dependency-Aware)
+### What's Already Built (Sprints 1-4: DONE)
+
+Sprints 1-4 are complete. The following infrastructure is in place:
 
 ```
-Sprint 1 ──► Sprint 2 ──► Sprint 3 ──► Sprint 4 ──► Sprint 5 ──► Sprint 6
- Core +       Runtime      Orchestr.     CLI +        Memory +     Relay +
- Persistence  (ReAct)      (Scheduler)   Interface    Growth       Integration
+✅ Sprint 1: Core + Persistence
+   Types, state machines, SQLite stores, event store, task store
 
- Types        LLM adapter  Intent parse  CLI app      Tier 1-3     Relay client
- State machines Tool system Task planner  Commands     Trust score  CF Workers
- SQLite stores ReAct loop  Scheduler     Supervisor   Graduation   E2E encrypt
- Event store  Heartbeat    Agent router  Agent defs   Feedback     Discovery
- Task store   Context mgmt DAG utils     Binary       Episodic     Pattern pool
-                                                      Semantic
+✅ Sprint 2: Runtime (ReAct)
+   3 LLM providers (Anthropic, OpenAI-compat, Claude CLI), ReAct loop,
+   5 primitive tools, heartbeat, context compaction
 
- ──── Foundation ────  ── Execution ──  ─── User-Facing ───  ── Network ──
+✅ Sprint 3: Orchestration
+   Intent parsing, Task DAG planning, scheduler, agent router, DAG utils
+
+✅ Sprint 4: CLI + Interface
+   CLI app (5 commands), process supervisor, UI components, agent defs,
+   binary entry point. `nous "Read README.md and summarize"` works.
 ```
 
-**Key insight:** Sprint 4 is the first time a human can actually USE Nous. Everything before that is invisible infrastructure.
+### Remaining Sprints (Bottom-Up, Dependency-Aware)
+
+```
+Sprint 5 ──► Sprint 6 ──► Sprint 7 ──► Sprint 8 ──► Sprint 9 ──► Sprint 10
+ Daemon +     Memory       Context +     Perception   Evolution    Relay +
+ Dialogue     RAG          Tools         Pipeline     Engine       Network
+
+ Daemon proc  Embeddings   Context       FS Sensor    Experience   Relay client
+ IPC socket   sqlite-vec   Assembly      Git Sensor   Collection   CF Workers
+ CLI client   RAG pipeline Tier 2 tools  Perception   Skill Cryst. E2E encrypt
+ Message      Graph rels   Permission    Log          Gap Detect.  Discovery
+ outbox       Metabolism   System        Attention    Self-Mutate  Pattern pool
+ Thread track (ep→sem→proc)             Filter       (tools only)
+ Conflict                               Ambient
+ detect (L1)                            Intent
+ Multi-turn
+
+ ── Foundation ──  ── Intelligence ──  ── Awareness ──  ── Growth ──  ── Collective ──
+```
+
+**Key insight:** Sprint 5 (Daemon + Dialogue) must come first — it restructures HOW Nous runs (persistent process vs one-shot CLI), which every subsequent sprint depends on. Sprint 6 (Memory RAG) is the intelligence foundation that perception, evolution, and network all build upon.
 
 ### Sprint Exit Criteria
 
 | Sprint | Exit Criteria |
 |--------|--------------|
-| 1 | `bun test` passes. Can create tasks, transition states, store/query events. |
-| 2 | Agent receives a task, runs ReAct loop with real LLM, uses tools, returns result. |
-| 3 | Natural language intent → Task DAG → scheduled → assigned → executed → result. |
-| 4 | `nous "Read README.md and summarize"` works end-to-end in a terminal. |
-| 5 | Second run remembers facts from first run. `nous trust` shows scores. |
-| 6 | Two Nous instances discover each other via relay and exchange a pattern. |
+| 5 | `nous daemon start` launches background process. `nous "Read README"` submits intent via Unix socket, receives result via push. Closing terminal does NOT stop execution. `nous status` shows active intents. Message outbox delivers pending messages on reconnect. Multi-turn: `nous` opens REPL that maintains conversation context. Conflict detection: submitting two intents that touch the same file triggers a sequencing notice. |
+| 6 | Memory stores embeddings via sqlite-vec. RAG retrieval returns semantically relevant results across all tiers. Episodic→Semantic metabolism works for 3+ similar episodes. Second run remembers and retrieves facts from first run via vector search. |
+| 7 | Agent receives rich context (CWD, project type, git state) in system prompt. 10+ Tier 2 tools available. Permission System enforces directory-scoped rules. `nous permissions` shows/modifies rules. |
+| 8 | FS Sensor detects file changes. Git Sensor detects branch switches. Attention Filter evaluates signals. Ambient Intent triggers autonomous action (e.g., "test file modified but tests not run → suggest running tests"). |
+| 9 | Every task execution produces an ExecutionTrace. Skill crystallization works (3+ validated procedural memories → Skill). Gap Detection identifies missing tools. Evolution Engine can create a new Tier 3 tool from a gap. |
+| 10 | Two Nous instances discover each other via Cloudflare relay and exchange an anonymized skill pattern. `nous network status` shows connectivity. |
 
 ---
 
 ## Collaboration Model: Who Does What, When
 
-### During MVP Build (Sprints 1-6): Human + LLM
+### During MVP Build (Sprints 5-10): Human + LLM
 
 ```
 Human (Joey)                          LLM (Claude Code)
@@ -2490,7 +3400,7 @@ Human (Joey)                          LLM (Claude Code)
   └── Deploys relay                     └── No autonomous action
 ```
 
-### Post-MVP: Human + Nous Zero (Stage 2)
+### Post-MVP: Human + Nous Zero (with evolved skills)
 
 | Task Type | Who | How |
 |-----------|-----|-----|
