@@ -33,6 +33,7 @@ export class TaskScheduler {
 	}
 
 	start(): void {
+		if (this.intervalId) return;
 		this.tick(); // Immediate first tick
 		this.intervalId = setInterval(() => this.tick(), this.pollIntervalMs);
 	}

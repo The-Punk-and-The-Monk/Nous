@@ -9,6 +9,7 @@ Nous is an Agent framework designed from OS-level principles: explicit state mac
 ## Status
 
 Early design phase. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full technical design.
+Implementation progress is tracked in [docs/DEVELOPMENT_LOG.md](./docs/DEVELOPMENT_LOG.md).
 
 ## Project Structure
 

@@ -1,6 +1,8 @@
 // LLM providers
 export { AnthropicProvider } from "./llm/anthropic.ts";
 export type { AnthropicProviderOptions } from "./llm/anthropic.ts";
+export { OpenAIProvider } from "./llm/openai.ts";
+export type { OpenAIProviderOptions } from "./llm/openai.ts";
 export { OpenAICompatProvider } from "./llm/openai-compat.ts";
 export type { OpenAICompatProviderOptions } from "./llm/openai-compat.ts";
 export { ClaudeCliProvider } from "./llm/claude-cli.ts";

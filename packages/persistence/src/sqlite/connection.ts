@@ -118,6 +118,46 @@ CREATE TABLE IF NOT EXISTS agents (
   status TEXT NOT NULL DEFAULT 'idle',
   personality TEXT NOT NULL DEFAULT '{}'
 );
+
+-- Dialogue threads
+CREATE TABLE IF NOT EXISTS dialogue_threads (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_dialogue_threads_updated ON dialogue_threads(updated_at DESC);
+
+-- Dialogue messages
+CREATE TABLE IF NOT EXISTS dialogue_messages (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  content TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (thread_id) REFERENCES dialogue_threads(id)
+);
+CREATE INDEX IF NOT EXISTS idx_dialogue_messages_thread ON dialogue_messages(thread_id, created_at);
+
+-- Persistent outbox
+CREATE TABLE IF NOT EXISTS message_outbox (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  target_channel TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  delivered_at TEXT,
+  failure_reason TEXT,
+  FOREIGN KEY (thread_id) REFERENCES dialogue_threads(id),
+  FOREIGN KEY (message_id) REFERENCES dialogue_messages(id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_outbox_pending ON message_outbox(status, target_channel, created_at);
 `;
 
 export function runMigrations(db: Database): void {

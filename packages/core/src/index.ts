@@ -71,6 +71,36 @@ export type {
 	CommunicationPolicy,
 } from "./types/communication.ts";
 export { DEFAULT_COMMUNICATION_POLICY } from "./types/communication.ts";
+export type {
+	DialogueThread,
+	DialogueThreadStatus,
+	DialogueMessage,
+	DialogueRole,
+	DialogueDirection,
+	OutboxEntry,
+	OutboxStatus,
+} from "./types/dialogue.ts";
+export type {
+	Channel,
+	ChannelType,
+	ChannelStatus,
+	ChannelScope,
+} from "./types/channel.ts";
+export type {
+	ClientMessageType,
+	DaemonMessageType,
+	ClientEnvelope,
+	DaemonEnvelope,
+	AttachPayload,
+	AttachAckPayload,
+	SubmitIntentPayload,
+	SubmitIntentAckPayload,
+	SendMessagePayload,
+	SendMessageAckPayload,
+	ThreadSnapshot,
+	GetThreadPayload,
+	StatusSnapshot,
+} from "./types/protocol.ts";
 
 // State machines
 export {

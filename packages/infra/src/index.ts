@@ -1,9 +1,27 @@
 // CLI
 export { main } from "./cli/app.ts";
+export { createLLMProviderFromEnv } from "./cli/provider.ts";
+export { daemonCommand, isDaemonRunning } from "./cli/commands/daemon.ts";
+export { attachCommand } from "./cli/commands/attach.ts";
 
 // Agents
 export { createGeneralAgent } from "./agents/general.ts";
 export { createAnalystAgent } from "./agents/analyst.ts";
+
+// Daemon / dialogue foundation
+export { DialogueService } from "./daemon/dialogue-service.ts";
+export type {
+	OutboundDelivery,
+	DialogueServiceConfig,
+	OutboundMessageRecord,
+} from "./daemon/dialogue-service.ts";
+export { DaemonClientSession, sendDaemonRequest } from "./daemon/client.ts";
+export {
+	StaticIntentConflictManager,
+	deriveResourceClaims,
+} from "./daemon/conflict-manager.ts";
+export { DaemonController } from "./daemon/controller.ts";
+export { NousDaemon } from "./daemon/server.ts";
 
 // Supervisor
 export { ProcessSupervisor } from "./supervisor/supervisor.ts";

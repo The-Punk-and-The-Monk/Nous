@@ -86,6 +86,13 @@ export class Orchestrator {
 
 	/** Submit a natural language intent and wait for it to complete */
 	async submitIntent(rawText: string): Promise<Intent> {
+		const intent = await this.submitIntentBackground(rawText);
+		await this.waitForIntent(intent.id);
+		return this.intentStore.getById(intent.id) ?? intent;
+	}
+
+	/** Submit a natural language intent and return immediately after planning */
+	async submitIntentBackground(rawText: string): Promise<Intent> {
 		this.log.info("Submitting intent", { raw: rawText.slice(0, 100) });
 
 		// 1. Parse intent
@@ -119,31 +126,33 @@ export class Orchestrator {
 			},
 		});
 
-		// 3. Start scheduler and wait for all tasks to finish
-		return new Promise<Intent>((resolve) => {
+		// 3. Ensure scheduler is running, then return immediately
+		this.scheduler.start();
+		return intent;
+	}
+
+	async waitForIntent(intentId: string, timeoutMs = 300000): Promise<void> {
+		return new Promise<void>((resolve) => {
 			const completionListener = (event: ProgressEvent) => {
+				const eventIntentId = String(event.data.intentId ?? "");
+				if (eventIntentId !== intentId) return;
 				if (event.type === "intent.achieved" || event.type === "escalation") {
-					// Defer cleanup so other listeners still receive this event
 					queueMicrotask(() => {
 						const idx = this.progressListeners.indexOf(completionListener);
 						if (idx >= 0) this.progressListeners.splice(idx, 1);
 					});
 					clearTimeout(timeout);
-					resolve(intent);
+					resolve();
 				}
 			};
 
 			this.progressListeners.push(completionListener);
 
-			// Timeout safety: resolve after 5 minutes regardless
 			const timeout = setTimeout(() => {
-				this.scheduler.stop();
 				const idx = this.progressListeners.indexOf(completionListener);
 				if (idx >= 0) this.progressListeners.splice(idx, 1);
-				resolve(intent);
-			}, 300000);
-
-			this.scheduler.start();
+				resolve();
+			}, timeoutMs);
 		});
 	}
 
@@ -185,7 +194,7 @@ export class Orchestrator {
 
 		this.emitProgress({
 			type: "task.started",
-			data: { taskId: task.id, agentId: agent.id },
+			data: { taskId: task.id, agentId: agent.id, intentId: task.intentId },
 		});
 
 		const result = await runtime.executeTask(task);
@@ -195,12 +204,20 @@ export class Orchestrator {
 		if (result.success) {
 			this.emitProgress({
 				type: "task.completed",
-				data: { taskId: task.id, output: result.output },
+				data: {
+					taskId: task.id,
+					output: result.output,
+					intentId: task.intentId,
+				},
 			});
 		} else {
 			this.emitProgress({
 				type: "task.failed",
-				data: { taskId: task.id, error: result.output },
+				data: {
+					taskId: task.id,
+					error: result.output,
+					intentId: task.intentId,
+				},
 			});
 		}
 
@@ -221,11 +238,13 @@ export class Orchestrator {
 			});
 			this.emitEvent("intent.achieved", "intent", intentId, {});
 			this.emitProgress({ type: "intent.achieved", data: { intentId } });
-			this.scheduler.stop();
 		} else if (anyAbandoned) {
 			this.intentStore.update(intentId, { status: "abandoned" });
 			this.emitEvent("intent.abandoned", "intent", intentId, {});
-			this.scheduler.stop();
+			this.emitProgress({
+				type: "escalation",
+				data: { intentId, reason: "intent_abandoned" },
+			});
 		}
 	}
 

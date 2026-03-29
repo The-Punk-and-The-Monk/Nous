@@ -147,6 +147,21 @@ The name is philosophically precise: this framework is not a tool — it is the 
 
 Five principles that govern every design decision. Each is derived from the first principles above:
 
+### North Star and Current Architectural Center
+
+Nous must be reasoned about on **two levels at the same time**:
+
+1. **North Star (highest guiding idea):** Nous should ultimately become a **self-evolving collective intelligence** — not a better chat wrapper, but a network of persistent instances that can accumulate, validate, and exchange useful intelligence over time.
+2. **Current architectural center (what we build around today):** the necessary base form is a **persistent agent runtime** — a long-lived, auditable, policy-governed system that can carry identity, memory, and execution across channels and sessions.
+
+This distinction matters. The North Star prevents us from building a dead-end local tool. The current architectural center prevents us from prematurely building distributed complexity before the local substrate is real.
+
+**Architectural test:** every major design decision should satisfy all three:
+
+- **Works locally first** — it improves the single-instance persistent runtime.
+- **Preserves future collective growth** — it does not block multi-instance learning, exchange, or evolution later.
+- **Avoids premature swarm complexity** — it does not force distributed coordination into v1 where local contracts would suffice.
+
 1. **Failure is the norm, not the exception.**
    Every component assumes it will crash. Recovery paths are built in from the start, not bolted on.
    *(From OS principle: processes crash — the OS must survive them.)*
@@ -178,16 +193,21 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **Intent** | Human | A goal expressed in natural language — fuzzy, high-level, may have constraints |
 | **Plan** | Orchestrator | A decomposition of Intent into a Task DAG — revisable, not final |
 | **Task** | Scheduler | An atomic unit of work with a full lifecycle (state machine, dependencies, retry policy) |
+| **Instance** | Infrastructure | A long-lived Nous identity — the unit that persists across channels/sessions today and may participate in collective intelligence later |
 | **Agent** | Runtime | A persistent identity with memory, capabilities, and a behavioral profile |
 | **Tool** | Runtime | An atomic capability (shell exec, file read, HTTP call, etc.) |
 | **Event** | Persistence | An immutable record of what happened — the system's source of truth |
 | **Memory** | Runtime | Layered persistent state (5 tiers, see Memory System below) |
+| **Scope** | Cross-cutting | The locality and trust boundary of knowledge or authority — e.g. task-local, thread-local, project-local, user-global, exportable |
+| **Provenance** | Cross-cutting | Origin and evidence metadata attached to memories, skills, and proposals — where it came from, how it was derived, and whether it can be trusted/shared |
 | **Sensor** | Infrastructure | A continuous input source that passively observes the environment (file watcher, calendar, screen, mic, etc.) |
 | **Attention Filter** | Orchestration | Evaluates raw perception signals and decides what is worth processing — the "is this interesting?" gate |
 | **Ambient Intent** | Orchestration | A goal inferred from environment signals, not explicitly stated by a human — system-initiated action |
+| **ProcedureCandidate** | Evolution | A reusable execution pattern observed from successful runs, not yet fully validated as a stable Skill |
 | **Skill** | Evolution | A reusable execution path crystallized from successful experience — the unit of learned competence |
 | **CapabilityGap** | Evolution | A systematically identified weakness — what Nous cannot yet do well, with evidence and proposed fix |
 | **EvolutionProposal** | Evolution | A concrete self-improvement plan (new tool, new skill, prompt fix, code patch) — Nous's proposal to make itself better |
+| **ValidationState** | Evolution | The governance lifecycle of learned artifacts — observed, candidate, validated, deprecated, revoked |
 | **PermissionRule** | Infrastructure | A user-controlled authorization rule scoped by directory/system/command/network — what Nous is allowed to do |
 | **CommunicationPolicy** | Infrastructure | User-controlled rules governing all inter-Nous communication — what to share, whom to consult, what to auto-approve |
 | **Channel** | Dialogue | An I/O connection to the user (CLI, IDE, Web) — a viewport into Nous, not an isolated session |
@@ -401,6 +421,50 @@ interface Event {
 }
 ```
 
+### Instance
+
+```typescript
+interface Instance {
+  id: string;                      // Stable Nous instance identity
+  displayName: string;
+  status: "booting" | "ready" | "degraded" | "offline";
+
+  // What this instance is currently allowed and able to do
+  capabilityManifestId: string;
+  communicationPolicyId: string;
+
+  // Collective-intelligence groundwork
+  trustProfileId: string;          // Local trust / reputation metadata
+  createdAt: string;
+  lastSeenAt: string;
+}
+```
+
+### Scope
+
+```typescript
+type Scope =
+  | { kind: "task"; id: string }
+  | { kind: "thread"; id: string }
+  | { kind: "project"; id: string }
+  | { kind: "user"; id: string }
+  | { kind: "exportable"; policy: "review_required" | "shareable" };
+```
+
+### Provenance
+
+```typescript
+interface Provenance {
+  sourceType: "human" | "sensor" | "runtime" | "imported_instance" | "evolution";
+  sourceId: string;                // User ID, sensor ID, instance ID, etc.
+  derivedFrom: string[];           // Event / memory / skill / proposal IDs
+  evidenceIds: string[];           // Execution traces, task results, human feedback
+  confidence: number;              // 0-1 confidence score
+  trustLevel: "local" | "reviewed" | "validated" | "external_untrusted";
+  exportable: boolean;             // May this object leave the local instance?
+}
+```
+
 ### Sensor
 
 ```typescript
@@ -438,6 +502,75 @@ interface AmbientIntent extends Intent {
   triggerSignalIds: string[];       // Which perception signals triggered this
   confidence: number;               // 0-1, how confident the system is this intent is correct
   requiresApproval: boolean;        // If confidence < threshold, blocks for human approval
+}
+```
+
+### ProcedureCandidate
+
+```typescript
+interface ProcedureCandidate {
+  id: string;
+  name: string;
+  goalPattern: string;             // Natural-language or structured pattern this procedure addresses
+  preconditions: string[];         // When this pattern is valid
+  steps: ProcedureStep[];
+  requiredCapabilities: string[];
+
+  scope: Scope;
+  provenance: Provenance;
+  validationState: "observed" | "candidate" | "validated" | "deprecated" | "revoked";
+
+  successRate: number;
+  evidenceCount: number;           // Number of successful traces backing it
+  lastUsedAt?: string;
+}
+```
+
+### Skill
+
+```typescript
+interface Skill {
+  id: string;
+  name: string;
+  description: string;
+
+  derivedFromProcedureId: string;
+  scope: Scope;
+  provenance: Provenance;
+  validationState: "validated" | "deprecated" | "revoked";
+
+  applicability: {
+    domains: string[];
+    projectTypes?: string[];
+    antiPatterns?: string[];       // Cases where the skill should NOT be applied
+  };
+
+  contract: {
+    requiredCapabilities: string[];
+    expectedInputs: string[];
+    successCriteria: string[];
+  };
+
+  version: string;
+}
+```
+
+### EvolutionProposal
+
+```typescript
+interface EvolutionProposal {
+  id: string;
+  title: string;
+  type: "new_skill" | "tool_improvement" | "prompt_change" | "code_patch";
+  summary: string;
+
+  targetScope: Scope;
+  provenance: Provenance;
+  basedOnGapIds: string[];
+
+  evaluationPlan: string[];        // What must be tested before adoption
+  rolloutPolicy: "manual_review" | "sandbox_only" | "staged";
+  status: "proposed" | "under_review" | "accepted" | "rejected" | "rolled_back";
 }
 ```
 
@@ -1160,7 +1293,37 @@ This is not a design choice — it is a legacy constraint from terminal stdio be
 
 ### Nous's Model: Unified Presence
 
-Nous is **one entity** with **many communication channels**. All channels share one memory, one state, one understanding of the user. Channels are just viewports into the same mind.
+Nous is **one persistent instance** with **many communication channels**. But this needs to be stated carefully:
+
+- **Unified identity** — there is one Nous, not one Nous per terminal/tab/window
+- **Unified runtime** — background work continues regardless of which channel is attached
+- **Unified continuity** — threads, tasks, notifications, and pending decisions survive channel disconnects
+- **Scope-aware cognition** — project/task/thread scope still matters for context assembly, retrieval, permissions, and conflict analysis
+
+This is the correct middle ground:
+
+- Nous is **not** a set of isolated sessions
+- Nous is also **not** an undifferentiated global brain with no boundaries
+
+The design principle is:
+
+> **Identity is unified; cognition is scope-aware.**
+
+Channels are viewports into one Nous, not containers that define separate identities.
+
+### What Is Unified vs. What Is Scoped
+
+| Aspect | Unified | Scoped |
+|--------|---------|--------|
+| Instance identity | Yes | No |
+| Event history | Yes | No |
+| Background execution | Yes | No |
+| Thread continuity across channels | Yes | No |
+| Memory substrate | Yes | No |
+| Retrieved context for a given action | No | Yes |
+| Project assumptions and repo-specific patterns | No | Yes |
+| Permission evaluation | No | Yes |
+| Perception/autonomy behavior | No | Yes |
 
 ```typescript
 // Channel — an I/O connection to the user
@@ -1179,8 +1342,12 @@ interface ChannelScope {
   workingDirectory?: string;        // CLI/IDE have CWD
   projectRoot?: string;             // Detected project root
   focusedFile?: string;             // IDE: currently open file
-  // Scope does NOT isolate memory — memory is global
-  // Scope tells Context Assembly what to prioritize
+  // Scope does NOT create a separate Nous identity
+  // Scope DOES influence:
+  // - context assembly priority
+  // - retrieval boundaries
+  // - permission checks
+  // - conflict analysis
 }
 
 // Dialogue message — unified across all channels
@@ -1213,6 +1380,38 @@ interface DialogueThread {
   lastActivityAt: string;
 }
 ```
+
+### Protocol-Level Contract
+
+Unified Presence is not just a UX idea; it requires a transport contract:
+
+```typescript
+interface ClientEnvelope<T = unknown> {
+  id: string;
+  type: "attach" | "detach" | "submit_intent" | "send_message"
+      | "get_status" | "get_thread" | "approve_decision"
+      | "cancel_intent" | "subscribe" | "unsubscribe";
+  channel: {
+    id: string;
+    type: "cli" | "ide" | "web" | "mobile" | "api" | "sensor";
+    scope: ChannelScope;
+  };
+  payload: T;
+  timestamp: string;
+}
+
+interface DaemonEnvelope<T = unknown> {
+  id?: string;
+  type: "ack" | "response" | "progress" | "result"
+      | "decision_needed" | "notification" | "error";
+  threadId?: string;
+  intentId?: string;
+  payload: T;
+  timestamp: string;
+}
+```
+
+The important architectural point is that **attach** and **submit_intent** are first-class operations. A user does not "enter a new isolated session"; they attach a channel to an existing Nous and optionally continue or create a thread within it.
 
 ### Non-Blocking Interaction
 
@@ -1570,6 +1769,8 @@ Most agent frameworks are static: they execute the same way on day 1 and day 100
 
 This is not about earning more permissions (that's the Permission System's job, controlled by the user). This is about Nous becoming genuinely more capable: learning new skills, creating new tools, identifying its own weaknesses, and writing code to fix them.
 
+For Nous, evolution is not just learning — it is also **governance**. Any learned artifact that may influence future behavior or eventually spread across instances must carry explicit **Scope, Provenance, and ValidationState**. That is what keeps self-improvement auditable locally and makes future collective exchange trustworthy.
+
 ### How Current Frameworks Handle Growth (They Don't)
 
 | Framework | Memory Model | Skill Learning | Self-Improvement | Cross-Instance Learning |
@@ -1694,8 +1895,10 @@ Every signal matters, not just explicit corrections. Silence (accept without edi
 
 When the Memory Metabolism process (see Memory System below) produces a Procedural Memory, the Evolution Engine evaluates whether it should be promoted to a **Skill** — a first-class, directly invocable execution path.
 
+The canonical `Skill` object is defined in **Core Data Models**. Below is a richer runtime/index view used by the Evolution Engine for retrieval, evaluation, and version tracking.
+
 ```typescript
-interface Skill {
+interface SkillRuntimeRecord extends Skill {
   id: string;
   name: string;                      // "setup-eslint-monorepo"
   description: string;               // Semantic description for retrieval matching
@@ -1946,6 +2149,8 @@ interface EvolutionState {
 ## Inter-Nous Communication Architecture
 
 How do Nous instances talk to each other? This is a fundamental infrastructure decision that affects privacy, scalability, reliability, and user control. We reason from first principles.
+
+This is the **destination architecture** for collective intelligence. The important v1 rule is that even before full networking exists, a local Nous instance must already model the right primitives — **Instance identity, Scope boundaries, Provenance, Skill validation, and CommunicationPolicy**. Otherwise inter-Nous exchange would require rewriting local assumptions instead of extending them.
 
 ### Why Not Pure Centralized, Why Not Pure P2P
 
