@@ -11,6 +11,15 @@ export type EventEntityType =
 export type EventType =
 	// Intent events
 	| "intent.created"
+	| "intent.clarification_needed"
+	| "intent.resumed"
+	| "intent.revision_requested"
+	| "intent.replanned"
+	| "intent.pause_requested"
+	| "intent.paused"
+	| "intent.cancel_requested"
+	| "intent.approval_requested"
+	| "intent.cancelled"
 	| "intent.achieved"
 	| "intent.abandoned"
 	// Task events
@@ -18,6 +27,8 @@ export type EventType =
 	| "task.queued"
 	| "task.assigned"
 	| "task.started"
+	| "task.cancel_requested"
+	| "task.cancelled"
 	| "task.heartbeat"
 	| "task.completed"
 	| "task.failed"
@@ -34,6 +45,8 @@ export type EventType =
 	| "agent.offline"
 	// Tool events
 	| "tool.called"
+	| "tool.cancel_requested"
+	| "tool.cancelled"
 	| "tool.executed"
 	| "tool.failed"
 	| "tool.timeout"

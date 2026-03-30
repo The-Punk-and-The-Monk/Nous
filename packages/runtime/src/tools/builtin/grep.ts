@@ -18,9 +18,14 @@ export const grepDef: ToolDef = {
 	},
 	requiredCapabilities: ["fs.read"],
 	timeoutMs: 30000,
+	sideEffectClass: "read_only",
+	idempotency: "idempotent",
+	interruptibility: "after_tool",
+	approvalMode: "auto",
+	rollbackPolicy: "none",
 };
 
-export const grepHandler: ToolHandler = async (input) => {
+export const grepHandler: ToolHandler = async (input, context) => {
 	const pattern = new RegExp(input.pattern as string, "g");
 	const searchPath = (input.path as string) ?? ".";
 	const fileGlob = input.glob as string | undefined;
@@ -30,6 +35,9 @@ export const grepHandler: ToolHandler = async (input) => {
 
 	async function searchFile(filePath: string): Promise<void> {
 		if (results.length >= maxResults) return;
+		if (context.signal.aborted) {
+			throw new Error("grep interrupted before completion");
+		}
 		try {
 			const content = await readFile(filePath, "utf-8");
 			const lines = content.split("\n");
@@ -47,6 +55,9 @@ export const grepHandler: ToolHandler = async (input) => {
 
 	async function searchDir(dirPath: string): Promise<void> {
 		if (results.length >= maxResults) return;
+		if (context.signal.aborted) {
+			throw new Error("grep interrupted before completion");
+		}
 		const entries = await readdir(dirPath, { withFileTypes: true });
 		for (const entry of entries) {
 			if (results.length >= maxResults) return;

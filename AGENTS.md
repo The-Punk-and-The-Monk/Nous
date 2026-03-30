@@ -33,6 +33,21 @@ Do not wait for the user to explicitly ask you to read extra migration files bef
 - When comparing approaches, explain why an existing framework made that choice, what problem it solves, and what new problems it introduces.
 - If Nous should differ from another framework, explain why the difference is better, not merely different.
 - If a design discussion exposes an architectural gap, surface it directly instead of patching around it locally.
+- When evaluating “what Nous still lacks”, do **not** start from a flat module checklist.
+  - Start top-down from:
+    1. what a Nous task should feel like from the **user interaction** side
+    2. what the corresponding **Nous execution flow** should be internally
+    3. only then infer missing contracts, layers, and implementation work
+- For task-execution design, especially coding tasks, prefer reasoning in this order:
+  - user intent
+  - execution contract
+  - working set / context selection
+  - planning
+  - controlled execution
+  - verification
+  - decision queue / human checkpoints
+  - delivery / evidence capture
+- Treat this top-down task-closure reasoning as more important than prematurely enumerating components or implementation tickets.
 
 ## Product Thesis
 
@@ -55,8 +70,24 @@ Do not wait for the user to explicitly ask you to read extra migration files bef
 
 ## Documentation
 
-- After significant Nous design or implementation sessions, record the outcome in:
-  - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/阿锋勇闯大模型.md`
+- After **every code or repo-instruction update**, update `docs/DEVELOPMENT_LOG.md` in the same work session.
+  - Do not defer this to “later cleanup”.
+  - Record detailed change context, not just a one-line summary.
+  - At minimum include:
+    - context / trigger
+    - problem
+    - alternatives considered
+    - decision
+    - concrete files changed
+    - impact / result
+    - open questions / follow-ups
+- Do **not** write to the external Obsidian note by default after every change.
+- Only update the Obsidian note when the user explicitly asks for it.
+  - Target file:
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/阿锋勇闯大模型.md`
+  - Typical workflow when requested:
+    - first review `docs/DEVELOPMENT_LOG.md`
+    - then distill the day’s work into a cleaner, more concise diary/log entry for Obsidian
 - Use the section:
   - `### Nous (νοῦς) — 自主 Agent 框架开发全记录`
 - Within that section, always write under:
@@ -84,6 +115,18 @@ Do not wait for the user to explicitly ask you to read extra migration files bef
   - what changed before vs. after
   - why the previous framing was insufficient
   - what future path this unlocks or constrains
+
+## Notifications
+
+- At the end of **every dialogue round** in this repository, send a macOS notification to the user.
+- The notification must be sent only as the **final action of the round**:
+  - after the response content is finished
+  - after any planning/update work is finished
+  - after any file edits / validation commands are finished
+  - never at the beginning or in the middle of the round
+- The notification title must include `Nous`, so it is immediately clear which project finished work.
+- Prefer the normal transient macOS notification path (auto-dismissing banner-style behavior), not a sticky/manual-dismiss workflow.
+- The body should be short and summarize what changed or what completed in that round.
 
 ## Historical Context
 

@@ -1,5 +1,7 @@
 import type {
+	ApproveDecisionPayload,
 	AttachPayload,
+	CancelIntentPayload,
 	ClientEnvelope,
 	DaemonEnvelope,
 	GetThreadPayload,
@@ -41,7 +43,7 @@ export class DaemonController {
 				);
 			case "send_message":
 				return withRequestId(
-					this.dialogue.sendMessage(
+					await this.dialogue.sendMessage(
 						toChannel(message),
 						message.payload as SendMessagePayload,
 					),
@@ -71,7 +73,21 @@ export class DaemonController {
 					message.id,
 				);
 			case "approve_decision":
+				return withRequestId(
+					await this.dialogue.approveDecision(
+						toChannel(message),
+						message.payload as ApproveDecisionPayload,
+					),
+					message.id,
+				);
 			case "cancel_intent":
+				return withRequestId(
+					await this.dialogue.cancelIntent(
+						toChannel(message),
+						message.payload as CancelIntentPayload,
+					),
+					message.id,
+				);
 			case "subscribe":
 			case "unsubscribe":
 				return withRequestId(

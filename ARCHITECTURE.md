@@ -205,6 +205,9 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **Ambient Intent** | Orchestration | A goal inferred from environment signals, not explicitly stated by a human — system-initiated action |
 | **ProcedureCandidate** | Evolution | A reusable execution pattern observed from successful runs, not yet fully validated as a stable Skill |
 | **Skill** | Evolution | A reusable execution path crystallized from successful experience — the unit of learned competence |
+| **PromptAsset** | Runtime | A versioned reusable instruction template with variables and metadata; may seed an Agent or Skill, but is not itself a Skill |
+| **MCPServer** | Infrastructure | An external context/capability server exposing tools, resources, or prompts via MCP; always mediated by trust, auth, scope, and output policy |
+| **Harness** | Infrastructure | A repeatable scenario runner for tests/evals that executes agents with controlled models, tools, approvals, failures, and trace assertions |
 | **CapabilityGap** | Evolution | A systematically identified weakness — what Nous cannot yet do well, with evidence and proposed fix |
 | **EvolutionProposal** | Evolution | A concrete self-improvement plan (new tool, new skill, prompt fix, code patch) — Nous's proposal to make itself better |
 | **ValidationState** | Evolution | The governance lifecycle of learned artifacts — observed, candidate, validated, deprecated, revoked |
@@ -731,6 +734,141 @@ interface EvolutionProposal {
 }
 ```
 
+### Unified Artifact / Governance Model
+
+The unifying pattern behind **PromptAsset**, **Tool**, **Skill**, and **Harness** is this:
+
+> They are all **Governed Operational Artifacts** — runtime-relevant objects that must be selectable, auditable, scoped, validated, and eventually evolvable.
+
+This matters because many frameworks let these concepts grow independently:
+
+- prompts live as loose text files
+- tools live as callable adapters
+- skills live as vaguely defined "reusable things"
+- harnesses live outside the runtime as one-off QA scripts
+
+That fragmentation makes governance impossible. Nous should instead treat them as one family of objects with a shared control plane.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│           Unified Artifact / Governance Plane              │
+├─────────────────────────────────────────────────────────────┤
+│  Artifact Registry                                          │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ PromptAssets · Tools · Skills · Harnesses            │  │
+│  │                                                       │  │
+│  │ Shared governance fields:                             │  │
+│  │ - id / kind / version                                 │  │
+│  │ - scope / provenance / owner                          │  │
+│  │ - validationState / riskClass / status                │  │
+│  │ - dependencies / evidence / metrics                   │  │
+│  └───────────────────────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│  Selection / Assembly                                       │
+│  Intent + Context + Memory + Policy                         │
+│    ├─ choose PromptAssets                                   │
+│    ├─ expose Tool subset                                    │
+│    ├─ match applicable Skills                               │
+│    └─ bind Harness scenarios for validation / rollout       │
+├─────────────────────────────────────────────────────────────┤
+│  Runtime Execution                                          │
+│  Agent / Subagent executes with:                            │
+│    - prompts from PromptAssets                              │
+│    - actions through Tools                                  │
+│    - strategy shortcuts from Skills                         │
+│    - optional MCP-backed Tool/Resource adapters             │
+├─────────────────────────────────────────────────────────────┤
+│  Evidence Collection                                        │
+│  Traces · approvals · outcomes · edits · failures · costs   │
+├─────────────────────────────────────────────────────────────┤
+│  Governance Loop                                            │
+│    - ProcedureCandidate -> Skill promotion                  │
+│    - CapabilityGap -> Tool / Prompt proposal               │
+│    - failures / regressions -> Harness scenarios            │
+│    - rollout / deprecate / revoke by evidence               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Why unify them
+
+All four artifacts solve the same meta-problem from different angles:
+
+- **PromptAsset** compresses reusable instruction structure
+- **Tool** compresses reusable environment interaction
+- **Skill** compresses reusable strategy
+- **Harness** compresses reusable validation and trust generation
+
+If Nous models them separately with no shared governance, it cannot reliably answer:
+
+- what is safe to auto-use?
+- what is only experimental?
+- what evidence justified promotion?
+- what should be exported to another instance?
+- what should be revoked after regression?
+
+#### The common base object
+
+At the architectural level, every governed artifact should converge on a shape like:
+
+```typescript
+interface GovernedArtifact {
+  id: string;
+  kind: "prompt_asset" | "tool" | "skill" | "harness";
+
+  name: string;
+  version: number;
+  description: string;
+
+  scope: ArtifactScope;
+  provenance: ArtifactProvenance;
+  validationState: ArtifactValidationState;
+
+  owner: "system" | "user" | "evolution";
+  riskClass: "low" | "medium" | "high";
+  status: "active" | "disabled" | "deprecated" | "revoked";
+
+  dependencies: ArtifactRef[];
+  evidence: EvidenceRef[];
+
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+#### Specialization rules
+
+| Artifact | Governs | May reference | Must not be confused with |
+|----------|---------|---------------|----------------------------|
+| **PromptAsset** | reusable instruction templates | model/provider hints, variables | Skill |
+| **Tool** | environment action surface | capabilities, approval policy, MCP adapter | Skill or PromptAsset |
+| **Skill** | reusable execution policy | PromptAssets, Tools, MCP subsets, subagent profile | mere prompt/package/persona |
+| **Harness** | repeatable trust-generation scenario | fixtures, assertions, fault injection, rollout gates | production runtime capability |
+
+#### Relationship to Nous philosophy
+
+This unified model is not architectural decoration. It is how Nous operationalizes its core principles:
+
+- **State is first-class** → artifacts are explicit governed objects, not scattered files
+- **Observability is built-in** → evidence and validation are part of the object model
+- **Least capability** → tool and MCP exposure are policy-filtered artifacts, not ambient power
+- **Growth ≠ permission escalation** → Skills and Harnesses improve competence and trust, not authority
+- **Works locally first** → the whole governance plane can exist in a single local runtime before federation
+
+#### Current vs future boundary
+
+For v1/v1.5, Nous does **not** need to fully productize all four artifact families.
+
+What it needs now is:
+
+1. a shared metadata/governance vocabulary
+2. a formal Tool contract
+3. Skill promotion that can reference other artifacts without collapsing into them
+4. a minimal Harness model for regression and rollout gating
+
+The full artifact ecosystem — export/import, rich registries, cross-instance sharing, and automatic rollout governance — can come later.
+
+**Implementation note:** a first future-facing TypeScript draft for this model should live in core types as a design anchor (`packages/core/src/types/artifact.ts`). It is allowed to be ahead of the currently implemented runtime as long as it stays clearly framed as the target object model rather than falsely claiming full feature completion.
+
 ---
 
 ## Permission System
@@ -1018,6 +1156,819 @@ Tier 2 (Episodic)                    Tier 3 (Semantic)                  Tier 4 (
 
 ---
 
+## Unified Task Intake and Execution Depth Model
+
+If Nous is genuinely a **persistent personal assistant**, it must not split the world into:
+
+- "real agent tasks"
+- "simple commands"
+- "ambient signals"
+
+as if these were different kinds of minds. They are different **input surfaces**, but they must enter one unified intent system.
+
+### The architectural correction
+
+The wrong framing is:
+
+> some inputs go through a deep agent path, while other inputs take a special "short path"
+
+That framing tends to pull the system back toward today's workspace-centric agent frameworks — optimized for command execution inside a repo, but weak at understanding the user's broader state and intent.
+
+The correct framing for Nous is:
+
+> every incoming user message, command, or ambient signal enters the same **task-intake pipeline**; the system then chooses the appropriate **execution depth**.
+
+This preserves the product thesis:
+
+- **user-centered**, not workspace-centered
+- **intent-centered**, not command-centered
+- **continuity-first**, not session-first
+- **proactive-capable**, not purely request/response
+
+### One intake, many depths
+
+```text
+Message / Command / Ambient Signal
+  │
+  ▼
+User-State Grounding
+  │  Who is this user? what thread/project/goal context are they in?
+  │  what unfinished work, preferences, and recent activity matter here?
+  ▼
+Intent Inference
+  │  explicit intent
+  │  real intent
+  │  latent/potential intent
+  ▼
+Clarification Gate
+  │  ask only if ambiguity blocks safe or useful execution
+  ▼
+Task Contract Formation
+  │  goal · boundaries · success criteria · interruption policy
+  ▼
+Execution Depth Selection
+  │
+  ├─ Planning depth: none / light / full
+  ├─ Time depth: foreground / background
+  ├─ Organization depth:
+  │    - single agent
+  │    - serial specialists
+  │    - parallel specialists
+  └─ Initiative mode:
+       - reactive to user request
+       - proactive from ambient/user-state signals
+  ▼
+Orchestration + Execution
+  ▼
+Verification + Decision Queue
+  ▼
+Delivery + Memory + Follow-up
+```
+
+### User interaction flow
+
+From the user's perspective, a well-designed Nous task should feel like this:
+
+1. **The user expresses a goal or request**
+   - not necessarily in perfectly structured language
+   - possibly from any channel or environment
+2. **Nous demonstrates understanding before over-executing**
+   - what it thinks the user wants
+   - how deeply it plans to engage
+   - when it may need to interrupt
+3. **Nous proceeds mostly silently**
+   - only surfacing true blockers, risks, or important forks
+4. **Nous returns a structured delivery**
+   - result
+   - evidence / validation
+   - remaining risks
+   - possible next steps
+5. **Nous retains continuity**
+   - the task does not disappear just because the channel does
+
+### Internal execution flow
+
+Internally, the flow should be reasoned about in this order:
+
+1. **Signal intake**
+2. **User-state grounding**
+3. **Explicit / real / latent intent inference**
+4. **Clarification if ambiguity matters**
+5. **Task contract formation**
+6. **Execution depth selection**
+7. **Orchestration**
+8. **Verification**
+9. **Decision queue / human checkpoints**
+10. **Delivery + evidence capture + memory/evolution hooks**
+
+This order matters. Planning is not the universal entrypoint. Long-running execution is not the universal entrypoint. Multi-agent orchestration is not the universal entrypoint. They are all consequences of the depth decision made *after* intent and contract are understood.
+
+### What "execution depth" means
+
+Execution depth is the key abstraction that replaces the misleading "fast path vs deep path" mental model.
+
+#### 1. Planning depth
+
+- **none**: direct action is safe and obvious
+- **light**: a short local plan is enough
+- **full**: explicit task decomposition and scheduler involvement are needed
+
+#### 2. Time depth
+
+- **foreground**: user likely expects a quick answer/result
+- **background**: task continues asynchronously with progress continuity
+
+#### 3. Organization depth
+
+- **single agent**: one runtime loop is enough
+- **serial specialists**: distinct stages benefit from handoff
+- **parallel specialists**: bounded concurrent branches provide value
+
+#### 4. Initiative depth
+
+- **reactive**: user-requested execution
+- **proactive**: user-state and ambient signals justify a suggestion or action
+
+### Commands are not a separate ontology
+
+This is the crucial point.
+
+A shell-like request such as:
+
+- "check git status"
+- "search for the failing test"
+- "see what changed in auth.ts"
+
+must not be modeled as a fundamentally different class of system input.
+
+They are still:
+
+- user-originated signals
+- interpreted in user/project/thread context
+- candidates for latent-intent inference
+- subject to contract/risk/interruption policy
+
+What differs is only the selected execution depth — often shallow, but still inside the same unified system.
+
+### Relation to existing architecture layers
+
+This model does not replace the current layered architecture. It clarifies how those layers should collaborate.
+
+| Concern | Primary layer(s) |
+|---------|------------------|
+| signal/message intake | Dialogue Layer + L0 Intent Plane |
+| user-state grounding | Context Assembly + Memory + Dialogue continuity |
+| intent inference | L0 Intent Plane |
+| task contract formation | L0 Intent Plane |
+| execution depth selection | L0/L1 boundary |
+| planning / routing / scheduling | L1 Orchestration Plane |
+| tool/model execution | L2 Runtime |
+| evidence / continuity / replay | L3 Persistence + Dialogue Outbox |
+| proactive follow-up | Perception Pipeline + L0 Ambient Intent |
+
+### Architectural implication
+
+The current architecture already has many necessary building blocks:
+
+- Unified Presence
+- Intent → Plan → Task separation
+- Context Assembly
+- Human Decision Queue
+- Daemon continuity
+- Conflict detection
+- Ambient Intent
+
+But this section makes explicit a still-missing middle structure:
+
+1. **User-State Grounding as a first-class step**
+2. **Task Contract Formation as a first-class step**
+3. **Execution Depth Selection as a first-class step**
+4. **Delivery as a first-class contract, not just a final message**
+
+That is the path from "persistent agent runtime" toward "persistent personal assistant."
+
+### Semantic Layering Draft
+
+Nous should not treat every "semantic" problem as the same kind of problem solved by the same mechanism.
+
+That is one of the biggest architectural traps in agent systems: once LLMs are available, teams start routing every fuzzy problem through a generic prompt. This feels flexible early, but it collapses distinct concerns:
+
+- understanding what the user means
+- retrieving the right past knowledge/artifacts
+- deciding whether human governance is required
+- learning durable improvements from repeated experience
+
+Those are all semantic in some sense, but they are **not the same layer**. They have different latency budgets, correctness requirements, persistence needs, and governance implications.
+
+#### Four semantic layers
+
+| Semantic layer | Core question | Primary mechanism | Why this split matters |
+|----------------|---------------|-------------------|------------------------|
+| **Intent semantics** | "What does the user mean right now in this thread, with this grounding?" | LLM structured output + user-state grounding | This is where ambiguity, latent intent, clarification, and thread reply routing live. The output must become explicit contracts/state, not stay trapped in prompt text. |
+| **Retrieval semantics** | "What prior memory, artifact, or history is actually relevant?" | Hybrid retrieval: embeddings + lexical + filters + re-ranking | Retrieval is a recall problem, not a dialogue-generation problem. It needs scope filters, ranking, chunking, and provenance — not just another free-form model answer. |
+| **Control / governance semantics** | "Can Nous safely continue, or does it need a human decision?" | Explicit `Decision` objects + queue policy + optional LLM interpretation | Governance must be explicit and auditable. Approval, conflict resolution, and scope confirmation cannot be hidden inside transient reasoning. |
+| **Evolution semantics** | "What repeated patterns should become reusable competence or governance policy?" | Harness/eval evidence + artifact governance + proposal pipeline | Learning is not just semantic clustering. It needs validation, rollback, provenance, and rollout policy. |
+
+#### Current design consequences
+
+1. **Understanding-heavy semantics should use LLMs, but through structured contracts**
+   - intent parsing
+   - user-state-grounded task contract formation
+   - thread reply routing
+   - decision response interpretation
+
+   Nous should prefer LLM structured output here because the problem is genuinely semantic and brittle if reduced to string matching. But the result must land in typed objects (`Intent`, `TaskContract`, `Decision`, etc.), not in ad hoc prompt-local heuristics.
+
+2. **Recall-heavy semantics should use retrieval systems, not conversational guesses**
+   - memory retrieval
+   - artifact lookup
+   - future skill/harness/prompt-asset selection
+
+   This is why the memory direction is hybrid retrieval / RAG, not FTS-only and not "ask the model to remember."
+
+3. **High-frequency background semantics should be heuristic-first, with escalation paths**
+   - perception filtering
+   - attention scoring
+   - cheap ambient triage
+
+   The reason is cost and cadence: these paths run continuously, so they cannot assume a large-model call on every signal. Heuristics should filter first; richer semantic interpretation can happen after promotion.
+
+4. **Governance semantics must be objectified**
+   - clarification
+   - approval
+   - scope confirmation
+   - conflict resolution
+
+   Nous should never leave these as hidden branches in controller code or one-off booleans on an intent. They need first-class queue objects, persistence, routing, and resume semantics.
+
+#### Why this matters for Nous specifically
+
+Nous is trying to become a persistent personal assistant, not a workspace-bound command runner. That means semantic correctness is not only about "did the model understand this sentence?" It is also about:
+
+- whether the right **personal/project context** was assembled
+- whether the right **history** was recalled
+- whether the right **human decision** was surfaced
+- whether the right **learning artifact** was produced for future work
+
+So the architecture must separate these semantic concerns early, even if some of them temporarily use the same LLM provider under the hood.
+
+### Generic DecisionQueue Model
+
+The original clarification flow was the first real blocked-intent path, but it must not remain a one-off exception.
+
+The correct generalization is:
+
+- **`Decision`** = one explicit blocking coordination object
+- **`DecisionQueue`** = the ordered human-facing coordination layer that decides which blocking item is currently active in a thread/runtime surface
+
+In other words, clarification was never the ontology. It was only the first producer.
+
+#### Decision kinds
+
+Current decision kinds:
+
+- `clarification`
+- `approval`
+- `scope_confirmation`
+- `conflict_resolution`
+
+These map to distinct reasons Nous may need the human:
+
+| Kind | Why Nous is blocked | Typical producer | Current status |
+|------|---------------------|------------------|----------------|
+| `clarification` | intent understanding is materially incomplete | intake / resume | **active producer** |
+| `approval` | action is system-initiated or otherwise requires explicit consent | ambient intent promotion; risky task-boundary checkpoint | **active producer** |
+| `scope_confirmation` | the user message could either narrow the current intent or start a new one / change scope | thread/intake boundary handling for the latest active thread-owned intent | **active producer (current/new disambiguation + execution-boundary resume)** |
+| `conflict_resolution` | concurrent work cannot be safely or meaningfully continued without a user choice | conflict analyzer | **active producer** |
+
+#### Response modes
+
+A generic queue also needs generic response contracts:
+
+- `free_text` — open clarification / disambiguation
+- `approval` — yes/no style consent
+- `single_select` — choose one explicit resolution option
+
+This matters because reply interpretation, UX rendering, storage, and resume behavior should all derive from the same model instead of each producer inventing its own mini-protocol.
+
+#### Relationship to intent state
+
+All of these are `Decision`s, but not all blocked intents are blocked for the same reason. So Nous currently distinguishes:
+
+- `intent.status = awaiting_clarification`
+  - the blocker is missing or underspecified intent understanding
+  - the decision object still exists in the queue, but the intent state preserves the semantic reason
+- `intent.status = awaiting_decision`
+  - the blocker is broader governance / coordination
+  - approval, scope confirmation, and conflict resolution land here
+
+This is an intentional compromise. A future design could normalize all blocked intents under a generic `blocked` state with a reason enum, but for now the explicit distinction keeps intake/resume semantics clearer.
+
+#### Queue policy
+
+MVP queue policy:
+
+1. **One active pending decision per thread at a time**
+   - thread replies remain unambiguous
+   - user experience stays coherent
+   - the thread input router has a clear target
+2. **A decision always belongs to exactly one intent and one primary thread**
+3. **A decision may reference other intents for context, but ownership stays singular**
+4. **Resolving a decision must produce an explicit outcome**
+   - resume current intent
+   - queue after current work
+   - abandon / reject
+   - persist a scope choice
+
+This is why the queue is not just a UI list. It is a runtime governance boundary.
+
+#### Runtime queue / resume policy
+
+The queue policy should not stay as prose only. In runtime terms, the policy is:
+
+1. **A newly created decision becomes `pending` only if the thread currently has no pending decision**
+2. **Otherwise it becomes `queued`**
+3. **Queued decisions are activated oldest-first**
+4. **A resolved decision does not just disappear; it must execute a resume policy before the queue advances**
+
+That resume policy is:
+
+- persist answer + selected option + outcome
+- apply the owning intent action
+  - clarification → revise same intent, then resume or re-clarify
+  - approval → resume, pause, or abandon depending on producer policy
+  - conflict resolution → queue/resume or abandon
+  - scope confirmation → either revise current intent or start a separate new intent from the buffered message
+- only then activate the next queued decision if the thread has no other pending blocker
+
+Pause-aware extension:
+
+- if the user says “pause this for now” while a decision is pending, that is **not** cancellation
+- the owner intent moves to `paused`
+- outstanding decisions owned by that paused intent move back to `queued` instead of being destroyed
+- resume re-activates the queued decision only when the thread no longer has another pending blocker
+
+This is important because a queue without a resume policy is just a ticket list. Nous needs a **governed blocking runtime**, not an inbox.
+
+#### Defer → decide → resume
+
+For non-trivial governance cases, the daemon/orchestrator interaction should follow this pattern:
+
+```
+new input / ambient promotion
+  │
+  ├─► create intent + preserve original request / grounding
+  │
+  ├─► defer execution if human governance may be needed
+  │
+  ├─► analyze blockers
+  │     ├─ clarification?        → create Decision(kind=clarification)
+  │     ├─ approval needed?      → create Decision(kind=approval)
+  │     ├─ scope unclear?        → create Decision(kind=scope_confirmation)
+  │     └─ conflict requires user choice? → create Decision(kind=conflict_resolution)
+  │
+  ├─► prompt inside the same primary thread
+  │
+  ├─► interpret the user reply according to responseMode
+  │
+  └─► resolve decision and either resume, re-queue, or abandon
+```
+
+This pattern is important because it preserves the original intent identity before human governance happens. Nous should not lose the original task simply because a checkpoint appeared in the middle.
+
+### Thread / Intent / DecisionQueue Relationship Model
+
+To preserve continuity correctly, Nous must not collapse conversation, work, and blocking coordination into one object.
+
+- **Thread** = communication continuity
+  - the place where the human and Nous talk
+  - contains messages, clarifications, notifications, and delivery
+- **Intent** = execution continuity
+  - the thing Nous is trying to accomplish
+  - owns goal, contract, execution depth, tasks, and execution state
+- **Decision** = blocking coordination item
+  - the explicit object for "I cannot safely/usefully continue until X is resolved"
+  - clarification is one decision kind, not the only one
+- **DecisionQueue** = the thread-facing governance surface for pending decisions
+  - controls which blocking item is currently active for human resolution
+  - keeps thread replies and resume semantics coherent
+
+#### Relationship
+
+- one `DialogueThread` may contain **multiple** intents over time
+- one intent should have one **primary thread** for human-facing coordination
+- one blocking `Decision` belongs to:
+  - exactly one `intent`
+  - exactly one `thread`
+- one `DecisionQueue` may contain multiple decisions over time, but MVP policy keeps only one pending decision active per thread at once
+
+So the model is not:
+
+- thread == intent
+
+It is:
+
+- thread = conversation container
+- intent = work identity
+- decision = blocking bridge between them
+
+#### Invariants
+
+1. **Tasks belong to intents, not threads**
+2. **Messages belong to threads, not intents by default**
+3. **A clarification reply happens in a thread, but it resumes an intent**
+4. **Clarification does not create a new intent identity**
+5. **The original request should remain preserved; the executable understanding may evolve**
+
+This implies Nous should distinguish between:
+
+- `intent.raw` — the original human request
+- `intent.workingText` — the latest executable understanding after clarification / revision
+
+#### Clarification-resume flow
+
+```
+User request
+  │
+  ▼
+Thread message ──► Intent intake
+                     │
+                     ├─ enough information
+                     │    └─► plan / execute
+                     │
+                     └─ clarification needed
+                          ├─► create Decision(kind=clarification)
+                          ├─► intent.status = awaiting_clarification
+                          └─► ask inside the same thread
+
+User reply in same thread
+  │
+  ▼
+Thread input router
+  │
+  ├─ new intent
+  │    └─► create another intent
+  │
+  └─ clarification response
+       ├─► apply response to the original intent
+       ├─► rebuild intent.workingText
+       ├─► re-run intake on the same intent identity
+       ├─► clear or renew blocking decision
+       └─► resume original intent
+```
+
+#### Architectural consequence
+
+The correct abstraction is therefore:
+
+- **threads are where the conversation continues**
+- **intents are where responsibility continues**
+- **decisions are where blocking coordination is made explicit**
+
+This is what allows Nous to behave like a persistent assistant rather than a sequence of disconnected command invocations.
+
+#### Execution-boundary scope revision
+
+Clarification-resume is not the same thing as **scope revision**.
+
+- clarification = “I still do not understand enough to continue”
+- scope revision = “I understand the task, but the user just changed what the task should become”
+
+For scope revision, Nous now treats the **intent** as the stable owner and the **task graph** as revisable.
+
+Current policy:
+
+1. **No tasks yet**
+   - revise the same intent immediately before planning
+2. **Tasks exist, but none are `assigned` / `running`**
+   - delete unfinished tasks
+   - preserve completed work as execution evidence
+   - rebuild `intent.workingText`
+   - re-run intake on the same intent id
+   - re-plan the remaining work immediately
+3. **At least one task is `assigned` / `running`**
+   - do not rewrite live execution in place
+   - persist `intent.pendingRevision`
+   - stop dispatching further ready tasks for that intent
+   - wait until active work drains to zero
+   - apply the revision at the next safe execution boundary, then re-plan
+
+This gives Nous a real mid-execution revision path without pretending it can safely mutate a live running step in place.
+
+#### New invariant: pending revision blocks dispatch
+
+If an intent has `pendingRevision`, ready tasks for that intent must **not** continue dispatching blindly.
+
+The scheduler therefore treats `intent.pendingRevision` as a local execution brake:
+
+- already running work may finish
+- newly ready work is held back
+- the next safe boundary becomes the point where the task graph may be rewritten
+
+This is important because otherwise a user could update the task scope while Nous keeps launching now-stale queued tasks, which would break intent continuity.
+
+#### Interruption / cancellation contract
+
+Scope revision is only half of long-running task governance. Nous also needs an explicit answer for:
+
+- “stop this task”
+- “cancel the remaining work”
+- “what if a tool is already running right now?”
+
+The current cancellation contract is:
+
+1. **Queued / not-yet-running work cancels immediately**
+   - `created`
+   - `queued`
+   - `assigned` (if execution has not actually entered the runtime loop yet)
+2. **Running work does not always die immediately**
+   - Nous checks the current tool semantics first
+3. **Intent-level cancellation persists as `intent.pendingCancellation` until the runtime reaches a safe stop boundary**
+4. **The scheduler must not dispatch new tasks for an intent that has either**
+   - `pendingRevision`
+   - `pendingCancellation`
+
+This makes cancellation a governed runtime state, not just a UI button.
+
+#### Intent execution directive ledger
+
+Nous now needs a more explicit execution-governance model than two unrelated booleans.
+
+At the intent layer, the runtime direction is:
+
+- keep `pendingRevision` and `pendingCancellation` as **fast runtime projections / convenience views**
+- but treat them as projections of a broader `intent.executionDirectives[]` ledger
+
+Current directive kinds are:
+
+- `scope_revision`
+- `cancellation`
+- `pause`
+- `resume`
+- `approval_wait`
+
+Why this matters:
+
+- it preserves **ordered traceability** of execution governance requests
+- it gives Nous one architectural place for future directives such as:
+  - pause
+  - resume
+  - approval-gated risky continuation
+- it avoids hard-coding long-term runtime governance into a growing list of one-off fields
+
+Current policy:
+
+- scheduler dispatch is blocked whenever the intent still has a **requested** blocking execution directive
+- when deferred revisions are finally applied at a safe boundary, the matching revision directives become `applied`
+- when an intent is cancelled, still-pending scope-revision directives are marked `superseded` rather than silently disappearing
+- pause is modeled as **honest task-boundary governance**
+  - if no task is active, the intent pauses immediately
+  - if a task is already running/assigned, Nous records a requested pause and stops only at the next safe task boundary
+- resume is a first-class directive, not an implicit side effect
+- risky-boundary approval wait is also part of the same ledger, so post-task human checkpoints are traceable in the same intent-facing governance surface
+
+#### Pause / resume contract
+
+Nous should not pretend it can suspend arbitrary task execution mid-thought and later continue from the exact same continuation point. That would be dishonest with the current runtime.
+
+So the current contract is:
+
+1. **Pause is intent-level, not hidden coroutine suspension**
+   - current running tool/task is allowed to reach the next safe task boundary
+   - queued work is preserved, not discarded
+2. **Pause stores a resume target**
+   - `active`
+   - `awaiting_clarification`
+   - `awaiting_decision`
+3. **Resume restores the correct governance mode**
+   - if the paused intent was blocked on clarification/decision, resume returns it to that blocked surface
+   - if it was simply active work, resume returns it to `active`
+
+This matters because “pause” is semantically different from:
+
+- `cancel` — abandon the intent
+- `clarification` — missing understanding
+- `approval_wait` — blocked on an explicit checkpoint
+
+#### Approval-after-risky-boundary contract
+
+The first honest checkpoint model is **after-task, not mid-tool**.
+
+Current policy:
+
+- the runtime records tool-governance evidence for the completed task:
+  - used tool names
+  - risky tool names
+  - rollback plans
+- after a task finishes, the orchestrator checks:
+  - are there remaining unfinished tasks?
+  - did this task use risky tools?
+  - does the intent’s `humanCheckpoints` policy require a checkpoint here?
+- if yes, the intent enters `awaiting_decision` and appends an `approval_wait` execution directive
+- the daemon then produces `Decision(kind=approval)` with producer metadata `risky_boundary`
+
+Why this shape is correct right now:
+
+- it is honest about current runtime boundaries
+- it does not fake “interrupt before this exact side effect” semantics
+- it still gives Nous a real production checkpoint after non-read-only work
+
+Rejection policy is producer-specific:
+
+- ambient approval rejection may abandon the intent
+- risky-boundary approval rejection should usually **pause** the intent instead
+
+#### Real rollback contract
+
+Rollback is no longer only prose/hints.
+
+Current tool contract now distinguishes:
+
+- `rollbackPolicy = none`
+- `rollbackPolicy = manual`
+- `rollbackPolicy = handler_declared`
+
+And tool results can carry a structured `rollbackPlan`, for example:
+
+- `restore_file`
+- `delete_file`
+- `manual`
+
+This gives Nous a bounded but real rollback surface:
+
+- `file_write` can now produce automatic rollback plans
+  - restore prior contents if the file existed
+  - delete the file if the write created it
+- `shell` still usually degrades to structured manual rollback
+
+This is still not universal transactional undo. But it is now a **real executable contract**, not only a note field.
+
+This is the runtime-side analogue of `DecisionQueue`: not human-facing coordination, but **intent-facing execution governance**.
+
+#### Free-text stop / cancel routing
+
+Explicit `cancel_intent` protocol is not enough for a persistent assistant. In real threads, the user will also say:
+
+- “stop”
+- “别做了”
+- “先别继续”
+- “never mind”
+
+So the daemon’s thread routers should be allowed to classify a message as:
+
+- decision response
+- current-intent scope update
+- current-intent cancellation
+- new intent
+- ambiguous / mixed
+
+Important runtime consequence:
+
+- if the user cancels the current intent from free text while a decision is pending, Nous should **cancel the intent**, not incorrectly treat the message as clarification text
+- outstanding pending/queued decisions owned by that intent should be cancelled as well
+- after that, the next queued decision in the thread may activate immediately
+
+This keeps thread governance honest: human-facing blockers should not remain stuck behind an intent the user has already cancelled.
+
+#### Tool interruption semantics
+
+Tool definitions now need more than just capability + timeout metadata.
+
+Nous needs each tool to declare:
+
+- `sideEffectClass`
+  - `read_only`
+  - `write`
+  - `destructive`
+- `idempotency`
+  - `idempotent`
+  - `best_effort`
+  - `non_idempotent`
+- `interruptibility`
+  - `cooperative`
+  - `after_tool`
+  - `never`
+- optional rollback hint / rollback policy
+
+This is important because “can the process be stopped?” and “is it safe to stop here?” are **different questions**.
+
+Current runtime policy is intentionally conservative:
+
+- if the current tool is `read_only + cooperative`
+  - interrupt immediately
+- otherwise
+  - let the current tool finish
+  - then cancel before the next task/tool boundary
+
+This is not full rollback. It is a first honest contract for **bounded interruptibility**.
+
+#### Revision ledger
+
+`intent.workingText` alone is not enough for serious traceability.
+
+Nous now needs a revision ledger on the intent:
+
+- every scope update request gets a revision record
+- deferred revisions stay visible even before they are applied
+- when execution-boundary replan happens, the corresponding revision entries move from:
+  - `requested`
+  - to `applied`
+
+This matters because interview-grade traceability requires more than “here is the latest prompt string”.
+
+The runtime should be able to answer:
+
+- what changed
+- when it changed
+- whether it was applied immediately or only at a later safe boundary
+- what prior work had already completed before the replan
+
+### Runtime Harness / Task Driver Chain
+
+The runtime harness in Nous is not a single helper class wrapped around an LLM call. It is a **layered driver chain**.
+
+Classic agent frameworks often compress all of this into one loop:
+
+```text
+LLM -> tool_use -> execute tools -> append results -> LLM
+```
+
+Nous still has that inner loop, but it lives inside a larger task-completion system:
+
+```text
+User / Sensor signal
+  │
+  ▼
+Dialogue + Daemon
+  - accept message / channel / thread
+  - preserve continuity
+  - persist message and outbox state
+  │
+  ▼
+Orchestrator
+  - user-state grounding
+  - intent parsing
+  - task contract formation
+  - execution-depth selection
+  - DecisionQueue production when blocked
+  │
+  ▼
+DecisionQueue
+  - clarification / approval / scope confirmation / conflict resolution
+  - queue policy: one pending decision per thread
+  - resume policy: resolve -> apply owner action -> activate next queued item
+  │
+  ▼
+Task Scheduler
+  - task DAG / dependency order
+  - retry / timeout / sequencing
+  - waits until a task is actually ready
+  │
+  ▼
+Agent Runtime
+  - the inner ReAct harness
+  - Think -> Act(tool_use) -> Observe(tool_result) -> repeat
+  - collect tool-governance evidence for the completed task
+  │
+  ▼
+Tool Executor
+  - capability check
+  - permission enforcement
+  - real side-effect execution
+  - structured rollback-plan production / execution
+  │
+  ▼
+Persistence + Delivery
+  - events
+  - task / intent / decision state
+  - memory capture
+  - outbox delivery back into the thread
+```
+
+#### Key architectural point
+
+So in Nous:
+
+- **`AgentRuntime` is the inner LLM/tool harness**
+- **`Daemon + Orchestrator + Scheduler + DecisionQueue` are the outer task driver**
+- **task-boundary governance lives between them**
+  - pause finalization
+  - approval-after-risky-boundary
+  - revision-at-boundary application
+
+This split is deliberate.
+
+If we collapse all of this back into a single harness loop, Nous drifts toward a workspace-bound command runner. If we keep the layered driver chain, Nous can preserve:
+
+- thread continuity
+- intent identity
+- human governance
+- long-running execution
+- delivery continuity
+- auditability
+
+---
+
 ## Runtime Flow: From Intent to Execution
 
 ```
@@ -1156,6 +2107,17 @@ interface AssembledContext {
 
 Current agent frameworks ship with a fixed set of tools. If the tool you need doesn't exist, you're stuck. Nous has a **3-tier tool architecture** where the system can create new tools for itself.
 
+**Production rule:** a Tool is not just a callable. Every Nous tool contract should eventually carry:
+
+- schema / argument validation
+- side-effect class (`read_only` / `write` / `destructive`)
+- idempotency expectation
+- timeout / retry policy
+- output budget and compaction policy
+- provenance and audit hooks
+
+Without this metadata, "tool use" quickly degrades into prompt folklore and unsafe retries.
+
 ### Tier 1 — Primitives (System Built-In, Not Replaceable)
 
 The foundational tools that everything else depends on. These are compiled into Nous and cannot be removed or modified at runtime.
@@ -1239,6 +2201,61 @@ Gap detected: "No YAML parsing tool"
 ```
 
 **The key principle:** Tier 3 tools are always additive — they cannot modify or replace Tier 1 or Tier 2 tools. They extend Nous's capabilities without risking core functionality. Creating an Evolved tool requires the `evolution.self_mutate` permission.
+
+### MCP Boundary — External Capability Interop, Not Internal Ontology
+
+The industry is converging on **MCP** as the standard way to expose external tools and context. This is useful, but the architectural lesson is precise:
+
+> **MCP should be a Nous interoperability boundary, not Nous's internal ontology.**
+
+MCP standardizes:
+
+- lifecycle negotiation
+- transports (`stdio`, streamable HTTP, etc.)
+- auth at the transport edge
+- three server primitives:
+  - **tools** (actions)
+  - **resources** (context/data)
+  - **prompts** (reusable interaction templates)
+
+That is valuable, but it does **not** decide:
+
+- whether a server is trusted
+- whether a tool is safe to auto-run
+- how much server output should enter context
+- whether a prompt should become a reusable Nous Skill
+- how provenance, scope, and governance should be attached
+
+So Nous should map MCP into its own architecture as follows:
+
+| MCP primitive | Nous interpretation |
+|---------------|---------------------|
+| MCP Tool | External ToolAdapter candidate in the ToolRegistry |
+| MCP Resource | Context source / retrievable artifact, not blindly pasted into the prompt |
+| MCP Prompt | Explicit PromptAsset input, not automatically promoted to a Skill |
+
+**Non-negotiable MCP gates for Nous:**
+
+1. **Server identity + trust registry**
+   - every configured MCP server has a durable identity, transport type, auth mode, and trust state
+2. **Scope-aware exposure**
+   - a server may be attached only to a thread / task / subagent / project scope, not necessarily the whole runtime
+3. **Tool filtering**
+   - only allowlisted tools are exposed to the model; "connect the server" is not the same as "expose every tool"
+4. **Session policy**
+   - Nous must choose explicitly between stateless calls and stateful MCP sessions
+5. **Output discipline**
+   - large MCP outputs must go through budget, truncation, summarization, or artifact storage instead of flooding the main context
+6. **Audit + provenance**
+   - every MCP call records which server, which transport, which auth context, and what artifact/result entered memory or context
+
+**Important context-engineering implication:** large MCP tool inventories should not all be injected into the main agent context up front. Discovery may need to be:
+
+- lazy / search-based
+- scoped to a specialized subagent
+- cached with explicit invalidation policy
+
+This preserves context budget and reduces tool-selection noise.
 
 ---
 
@@ -2052,6 +3069,45 @@ Every signal matters, not just explicit corrections. Silence (accept without edi
 
 When the Memory Metabolism process (see Memory System below) produces a Procedural Memory, the Evolution Engine evaluates whether it should be promoted to a **Skill** — a first-class, directly invocable execution path.
 
+##### Skill Is Not the Same Object as a Prompt, Plugin, or Subagent
+
+Many production systems blur together four different things:
+
+1. reusable prompt template
+2. plugin / MCP capability package
+3. specialized subagent
+4. learned skill
+
+Nous should keep them separate.
+
+| Object | What it is | What it is not |
+|--------|-------------|----------------|
+| **PromptAsset** | Versioned instruction template with variables, metadata, and model/provider hints | Not evidence that the workflow is validated |
+| **Plugin / MCPServer** | External capability packaging and transport surface | Not proof that the capability should be auto-used |
+| **Subagent profile** | Isolated runtime configuration: prompt, tools, model, permission mode, memory scope | Not automatically a reusable competence artifact |
+| **Skill** | A governed reusable execution policy distilled from successful experience | Not just "a nice prompt" or "a server with tools" |
+
+**A Nous Skill may reference all three of the other objects**:
+
+- load one or more PromptAssets
+- constrain execution to a specialized subagent profile
+- attach or prefer specific MCP servers / tool subsets
+
+But the Skill remains the higher-level governed object because it additionally carries:
+
+- trigger / applicability conditions
+- scope
+- provenance
+- validation state
+- expected cost / latency profile
+- failure patterns and anti-patterns
+
+This separation matters. If Nous collapses Skill, PromptAsset, plugin, and subagent into one object, it loses the ability to answer:
+
+- "Is this reusable pattern actually validated?"
+- "Is this just a packaging format, or a learned competence?"
+- "Can I trust this across projects or export it to another instance?"
+
 The canonical `Skill` object is defined in **Core Data Models**. Below is a richer runtime/index view used by the Evolution Engine for retrieval, evaluation, and version tracking.
 
 ```typescript
@@ -2687,26 +3743,63 @@ These questions were originally open. After reasoning through the full architect
 
 ### 1. LLM Provider Strategy
 
-**Decision: LLM-agnostic at core, Anthropic-first for v1.**
+**Decision: LLM-agnostic at core, OpenAI-first for v1 runtime, provider-neutral structured generation for control-plane objects.**
 
 ```typescript
 // Core defines an abstract LLM interface — no provider-specific types leak through
 interface LLMProvider {
-  chat(messages: Message[], tools?: ToolDef[]): AsyncIterable<StreamChunk>;
-  capabilities(): ProviderCapabilities;  // context window, tool use support, vision, etc.
+  chat(request: LLMRequest): Promise<LLMResponse>;
+  stream(request: LLMRequest): AsyncIterable<StreamChunk>;
+  getCapabilities(): LLMProviderCapabilities;
 }
 
-// v1 ships with one implementation
+// v1 ships with multiple implementations behind the same contract
+class OpenAIProvider implements LLMProvider { ... }
+class OpenAICompatProvider implements LLMProvider { ... }
 class AnthropicProvider implements LLMProvider { ... }
+class ClaudeCliProvider implements LLMProvider { ... }
 
-// Future: OpenAIProvider, OllamaProvider (local), etc.
+// Future: Responses API provider, OllamaProvider (local), etc.
 ```
 
-**Why Anthropic first:** Best tool-use reliability as of today. Claude's extended thinking is ideal for the ReAct loop. Tool use format is clean and well-documented.
+**Why OpenAI first:** It is the cleanest default backend boundary for current Nous: direct API, explicit base URL/organization/project config, fewer assumptions about an external agent runtime, and better alignment with a persistent daemon-centered architecture. Claude CLI remains valuable, but as a fallback/escape hatch rather than the default substrate.
 
-**How to handle provider differences:** The `ProviderCapabilities` interface lets the Orchestrator adapt — e.g., if a provider has a 32K context window, the Memory Manager compacts more aggressively. Provider-specific features (like extended thinking) are exposed as optional capabilities, not required.
+**How to handle provider differences:** The `ProviderCapabilities` interface lets the Orchestrator and runtime adapt — e.g., if a provider has a smaller context window, Memory compacts more aggressively; if a provider supports native JSON schema output, the control plane uses that instead of prompt-only coercion. Provider-specific features are exposed as capabilities, not assumed by the upper layers.
 
-**What this means for v1:** One provider, one set of API calls to debug. But the `LLMProvider` interface exists from day one, so adding a second provider is a new file, not a refactor.
+**What this means for v1:** Nous can change provider defaults, add direct/compat endpoints, and keep Claude CLI as fallback without rewriting orchestrator/runtime logic. The provider boundary stays stable even as the transport mix evolves.
+
+#### Structured Generation Contract
+
+Control-plane objects — especially **Intent parsing**, **Task planning**, and later **memory extraction / evolution proposals** — must not depend on ad hoc `"JSON only"` prompting plus `JSON.parse`.
+
+The rule is:
+
+- upper layers declare a **schema + validator**
+- providers declare **structured output capabilities**
+- runtime owns the **selection / fallback policy**
+
+```typescript
+interface LLMRequest {
+  messages: LLMMessage[];
+  responseFormat?: LLMResponseFormat;   // text | json_object | json_schema
+}
+
+interface LLMProviderCapabilities {
+  structuredOutputModes: LLMStructuredOutputMode[];
+}
+
+class StructuredGenerationEngine {
+  generate<T>(spec: StructuredOutputSpec<T>): Promise<T>;
+}
+```
+
+**Why this matters architecturally:** structured output is not prompt craft; it is a **runtime contract**. If each subsystem hand-rolls its own `"return JSON"` prompt and parser, Nous becomes provider-fragile. A provider-neutral structured generation layer keeps the control plane stable while allowing each backend to use its strongest native mechanism:
+
+- OpenAI → `json_schema` / `json_object`
+- Claude CLI → `--json-schema`
+- weaker providers → prompt-only fallback with validation + repair loop
+
+This keeps the **semantic contract** at the top and the **transport-specific enforcement** at the provider boundary, which is the right architectural split.
 
 ---
 
@@ -2955,9 +4048,9 @@ v1: Daemon + Client
 
 ---
 
-### 8. Testing Strategy
+### 8. Testing, Harness, and Evaluation Strategy
 
-**Decision: Three-layer testing with recorded LLM responses for determinism.**
+**Decision: four-layer testing plus an explicit agent harness/eval flywheel.**
 
 ```
 Layer 1: Unit Tests (no LLM)
@@ -2973,11 +4066,20 @@ Layer 2: Recorded Integration Tests (recorded LLM)
   - Re-record when agent definitions or prompts change
   - Tool: Custom recorder that wraps LLMProvider
 
-Layer 3: Live Integration Tests (real LLM, optional)
+Layer 3: Scenario Harness (system-level, controlled runtime)
+  - Run repeatable end-to-end scenarios through the daemon/runtime
+  - Includes thread attach/reconnect, approvals, interrupts, MCP stub servers,
+    ambient perception signals, memory retrieval, and failure injection
+  - Assert on trace structure, state transitions, artifact outputs, and
+    human interruption counts
+  - Deterministic where possible; fault-injection driven where necessary
+
+Layer 4: Live Eval Harness (real LLM, optional but essential)
   - Run against real API with a budget cap ($5/run)
-  - Non-deterministic — used for validation, not gating
-  - Run manually or on release branches, not on every PR
-  - Asserts on structure (did the agent produce a file?) not content
+  - Use curated datasets + harvested production traces
+  - Score with code rules, human review, and trace grading
+  - Compare prompts / models / skills / tool policies
+  - Non-deterministic — used for validation and release readiness, not every PR gate
 ```
 
 ```typescript
@@ -3001,6 +4103,38 @@ class RecordedLLMProvider implements LLMProvider {
 ```
 
 **Why not just mock everything:** Mocks test your assumptions about the LLM, not the LLM's actual behavior. The recording approach captures real behavior and replays it deterministically. When the recording drifts from reality (prompt changes), you re-record — which also serves as a manual check that the new behavior is correct.
+
+**Why the Harness matters:** production Agent failures often live above the unit-test layer:
+
+- context compaction dropped the wrong fact
+- a permission gate fired at the wrong time
+- an MCP server timed out or exposed too many tools
+- a human approval pause failed to resume correctly
+- the agent technically "succeeded" but required too many clarifications or tool loops
+
+These are **workflow-level** failures. They need a Harness, not just unit tests.
+
+#### Harness principles
+
+1. **Every major capability gets at least one scenario harness**
+   - daemon continuity
+   - memory retrieval
+   - tool approval
+   - MCP interop
+   - ambient intent
+   - multi-agent handoff
+
+2. **Harness output feeds evaluation**
+   - failing scenarios become regression cases
+   - interesting live traces are promoted into eval datasets
+
+3. **Evaluation is trace-aware, not only final-answer-aware**
+   - final output quality matters
+   - but so do tool choice quality, interruption rate, unsafe-action rate, and wasted-token loops
+
+4. **Skill and prompt evolution must pass through the Harness**
+   - a changed prompt or new skill is not trusted because it "felt good once"
+   - it earns trust by surviving repeatable scenario runs
 
 ---
 

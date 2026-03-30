@@ -1,4 +1,11 @@
-import type { CapabilitySet, ToolDef, ToolResult } from "@nous/core";
+import { rm, writeFile } from "node:fs/promises";
+import type {
+	CapabilitySet,
+	RollbackExecutionResult,
+	ToolDef,
+	ToolResult,
+	ToolRollbackPlan,
+} from "@nous/core";
 import { prefixedId } from "@nous/core";
 import {
 	assertCapabilities,
@@ -6,7 +13,25 @@ import {
 	assertShellCommandAccess,
 } from "./capability-guard.ts";
 
-export type ToolHandler = (input: Record<string, unknown>) => Promise<string>;
+export interface ToolExecutionContext {
+	signal: AbortSignal;
+}
+
+export interface ToolExecutionOptions {
+	signal?: AbortSignal;
+}
+
+export interface ToolHandlerOutput {
+	output: string;
+	rollbackPlan?: ToolRollbackPlan;
+}
+
+export type ToolHandlerResult = string | ToolHandlerOutput;
+
+export type ToolHandler = (
+	input: Record<string, unknown>,
+	context: ToolExecutionContext,
+) => Promise<ToolHandlerResult>;
 
 export class ToolExecutor {
 	private handlers = new Map<string, ToolHandler>();
@@ -19,6 +44,7 @@ export class ToolExecutor {
 		tool: ToolDef,
 		input: Record<string, unknown>,
 		capabilities: CapabilitySet,
+		options: ToolExecutionOptions = {},
 	): Promise<ToolResult> {
 		const handler = this.handlers.get(tool.name);
 		if (!handler) {
@@ -28,39 +54,132 @@ export class ToolExecutor {
 				success: false,
 				output: `No handler registered for tool: ${tool.name}`,
 				durationMs: 0,
+				sideEffectClass: tool.sideEffectClass,
+				approvalMode: tool.approvalMode,
+				rollbackHint: tool.rollbackHint,
+				rollbackPlan: defaultRollbackPlan(tool),
 			};
 		}
 
 		const start = Date.now();
 		const timeoutMs = tool.timeoutMs ?? 30000;
+		let abortWaiter:
+			| {
+					promise: Promise<never>;
+					dispose(): void;
+			  }
+			| undefined;
 
 		try {
 			// Check capabilities
 			assertCapabilities(tool, capabilities);
 			assertToolInputAccess(tool, input, capabilities);
+			throwIfAborted(options.signal, tool.name);
+			abortWaiter = createAbortWaiter(options.signal, tool.name);
 
-			const output = await Promise.race([
-				handler(input),
+			const handlerResult = await Promise.race([
+				handler(input, {
+					signal: options.signal ?? new AbortController().signal,
+				}),
 				timeout(timeoutMs, tool.name),
+				abortWaiter.promise,
 			]);
+			abortWaiter.dispose();
+			const normalized = normalizeHandlerResult(handlerResult, tool);
 
 			return {
 				id: prefixedId("tr"),
 				toolName: tool.name,
 				success: true,
-				output,
+				output: normalized.output,
 				durationMs: Date.now() - start,
+				sideEffectClass: tool.sideEffectClass,
+				approvalMode: tool.approvalMode,
+				rollbackHint: tool.rollbackHint,
+				rollbackPlan: normalized.rollbackPlan,
 			};
 		} catch (err) {
+			const interrupted = err instanceof ToolInterruptedError;
 			return {
 				id: prefixedId("tr"),
 				toolName: tool.name,
 				success: false,
 				output: (err as Error).message,
 				durationMs: Date.now() - start,
+				interrupted,
+				sideEffectClass: tool.sideEffectClass,
+				approvalMode: tool.approvalMode,
+				rollbackHint: tool.rollbackHint,
+				rollbackPlan: defaultRollbackPlan(tool),
+			};
+		} finally {
+			abortWaiter?.dispose();
+		}
+	}
+
+	async rollback(
+		plan: ToolRollbackPlan,
+		capabilities: CapabilitySet,
+	): Promise<RollbackExecutionResult> {
+		try {
+			switch (plan.kind) {
+				case "restore_file":
+					assertPathAccess(capabilities, "fs.write", plan.path);
+					await writeFile(plan.path, plan.content, "utf-8");
+					return {
+						success: true,
+						output: `Restored file contents at ${plan.path}`,
+					};
+				case "delete_file":
+					assertPathAccess(capabilities, "fs.write", plan.path);
+					await rm(plan.path, { force: true });
+					return {
+						success: true,
+						output: `Deleted file created during execution: ${plan.path}`,
+					};
+				case "manual":
+					return {
+						success: false,
+						output: `Manual rollback required: ${plan.description}`,
+					};
+			}
+		} catch (error) {
+			return {
+				success: false,
+				output: (error as Error).message,
 			};
 		}
 	}
+}
+
+function normalizeHandlerResult(
+	result: ToolHandlerResult,
+	tool: ToolDef,
+): ToolHandlerOutput {
+	if (typeof result === "string") {
+		return {
+			output: result,
+			rollbackPlan: defaultRollbackPlan(tool),
+		};
+	}
+
+	return {
+		output: result.output,
+		rollbackPlan: result.rollbackPlan ?? defaultRollbackPlan(tool),
+	};
+}
+
+function defaultRollbackPlan(tool: ToolDef): ToolRollbackPlan | undefined {
+	if (tool.rollbackPolicy === "manual") {
+		const description =
+			tool.rollbackHint?.trim() ||
+			`Manual rollback required for tool ${tool.name}.`;
+		return {
+			kind: "manual",
+			description,
+		};
+	}
+	return undefined;
 }
 
 function assertToolInputAccess(
@@ -104,4 +223,52 @@ function timeout(ms: number, toolName: string): Promise<never> {
 			ms,
 		),
 	);
+}
+
+function createAbortWaiter(
+	signal: AbortSignal | undefined,
+	toolName: string,
+): {
+	promise: Promise<never>;
+	dispose(): void;
+} {
+	if (!signal) {
+		return {
+			promise: new Promise<never>(() => {}),
+			dispose() {},
+		};
+	}
+	if (signal.aborted) {
+		return {
+			promise: Promise.reject(new ToolInterruptedError(toolName)),
+			dispose() {},
+		};
+	}
+	const listener = () => reject(new ToolInterruptedError(toolName));
+	let reject!: (error: ToolInterruptedError) => void;
+	const promise = new Promise<never>((_, rejectFn) => {
+		reject = rejectFn as (error: ToolInterruptedError) => void;
+		signal.addEventListener("abort", listener, { once: true });
+	});
+	return {
+		promise,
+		dispose() {
+			signal.removeEventListener("abort", listener);
+		},
+	};
+}
+
+function throwIfAborted(
+	signal: AbortSignal | undefined,
+	toolName: string,
+): void {
+	if (!signal?.aborted) return;
+	throw new ToolInterruptedError(toolName);
+}
+
+export class ToolInterruptedError extends Error {
+	constructor(toolName: string) {
+		super(`Tool '${toolName}' was interrupted before completion`);
+		this.name = "ToolInterruptedError";
+	}
 }

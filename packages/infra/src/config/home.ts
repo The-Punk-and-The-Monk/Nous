@@ -31,7 +31,9 @@ export interface NousConfig {
 	provider: {
 		priority: Array<"openai_compat" | "openai" | "anthropic" | "claude_cli">;
 		claudeModel: string;
-		openaiModel?: string;
+		openaiModel: string;
+		openaiBaseURL?: string;
+		openaiCompatBaseURL?: string;
 	};
 	sensors: {
 		enabled: boolean;
@@ -114,7 +116,8 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 	});
 	writeDefaultJsonIfMissing(join(paths.configDir, "providers.json"), {
 		provider: {
-			priority: ["openai_compat", "openai", "anthropic", "claude_cli"],
+			priority: ["openai", "openai_compat", "anthropic", "claude_cli"],
+			openaiModel: "gpt-5.1",
 			claudeModel: "sonnet",
 		},
 	});
@@ -354,7 +357,8 @@ const DEFAULT_NOUS_CONFIG: NousConfig = {
 	},
 	storage: {},
 	provider: {
-		priority: ["openai_compat", "openai", "anthropic", "claude_cli"],
+		priority: ["openai", "openai_compat", "anthropic", "claude_cli"],
+		openaiModel: "gpt-5.1",
 		claudeModel: "sonnet",
 	},
 	sensors: {

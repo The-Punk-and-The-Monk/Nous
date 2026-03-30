@@ -2,8 +2,10 @@ import type {
 	ContentBlock,
 	LLMMessage,
 	LLMProvider,
+	LLMProviderCapabilities,
 	LLMRequest,
 	LLMResponse,
+	LLMResponseFormat,
 	StreamChunk,
 } from "@nous/core";
 import { LLMError, RateLimitError } from "@nous/core";
@@ -33,6 +35,12 @@ export class OpenAIChatProvider implements LLMProvider {
 		this.client = new OpenAI(options.clientOptions);
 		this.model = options.model;
 		this.maxRetries = options.maxRetries ?? 3;
+	}
+
+	getCapabilities(): LLMProviderCapabilities {
+		return {
+			structuredOutputModes: ["json_schema", "json_object", "tool_calling"],
+		};
 	}
 
 	async chat(request: LLMRequest): Promise<LLMResponse> {
@@ -154,8 +162,31 @@ function toOpenAIParams(
 	if (request.stopSequences) {
 		params.stop = request.stopSequences;
 	}
+	const responseFormat = toOpenAIResponseFormat(request.responseFormat);
+	if (responseFormat) {
+		(
+			params as OpenAI.ChatCompletionCreateParams & {
+				response_format?: ReturnType<typeof toOpenAIResponseFormat>;
+			}
+		).response_format = responseFormat;
+	}
 
 	return params;
+}
+
+function toOpenAIResponseFormat(format?: LLMResponseFormat) {
+	if (!format || format.type === "text") return undefined;
+	if (format.type === "json_object") {
+		return { type: "json_object" as const };
+	}
+	return {
+		type: "json_schema" as const,
+		json_schema: {
+			name: format.name,
+			schema: format.schema,
+			strict: format.strict ?? true,
+		},
+	};
 }
 
 function fromOpenAIResponse(response: OpenAI.ChatCompletion): LLMResponse {

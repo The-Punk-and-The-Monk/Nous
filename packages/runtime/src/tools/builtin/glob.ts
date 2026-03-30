@@ -18,14 +18,22 @@ export const globDef: ToolDef = {
 	},
 	requiredCapabilities: ["fs.read"],
 	timeoutMs: 15000,
+	sideEffectClass: "read_only",
+	idempotency: "idempotent",
+	interruptibility: "after_tool",
+	approvalMode: "auto",
+	rollbackPolicy: "none",
 };
 
-export const globHandler: ToolHandler = async (input) => {
+export const globHandler: ToolHandler = async (input, context) => {
 	const pattern = input.pattern as string;
 	const cwd = (input.cwd as string) ?? ".";
 	const glob = new Glob(pattern);
 	const matches: string[] = [];
 	for await (const file of glob.scan({ cwd, dot: false })) {
+		if (context.signal.aborted) {
+			throw new Error("glob interrupted before completion");
+		}
 		matches.push(file);
 		if (matches.length >= 500) break;
 	}

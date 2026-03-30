@@ -100,7 +100,7 @@ export async function openDaemonRepl(options?: {
 			}
 
 			const response = await session.request({
-				type: "submit_intent",
+				type: currentThreadId ? "send_message" : "submit_intent",
 				channel,
 				payload: {
 					text: input,

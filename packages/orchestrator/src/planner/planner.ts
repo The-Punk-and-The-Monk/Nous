@@ -1,15 +1,18 @@
-import type { Intent, LLMProvider, Task } from "@nous/core";
+import type {
+	ExecutionDepthDecision,
+	Intent,
+	LLMProvider,
+	Task,
+	TaskContract,
+} from "@nous/core";
 import { createLogger, now, prefixedId } from "@nous/core";
-
-const log = createLogger("task-planner");
+import { StructuredGenerationEngine } from "@nous/runtime";
 import { detectCycle } from "./dag.ts";
 
-const PLAN_SYSTEM_PROMPT = `You are a JSON-only task planner. You MUST respond with ONLY a JSON object, no other text.
+const log = createLogger("task-planner");
 
-Decompose the given intent into atomic tasks. Each task should be completable by a single agent.
-
-Your entire response must be this exact JSON structure and nothing else:
-{"tasks":[{"id":1,"description":"...","dependsOn":[],"capabilitiesRequired":["fs.read"]}]}`;
+const PLAN_SYSTEM_PROMPT =
+	"Decompose the given intent into atomic tasks. Each task should be completable by a single agent.";
 
 interface PlannedTask {
 	id: number;
@@ -18,41 +21,72 @@ interface PlannedTask {
 	capabilitiesRequired: string[];
 }
 
-export class TaskPlanner {
-	constructor(private llm: LLMProvider) {}
+export interface TaskPlanningOptions {
+	contract?: TaskContract;
+	executionDepth?: ExecutionDepthDecision;
+}
 
-	async plan(intent: Intent): Promise<Task[]> {
+export class TaskPlanner {
+	private readonly structured: StructuredGenerationEngine;
+
+	constructor(private llm: LLMProvider) {
+		this.structured = new StructuredGenerationEngine(llm);
+	}
+
+	async plan(
+		intent: Intent,
+		options: TaskPlanningOptions = {},
+	): Promise<Task[]> {
 		log.debug("Planning tasks for intent", {
 			intentId: intent.id,
 			goal: intent.goal.summary,
-		});
-		const response = await this.llm.chat({
-			system: PLAN_SYSTEM_PROMPT,
-			messages: [
-				{
-					role: "user",
-					content: `Intent: ${intent.raw}\n\nGoal: ${intent.goal.summary}\nSuccess criteria: ${intent.goal.successCriteria.join(", ")}\nConstraints: ${intent.constraints.map((c) => c.description).join(", ") || "none"}`,
-				},
-			],
-			maxTokens: 2048,
-			temperature: 0,
+			planningDepth: options.executionDepth?.planningDepth,
 		});
 
-		const text = response.content
-			.filter((b) => b.type === "text")
-			.map((b) => (b as { text: string }).text)
-			.join("");
+		if (options.executionDepth?.planningDepth === "none") {
+			return [createSingleTask(intent, options.contract)];
+		}
 
-		let parsed: { tasks: PlannedTask[] };
+		let plannedTasks: PlannedTask[];
 		try {
-			parsed = JSON.parse(extractJson(text));
+			const parsed = await this.structured.generate({
+				spec: TASK_PLAN_SPEC,
+				system: PLAN_SYSTEM_PROMPT,
+				messages: [
+					{
+						role: "user",
+						content: [
+							`Intent: ${intent.workingText ?? intent.raw}`,
+							`Goal: ${intent.goal.summary}`,
+							`Success criteria: ${intent.goal.successCriteria.join(", ")}`,
+							`Constraints: ${intent.constraints.map((c) => c.description).join(", ") || "none"}`,
+							`Task contract summary: ${options.contract?.summary ?? intent.goal.summary}`,
+							`Contract boundaries: ${options.contract?.boundaries.join(", ") || "none"}`,
+							`Planning depth: ${options.executionDepth?.planningDepth ?? "full"}`,
+							`Organization depth: ${options.executionDepth?.organizationDepth ?? "single_agent"}`,
+							`Time depth: ${options.executionDepth?.timeDepth ?? "foreground"}`,
+							options.executionDepth?.planningDepth === "light"
+								? "Keep the plan compact. Prefer 1-3 high-value tasks."
+								: "Use as many tasks as needed, but keep each task atomic.",
+							options.executionDepth?.organizationDepth ===
+							"parallel_specialists"
+								? "Prefer independent branches when safe."
+								: "Do not introduce parallel branches unless clearly useful.",
+						].join("\n\n"),
+					},
+				],
+				maxTokens: 2048,
+				temperature: 0,
+			});
+			plannedTasks = parsed.tasks;
 		} catch (err) {
-			log.error("Failed to parse task plan JSON", { raw: text.slice(0, 300) });
+			log.error("Failed to parse task plan JSON", {
+				raw: String((err as Error).message).slice(0, 300),
+			});
 			throw new Error(
-				`Failed to parse task plan from LLM response: ${(err as Error).message}\nRaw response: ${text.slice(0, 500)}`,
+				`Failed to parse task plan from LLM response: ${(err as Error).message}`,
 			);
 		}
-		const plannedTasks: PlannedTask[] = parsed.tasks;
 
 		// Map numeric IDs to real ULID-based IDs
 		const idMap = new Map<number, string>();
@@ -87,12 +121,101 @@ export class TaskPlanner {
 	}
 }
 
-function extractJson(text: string): string {
-	const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-	if (fenced) return fenced[1].trim();
-	const braceMatch = text.match(/\{[\s\S]*\}/);
-	if (braceMatch) return braceMatch[0];
-	const bracketMatch = text.match(/\[[\s\S]*\]/);
-	if (bracketMatch) return bracketMatch[0];
-	return text;
+const TASK_PLAN_SPEC = {
+	name: "task_plan",
+	description:
+		"Return a task decomposition where each task has a numeric id, description, dependencies, and required capabilities.",
+	schema: {
+		type: "object",
+		additionalProperties: false,
+		required: ["tasks"],
+		properties: {
+			tasks: {
+				type: "array",
+				items: {
+					type: "object",
+					additionalProperties: false,
+					required: ["id", "description", "dependsOn", "capabilitiesRequired"],
+					properties: {
+						id: { type: "integer" },
+						description: { type: "string" },
+						dependsOn: {
+							type: "array",
+							items: { type: "integer" },
+						},
+						capabilitiesRequired: {
+							type: "array",
+							items: { type: "string" },
+						},
+					},
+				},
+			},
+		},
+	},
+	validate(value: unknown): { tasks: PlannedTask[] } {
+		if (!isObject(value) || !Array.isArray(value.tasks)) {
+			throw new Error("Task plan must include a tasks array");
+		}
+		const tasks = value.tasks
+			.map(normalizePlannedTask)
+			.filter((task): task is PlannedTask => Boolean(task));
+		if (tasks.length === 0) {
+			throw new Error("Task plan produced no valid tasks");
+		}
+		return { tasks };
+	},
+} as const;
+
+function normalizePlannedTask(value: unknown): PlannedTask | undefined {
+	if (!isObject(value)) return undefined;
+	const id =
+		typeof value.id === "number" && Number.isInteger(value.id)
+			? value.id
+			: undefined;
+	const description =
+		typeof value.description === "string"
+			? value.description.trim()
+			: undefined;
+	if (!id || !description) return undefined;
+	const dependsOn = Array.isArray(value.dependsOn)
+		? value.dependsOn.filter(
+				(item): item is number =>
+					typeof item === "number" && Number.isInteger(item),
+			)
+		: [];
+	const capabilitiesRequired = Array.isArray(value.capabilitiesRequired)
+		? value.capabilitiesRequired.filter(
+				(item): item is string =>
+					typeof item === "string" && item.trim().length > 0,
+			)
+		: [];
+	return {
+		id,
+		description,
+		dependsOn,
+		capabilitiesRequired,
+	};
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function createSingleTask(intent: Intent, contract?: TaskContract): Task {
+	return {
+		id: prefixedId("task"),
+		intentId: intent.id,
+		dependsOn: [],
+		description:
+			contract?.summary ||
+			intent.goal.summary ||
+			intent.workingText ||
+			intent.raw,
+		capabilitiesRequired: [],
+		status: "created",
+		retries: 0,
+		maxRetries: 3,
+		backoffSeconds: 2,
+		createdAt: now(),
+	};
 }

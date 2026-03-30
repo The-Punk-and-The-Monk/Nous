@@ -1,6 +1,10 @@
 import type {
+	ApproveDecisionAckPayload,
+	ApproveDecisionPayload,
 	AttachAckPayload,
 	AttachPayload,
+	CancelIntentAckPayload,
+	CancelIntentPayload,
 	Channel,
 	DaemonEnvelope,
 	DaemonMessageType,
@@ -28,6 +32,27 @@ export interface DialogueServiceConfig {
 		threadId: string;
 		messageId: string;
 		text: string;
+		channel: Channel;
+	}) => void | Promise<void>;
+	onSendMessage?: (payload: {
+		threadId: string;
+		messageId: string;
+		text: string;
+		channel: Channel;
+	}) => void | Promise<void>;
+	onApproveDecision?: (payload: {
+		decisionId: string;
+		threadId?: string;
+		messageId?: string;
+		approved?: boolean;
+		optionId?: string;
+		note?: string;
+		channel: Channel;
+	}) => void | Promise<void>;
+	onCancelIntent?: (payload: {
+		intentId?: string;
+		threadId?: string;
+		reason?: string;
 		channel: Channel;
 	}) => void | Promise<void>;
 }
@@ -120,7 +145,7 @@ export class DialogueService {
 	sendMessage(
 		channel: Channel,
 		payload: SendMessagePayload,
-	): DaemonEnvelope<SendMessageAckPayload> {
+	): Promise<DaemonEnvelope<SendMessageAckPayload>> {
 		const acceptedAt = this.clock();
 		const thread = this.getOrCreateThread(payload.threadId, {
 			channelId: channel.id,
@@ -128,13 +153,106 @@ export class DialogueService {
 		});
 		const message = this.storeInboundMessage(thread.id, channel, payload.text);
 
-		return {
+		if (this.config.onSendMessage) {
+			return Promise.resolve(
+				this.config.onSendMessage({
+					threadId: thread.id,
+					messageId: message.id,
+					text: payload.text,
+					channel,
+				}),
+			).then(() => ({
+				type: "ack",
+				threadId: thread.id,
+				timestamp: acceptedAt,
+				payload: {
+					threadId: thread.id,
+					messageId: message.id,
+					status: "accepted",
+				},
+			}));
+		}
+
+		return Promise.resolve({
 			type: "ack",
 			threadId: thread.id,
 			timestamp: acceptedAt,
 			payload: {
 				threadId: thread.id,
 				messageId: message.id,
+				status: "accepted",
+			},
+		});
+	}
+
+	async approveDecision(
+		channel: Channel,
+		payload: ApproveDecisionPayload,
+	): Promise<DaemonEnvelope<ApproveDecisionAckPayload>> {
+		const acceptedAt = this.clock();
+		let messageId: string | undefined;
+		let threadId = payload.threadId;
+
+		if (payload.note && payload.note.trim().length > 0) {
+			const thread = this.getOrCreateThread(payload.threadId, {
+				channelId: channel.id,
+				title: inferThreadTitle(payload.note),
+			});
+			const message = this.storeInboundMessage(
+				thread.id,
+				channel,
+				payload.note,
+			);
+			messageId = message.id;
+			threadId = thread.id;
+		}
+
+		if (this.config.onApproveDecision) {
+			await this.config.onApproveDecision({
+				decisionId: payload.decisionId,
+				threadId,
+				messageId,
+				approved: payload.approved,
+				optionId: payload.optionId,
+				note: payload.note,
+				channel,
+			});
+		}
+
+		return {
+			type: "ack",
+			threadId,
+			timestamp: acceptedAt,
+			payload: {
+				decisionId: payload.decisionId,
+				threadId,
+				messageId,
+				status: "accepted",
+			},
+		};
+	}
+
+	async cancelIntent(
+		channel: Channel,
+		payload: CancelIntentPayload,
+	): Promise<DaemonEnvelope<CancelIntentAckPayload>> {
+		const acceptedAt = this.clock();
+		if (this.config.onCancelIntent) {
+			await this.config.onCancelIntent({
+				intentId: payload.intentId,
+				threadId: payload.threadId,
+				reason: payload.reason,
+				channel,
+			});
+		}
+
+		return {
+			type: "ack",
+			threadId: payload.threadId,
+			timestamp: acceptedAt,
+			payload: {
+				intentId: payload.intentId,
+				threadId: payload.threadId,
 				status: "accepted",
 			},
 		};

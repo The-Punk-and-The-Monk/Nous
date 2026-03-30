@@ -16,6 +16,7 @@ import {
 } from "../config/permissions.ts";
 import { sendDaemonRequest } from "../daemon/client.ts";
 import { NousDaemon } from "../daemon/server.ts";
+import { buildUserStateGrounding } from "../intake/grounding.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
 import { agentsCommand } from "./commands/agents.ts";
 import { attachCommand } from "./commands/attach.ts";
@@ -240,31 +241,33 @@ export async function main(args: string[]): Promise<void> {
 		loadPermissionPolicy(),
 		{ projectRoot: process.cwd() },
 	);
-	const systemPrompt = renderContextForSystemPrompt(
-		contextAssembler.assemble({
-			scope: {
-				workingDirectory: process.cwd(),
-				projectRoot: process.cwd(),
-			},
-			activeIntents: backend.intents.getActive().map((intent) => ({
-				id: intent.id,
-				raw: intent.raw,
-				goal: intent.goal,
-				status: intent.status,
-				source: intent.source,
-			})),
-			recentMemoryHints: renderMemoryHints(
-				memoryRetriever.retrieve({
-					agentId: "nous",
-					query: intentText,
-					scope: {
-						workingDirectory: process.cwd(),
-						projectRoot: process.cwd(),
-					},
-				}),
-			),
-		}),
-	);
+	const assembledContext = contextAssembler.assemble({
+		scope: {
+			workingDirectory: process.cwd(),
+			projectRoot: process.cwd(),
+		},
+		activeIntents: backend.intents.getActive().map((intent) => ({
+			id: intent.id,
+			raw: intent.raw,
+			goal: intent.goal,
+			status: intent.status,
+			source: intent.source,
+		})),
+		recentMemoryHints: renderMemoryHints(
+			memoryRetriever.retrieve({
+				agentId: "nous",
+				query: intentText,
+				scope: {
+					workingDirectory: process.cwd(),
+					projectRoot: process.cwd(),
+				},
+			}),
+		),
+	});
+	const systemPrompt = renderContextForSystemPrompt(assembledContext);
+	const grounding = buildUserStateGrounding({
+		context: assembledContext,
+	});
 
 	// Start supervisor
 	const supervisor = new ProcessSupervisor({
@@ -280,6 +283,7 @@ export async function main(args: string[]): Promise<void> {
 	await runCommand(orchestrator, intentText, {
 		systemPrompt,
 		capabilities: permissionCapabilities,
+		grounding,
 	});
 
 	orchestrator.stop();
@@ -307,17 +311,18 @@ function printUsage(): void {
     --log-level <level>    Set log level: debug, info, warn, error, silent
 
   ${colors.bold("Environment:")}
-    ${colors.dim("No env vars needed if Claude CLI is authenticated (default provider).")}
+    ${colors.dim("Recommended default: direct OpenAI via OPENAI_API_KEY (or ~/.nous/secrets/providers.json).")}
 
     ANTHROPIC_API_KEY      Direct Anthropic API key
     ANTHROPIC_AUTH_TOKEN   OAuth token from Claude Pro/Max subscription
     ANTHROPIC_BASE_URL     Custom Anthropic API endpoint
     OPENAI_API_KEY         Direct OpenAI API key
     OPENAI_MODEL           OpenAI / OpenAI-compatible model name
-    OPENAI_API_BASE_URL    Custom base URL for direct OpenAI-compatible OpenAI API
+    OPENAI_API_BASE_URL    Custom base URL for direct OpenAI API
+    OPENAI_BASE_URL        Alias for direct OpenAI base URL
+    OPENAI_COMPAT_BASE_URL OpenAI-compatible endpoint (for proxy / local gateway)
     OPENAI_ORG_ID          Optional OpenAI organization ID
     OPENAI_PROJECT_ID      Optional OpenAI project ID
-    OPENAI_BASE_URL        OpenAI-compatible endpoint (e.g. claude-max-api-proxy)
     NOUS_MODEL             Model for Claude CLI provider (default: sonnet)
     NOUS_HOME              Nous user home (default: ~/.nous)
     NOUS_DB                Database path (default: ~/.nous/state/nous.db)
@@ -325,7 +330,7 @@ function printUsage(): void {
     NOUS_LOG_LEVEL         Log level: debug, info, warn, error, silent (default: info)
 
     ${colors.dim("Provider secrets: env vars override ~/.nous/secrets/providers.json")}
-    ${colors.dim("Provider priority: OPENAI_BASE_URL > OPENAI_API_KEY > ANTHROPIC_API_KEY > Claude CLI")}
+    ${colors.dim("Provider priority default: OpenAI > OpenAI-compatible > Anthropic > Claude CLI")}
 
   ${colors.bold("Examples:")}
     nous "Read README.md and summarize what this project is about"

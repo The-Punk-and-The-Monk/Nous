@@ -18,6 +18,20 @@ The local-first V1 runtime slice is now in place:
 - evolution seed (execution trace → validated procedure)
 - inter-Nous seed (identity + policy + governed procedure-summary exchange)
 
+The recommended default provider path is now **direct OpenAI**:
+
+- set `OPENAI_API_KEY`, or
+- store it in `~/.nous/secrets/providers.json`
+
+Direct OpenAI endpoints can be customized via:
+
+- `OPENAI_API_BASE_URL`
+- `OPENAI_BASE_URL` (alias)
+
+If you need an explicit OpenAI-compatible proxy / local gateway path, use:
+
+- `OPENAI_COMPAT_BASE_URL`
+
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full technical design.
 Implementation progress is tracked in [docs/DEVELOPMENT_LOG.md](./docs/DEVELOPMENT_LOG.md).
 Current finish-line planning is tracked in [docs/V1_PLAN.md](./docs/V1_PLAN.md).

@@ -86,6 +86,33 @@ export interface SendMessageAckPayload {
 	status: "accepted";
 }
 
+export interface ApproveDecisionPayload {
+	decisionId: string;
+	threadId?: string;
+	approved?: boolean;
+	optionId?: string;
+	note?: string;
+}
+
+export interface ApproveDecisionAckPayload {
+	decisionId: string;
+	threadId?: string;
+	messageId?: string;
+	status: "accepted";
+}
+
+export interface CancelIntentPayload {
+	intentId?: string;
+	threadId?: string;
+	reason?: string;
+}
+
+export interface CancelIntentAckPayload {
+	intentId?: string;
+	threadId?: string;
+	status: "accepted";
+}
+
 export interface ThreadSnapshot {
 	thread: DialogueThread;
 	messages: DialogueMessage[];

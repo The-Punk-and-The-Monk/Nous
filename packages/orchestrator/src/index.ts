@@ -3,6 +3,7 @@ export { IntentParser } from "./intent/parser.ts";
 
 // Task planning
 export { TaskPlanner } from "./planner/planner.ts";
+export type { TaskPlanningOptions } from "./planner/planner.ts";
 export { detectCycle, topologicalSort, getRoots } from "./planner/dag.ts";
 export type { DAGNode } from "./planner/dag.ts";
 
@@ -18,6 +19,7 @@ export { AgentRouter } from "./router/router.ts";
 export { Orchestrator } from "./orchestrator.ts";
 export type {
 	IntentExecutionOptions,
+	IntentScopeUpdateResult,
 	OrchestratorConfig,
 	ProgressEvent,
 } from "./orchestrator.ts";

@@ -742,3 +742,1719 @@ For significant sessions, capture:
   - stronger RAG: chunking, reranking, provenance-aware retrieval
   - richer evolution fingerprints and manifest/schema governance
   - actual relay/discovery/encrypted consultation flows
+
+### Session: Re-center provider defaults on direct OpenAI and formalize endpoint config
+- Context / Trigger:
+  - Real-machine testing exposed an important practical reality: the current Claude CLI path is a useful hack for local experimentation, but it is not the right default trust model for Nous.
+  - The project now has a real permission boundary, so the default provider path should prefer the cleaner architecture: a direct API provider that behaves like an LLM backend, not an external agent runtime.
+- Problem:
+  - Default bootstrap/config still leaned too hard toward the old Claude-centric path.
+  - Direct OpenAI already supported env-based base URL override in code, but the contract was not explicit enough in config/docs, and the env naming around direct-vs-compat endpoints was confusing.
+- Decision:
+  - Make the default provider posture **OpenAI-first**.
+  - Keep Claude CLI as an escape hatch / fallback, but stop treating it as the recommended default.
+  - Formalize two distinct endpoint paths:
+    - **direct OpenAI**
+      - `OPENAI_API_BASE_URL`
+      - `OPENAI_BASE_URL` as alias
+      - config: `provider.openaiBaseURL`
+    - **explicit OpenAI-compatible proxy / gateway**
+      - `OPENAI_COMPAT_BASE_URL`
+      - config: `provider.openaiCompatBaseURL`
+- Changes made:
+  - Updated `packages/infra/src/config/home.ts`
+    - default provider priority is now:
+      - `openai`
+      - `openai_compat`
+      - `anthropic`
+      - `claude_cli`
+    - default `openaiModel` is now bootstrapped into config
+    - config schema now includes:
+      - `openaiBaseURL`
+      - `openaiCompatBaseURL`
+  - Updated `packages/infra/src/cli/provider.ts`
+    - direct OpenAI resolves base URL from env/config
+    - explicit compat endpoint gets its own env/config path
+    - compat now only wins when explicitly configured, instead of piggybacking on a generic `OPENAI_BASE_URL` assumption
+  - Updated CLI help in `packages/infra/src/cli/app.ts`
+  - Updated `README.md`
+  - Expanded tests:
+    - `packages/infra/tests/provider.test.ts`
+    - `packages/infra/tests/home-config.test.ts`
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check packages README.md docs ARCHITECTURE.md scripts` ✅
+- Impact:
+  - Nous now defaults to the architecturally cleaner provider path for users with an OpenAI API key.
+  - Direct OpenAI endpoint customization is now a first-class contract, not just an implementation detail.
+  - The separation between:
+    - direct provider
+    - compat/proxy provider
+    is much clearer, which matters for both product ergonomics and future safety reasoning.
+
+### Session: Replace prompt-only JSON parsing with a provider-neutral structured generation contract
+- Context / Trigger:
+  - Real-machine OpenAI testing exposed a core control-plane weakness: `IntentParser` asked for JSON, but the model still returned natural language, and the parser immediately failed on `JSON.parse`.
+  - This was not just an OpenAI bug. It revealed that Nous still treated structured output as a prompt habit instead of a runtime contract.
+- Problem:
+  - `IntentParser` and `TaskPlanner` each hand-rolled their own “return JSON” discipline.
+  - Different providers expose different native mechanisms:
+    - OpenAI: `response_format`
+    - Claude CLI: `--json-schema`
+    - others: may only support prompt coercion
+  - If every control-plane subsystem owns its own JSON prompt and parse logic, the architecture becomes provider-fragile and drifts toward duplicated glue code.
+- Options considered:
+  - Option A: keep patching prompts until OpenAI behaves.
+    - Rejected because this would solve a symptom, not the architectural boundary problem.
+  - Option B: add provider-specific hacks directly inside `IntentParser` / `TaskPlanner`.
+    - Rejected because it would leak transport details into orchestration logic.
+  - Option C: introduce a provider-neutral structured generation layer and route all critical control-plane objects through it.
+    - Chosen because it preserves the right separation:
+      - upper layers declare schema + validator
+      - providers declare capabilities
+      - runtime chooses native mode or fallback strategy
+- Decision:
+  - Add a **StructuredGenerationEngine** in runtime as the single contract for structured control-plane generation.
+  - Extend `LLMRequest` with explicit `responseFormat`.
+  - Extend `LLMProvider` with `getCapabilities()` so providers report supported structured modes.
+  - Migrate `IntentParser` and `TaskPlanner` to schema-based structured generation instead of direct `JSON.parse(rawText)`.
+- Changes made:
+  - Updated core contracts:
+    - `packages/core/src/llm/types.ts`
+    - `packages/core/src/llm/provider.ts`
+    - `packages/core/src/index.ts`
+  - Added runtime structured generation layer:
+    - `packages/runtime/src/llm/structured.ts`
+    - `packages/runtime/src/index.ts`
+  - Updated providers:
+    - `packages/runtime/src/llm/openai-shared.ts`
+    - `packages/runtime/src/llm/anthropic.ts`
+    - `packages/runtime/src/llm/claude-cli.ts`
+  - Migrated orchestrator control-plane callers:
+    - `packages/orchestrator/src/intent/parser.ts`
+    - `packages/orchestrator/src/planner/planner.ts`
+  - Added tests:
+    - `packages/runtime/tests/structured-generation.test.ts`
+    - `packages/orchestrator/tests/intent-parser.test.ts`
+    - `packages/orchestrator/tests/task-planner.test.ts`
+  - Updated architecture documentation:
+    - `ARCHITECTURE.md`
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check packages README.md docs ARCHITECTURE.md scripts` ✅
+  - `bun build bin/nous.ts --compile --outfile dist/nous` ✅
+- Impact:
+  - Structured output is now a first-class runtime boundary rather than scattered prompt folklore.
+  - OpenAI-native schema/object response paths can be used without contaminating orchestration code with provider-specific branches.
+  - Future providers can join by declaring capabilities, instead of forcing every caller to learn each backend’s quirks.
+  - This materially reduces the chance that Nous’s control plane regresses into fragile prompt parsing as more providers are added.
+- Open questions / next steps:
+  - Anthropic is currently capability-declared but still falls back to prompt-oriented handling for structured generation; native structured transport there can be improved later.
+  - Tool-calling as a future structured-output path is still reserved conceptually but not yet used as the primary control-plane transport.
+
+## 2026-03-30
+
+### Session: Tighten repo operating instructions for changelog discipline and end-of-turn notifications
+- Context / Trigger:
+  - At the start of the day, the user asked to make two workflow expectations explicit in the repository seed memory:
+    1. every code update must also update `docs/DEVELOPMENT_LOG.md`
+    2. every dialogue round should end with a macOS notification whose title clearly identifies the project as Nous
+- Problem:
+  - The repo already had strong documentation discipline for significant sessions, but it did not yet state a strict **per-change** rule for updating the in-repo development log.
+  - Completion awareness still depended on the user manually checking the terminal/chat, which is fragile when multiple projects or long-running tasks are active.
+- Options considered:
+  - Option A: keep both behaviors as informal operator habit.
+    - Rejected because habits are easy to miss under iteration pressure and do not create a durable repo-local contract.
+  - Option B: record the preference only in the external Obsidian log.
+    - Rejected because `AGENTS.md` is the actual always-on instruction source for routine repo work.
+  - Option C: elevate both expectations into `AGENTS.md`, then log the governance change in both repo-local and external traces.
+    - Chosen because it closes the instruction gap at the correct boundary: the repository seed memory itself.
+- Decision:
+  - Update `AGENTS.md` so that:
+    - every code or repo-instruction change must update `docs/DEVELOPMENT_LOG.md` in the same work session with detailed context
+    - every dialogue round in this repo must end with a transient macOS notification whose title includes `Nous`
+  - Treat this instruction change itself as a traceable repo update and record it in both logs.
+- Changes made:
+  - Updated `AGENTS.md`
+  - Updated `docs/DEVELOPMENT_LOG.md`
+  - Updated the external Obsidian Nous development log
+- Impact:
+  - The repo now has a stricter local operating discipline for engineering traceability rather than relying on memory or habit.
+  - The user now gets a lightweight completion signal after each round, with clear project disambiguation in the notification title.
+  - This improves day-to-day usability without changing runtime architecture or product behavior.
+- Open questions / next steps:
+  - If Nous later needs to run in non-macOS environments, notification behavior may need a platform abstraction instead of a macOS-specific workflow rule.
+
+### Session: Stop automatic Obsidian sync and make external diary writing user-triggered
+- Context / Trigger:
+  - After the previous workflow tightening, the user clarified that external Obsidian writing should not happen after each routine code or documentation change.
+  - The preferred workflow is now:
+    - `docs/DEVELOPMENT_LOG.md` remains the always-updated engineering trace
+    - Obsidian writing happens only when the user explicitly asks for an end-of-day distilled summary
+- Problem:
+  - The current `AGENTS.md` still described Obsidian logging as a routine expectation for significant sessions.
+  - That creates unnecessary duplication during active development and weakens the role separation between repo-local traceability and external daily journaling.
+- Options considered:
+  - Option A: keep automatic Obsidian updates for significant sessions.
+    - Rejected because it conflicts with the user’s explicit workflow preference and adds avoidable overhead to normal implementation rounds.
+  - Option B: remove Obsidian guidance entirely from `AGENTS.md`.
+    - Rejected because the path, section target, and formatting rules are still useful once the user explicitly requests a sync.
+  - Option C: retain the Obsidian instructions, but gate them behind explicit user request and position `docs/DEVELOPMENT_LOG.md` as the source material.
+    - Chosen because it preserves the write contract without forcing duplicate logging every round.
+- Decision:
+  - Update `AGENTS.md` so that:
+    - every code or repo-instruction change still updates `docs/DEVELOPMENT_LOG.md`
+    - Obsidian is not updated by default
+    - Obsidian is updated only when the user explicitly requests it, typically by asking for a distilled daily diary derived from `docs/DEVELOPMENT_LOG.md`
+- Changes made:
+  - Updated `AGENTS.md`
+  - Updated `docs/DEVELOPMENT_LOG.md`
+- Impact:
+  - The documentation boundary is now cleaner:
+    - in-repo log = exhaustive engineering trace
+    - Obsidian = explicit, user-triggered distilled narrative
+  - This reduces duplicate writing during implementation while preserving a clear path for end-of-day knowledge capture.
+- Open questions / next steps:
+  - If the end-of-day Obsidian format stabilizes further, we can later codify a more explicit summarization template for that user-triggered sync workflow.
+
+### Session: Research production Agent problems further around skills / MCP / harness, then translate them into Nous architecture
+- Context / Trigger:
+  - After a broad survey of production Agent engineering problems, the user pointed out that three important areas were still under-covered:
+    - skills
+    - MCP
+    - harness
+  - The user also emphasized the right architectural posture:
+    - the point is not to solve every production problem in code immediately
+    - the point is to recognize these problems early and decide where their solutions belong in the architecture
+  - Finally, the next product goal was reframed more concretely:
+    - move Nous toward a state where a real user can start using it for small tasks, not just admire the architecture.
+- Problem:
+  - `ARCHITECTURE.md` already had strong positions on runtime continuity, memory direction, permissions, evolution, and collective intelligence, but it was still missing sharper language around:
+    - how reusable skills differ from prompts, plugins, and subagents
+    - how MCP should be integrated without letting an external protocol become the system’s internal ontology
+    - why scenario harnesses and eval flywheels are first-class engineering requirements rather than post-hoc QA
+  - Without these clarifications, the repo risked two common industry failure modes:
+    - treating “skill” as a vague synonym for prompt/package/tool bundle
+    - treating MCP support as “just connect the server and expose everything”
+    - treating evaluation as unit tests plus vibes instead of workflow-level validation.
+- Research inputs considered:
+  - Official Anthropic materials on effective agents, context engineering, and Claude Code subagents
+  - Official OpenAI materials on building agents, conversation state, MCP, and agent evals
+  - Official LangGraph / LangSmith documentation on persistence, MCP integration, and evaluation
+  - Official MCP documentation on architecture, tools/resources/prompts, agent skills, and testing/inspector tooling
+  - Official Microsoft AutoGen and Semantic Kernel documentation on runtimes, plugins/functions, and orchestration
+  - Official LlamaIndex and CrewAI materials relevant to memory, tools, and observability
+- Options considered:
+  - Option A: keep `ARCHITECTURE.md` focused only on the existing north-star narrative and defer skill/MCP/harness formalization until implementation work starts.
+    - Rejected because this would repeat the same mistake many frameworks make: implementation starts before object boundaries are clean.
+  - Option B: add ad hoc notes about MCP servers, skills, and testing tools in scattered sections.
+    - Rejected because these topics cut across ontology, tool architecture, evolution, and testing; scattered notes would weaken conceptual clarity.
+  - Option C: use the research to tighten the architecture at the exact abstraction boundaries where these concerns belong.
+    - Chosen because it preserves the project’s architectural style: explicit contracts first, implementation later.
+- Decision:
+  - Update `ARCHITECTURE.md` in four places:
+    1. add `PromptAsset`, `MCPServer`, and `Harness` to Core Vocabulary
+    2. strengthen Tool System with production-grade tool contract expectations and an explicit **MCP boundary** section
+    3. clarify that **Skill is not the same object as a prompt, plugin, or subagent**
+    4. upgrade Testing Strategy into **Testing, Harness, and Evaluation Strategy**
+  - Use these additions to make one architectural stance explicit:
+    - Nous should adopt external ecosystem standards where useful, but always subordinate them to Nous’s own governance model around scope, provenance, trust, permissions, and validation
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added new core vocabulary entries:
+      - `PromptAsset`
+      - `MCPServer`
+      - `Harness`
+    - expanded Tool System with:
+      - production tool contract requirements
+      - `MCP Boundary — External Capability Interop, Not Internal Ontology`
+    - expanded Evolution / Skill Crystallization with:
+      - explicit separation of Skill vs PromptAsset vs plugin/MCPServer vs subagent profile
+    - expanded testing architecture into:
+      - unit tests
+      - recorded integration
+      - scenario harness
+      - live eval harness
+      - harness principles and trace-aware evaluation
+  - Updated `docs/DEVELOPMENT_LOG.md`
+- Analysis / trade-offs:
+  - **On Skills:**
+    - Mainstream systems often conflate “reusable prompt”, “specialized agent”, “tool package”, and “skill”.
+    - Nous should not. A Skill must remain a governed competence artifact with validation, provenance, applicability, and scope.
+    - This is more work architecturally, but it avoids later confusion around exportability, trust, and auto-application.
+  - **On MCP:**
+    - MCP is clearly becoming the interop standard for external tools/context.
+    - But protocol standardization does not solve trust, authorization, context budget, or governance.
+    - So Nous should adopt MCP as a boundary/protocol, not as a replacement for internal tool semantics.
+  - **On Harnesses:**
+    - Production Agent failures often happen at workflow level, not unit level.
+    - A scenario harness is therefore part of the runtime’s operating discipline, not optional QA polish.
+    - The trade-off is added infrastructure complexity, but without it, evolution/prompt changes quickly become ungovernable.
+- Impact:
+  - The architecture is now better aligned with real production concerns without prematurely forcing implementation of every advanced subsystem.
+  - Nous now has a cleaner conceptual answer to:
+    - what a Skill is
+    - what MCP is for
+    - why harness/eval must be first-class
+  - The repo is also better positioned for the next product-phase question:
+    - what still blocks Nous from becoming genuinely usable for small user tasks?
+- Open questions / next steps:
+  - To reach “user can actually use Nous for small tasks”, the largest remaining practical gaps now look like:
+    1. **decision queue / approval UX**
+       - write and shell actions need a clearer human-interrupt path than today’s static-only permission boundary
+    2. **context-budgeting / compaction / prompt asset discipline**
+       - context assembly exists, but production-grade prompt/context engineering does not
+    3. **tool contract formalization**
+       - idempotency, side-effect class, output compaction, and MCP adapter policy still need concrete runtime structures
+    4. **scenario harness / trace evaluation**
+       - Nous can run tasks, but it still lacks the system-level validation loop needed to iterate confidently
+    5. **stronger memory/RAG**
+       - current retrieval is a real seed, but not yet robust enough for repeated real-world small-task assistance
+
+### Session: Formalize a unified Artifact / Governance model and materialize a TypeScript draft
+- Context / Trigger:
+  - After converging conceptually on the common nature of skills, tools, harnesses, and prompt assets, the next step was to stop leaving that insight as pure discussion.
+  - The explicit follow-up request was to do both:
+    1. write a formal architecture section
+    2. produce a TypeScript object-model draft that lives closer to future implementation structure
+- Problem:
+  - `ARCHITECTURE.md` already mentioned PromptAsset / MCPServer / Harness at the vocabulary level, but it still lacked one **single, named architectural model** that places:
+    - prompt assets
+    - tools
+    - skills
+    - harnesses
+    under the same governance plane
+  - The repo also lacked a code-adjacent type sketch for this family of objects, which made the idea easy to forget or reinterpret later when implementation starts.
+- Options considered:
+  - Option A: only expand `ARCHITECTURE.md` and keep the object model as prose/code-block examples inside the document.
+    - Rejected because the idea would still be too easy to treat as “nice theory” rather than a future core type boundary.
+  - Option B: only add a TypeScript draft file and defer the architecture prose.
+    - Rejected because the semantics of the model — especially governance intent — matter more than the syntax of the interfaces.
+  - Option C: do both together:
+    - architecture first-class section
+    - future-facing core type draft
+    - both explicitly framed as a target model, not a false claim of full runtime completion
+    - Chosen because it best matches Nous’s design method: architecture and object model evolve together.
+- Decision:
+  - Add a formal `Unified Artifact / Governance Model` section to `ARCHITECTURE.md`.
+  - Define the common abstraction as **Governed Operational Artifacts**.
+  - Materialize a first TypeScript draft in core types so future implementation can converge on a concrete shape rather than re-deriving it from prose.
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added `Unified Artifact / Governance Model`
+    - added one integrated architecture diagram covering:
+      - PromptAssets
+      - Tools
+      - Skills
+      - Harnesses
+      - Artifact Registry / Selection / Runtime / Evidence / Governance Loop
+    - added a common `GovernedArtifact` shape in architecture prose
+    - added specialization rules and a current-vs-future implementation boundary note
+    - added an implementation note that points to `packages/core/src/types/artifact.ts`
+  - Added `packages/core/src/types/artifact.ts`
+    - draft future-facing TypeScript object model for:
+      - `GovernedArtifact`
+      - `PromptAsset`
+      - `ToolArtifact`
+      - `SkillArtifact`
+      - `HarnessArtifact`
+      - related refs, provenance, scope, evidence, retry, fixture, and fault-injection types
+  - Updated `packages/core/src/index.ts`
+    - exported the new artifact draft types
+- Analysis / trade-offs:
+  - The new type file is intentionally **ahead of the current implemented runtime**.
+    - This is acceptable here because the purpose is to anchor future design, not to pretend the runtime already has a full artifact registry.
+  - The draft introduces future-facing concepts like:
+    - `ArtifactValidationState`
+    - `ArtifactScope`
+    - `ArtifactProvenance`
+    - richer tool/harness metadata
+    even though the current runtime still uses narrower seed objects elsewhere.
+  - This creates some short-term duplication with current minimal runtime types, but that duplication is preferable to prematurely mutating working runtime code just to force conceptual alignment too early.
+- Impact:
+  - The architecture now has a single explicit answer to the question:
+    - “what common plane do skill / tool / harness / prompt asset live on?”
+  - The repo also now contains a code-near object-model anchor that future implementation can gradually converge toward.
+  - This reduces the risk that future work accidentally collapses:
+    - skill into prompt
+    - tool into raw adapter
+    - harness into ad hoc test script
+- Open questions / next steps:
+  - The next design question is whether Nous should later introduce:
+    - a persistent Artifact Registry in storage
+    - a dedicated artifact lifecycle/event log
+    - selection policies that operate uniformly across prompt/tool/skill families
+  - At implementation level, the most pragmatic near-term move is probably **not** to fully implement artifact governance, but to borrow this model selectively for:
+    1. richer tool contracts
+    2. skill promotion metadata
+    3. minimal harness scenario objects
+
+### Session: Add top-down task-closure guidance to AGENTS and tighten notification timing
+- Context / Trigger:
+  - After discussing how to judge Nous’s next-stage gaps, the user made an important correction:
+    - the right question is not “which modules are missing?”
+    - the right question is “what should a Nous task-completion process look like if it truly follows Nous’s philosophy?”
+  - The user also reported a workflow bug in practice:
+    - macOS notifications were effectively arriving too early in the round
+    - the intended rule is that notification delivery should happen only as the final step, after the response/planning/editing work is actually complete
+- Problem:
+  - `AGENTS.md` already emphasized architecture-first reasoning, but it did not yet encode the **top-down task-closure method** explicitly.
+  - Without that instruction, it is too easy to fall back into bottom-up gap analysis:
+    - planner missing?
+    - scheduler missing?
+    - memory missing?
+    instead of first defining the ideal user interaction flow and internal execution flow.
+  - The notification rule also lacked an explicit sequencing constraint, so it was possible to satisfy “send a notification every round” while still violating the real intent of “notify only when the round is actually done.”
+- Options considered:
+  - Option A: keep these as conversational corrections only.
+    - Rejected because they would be easy to forget later and would not become part of the repo’s operating discipline.
+  - Option B: encode only the notification timing fix in `AGENTS.md`.
+    - Rejected because the top-down task-design correction is architecturally more important and should be preserved alongside the workflow fix.
+  - Option C: update `AGENTS.md` with both:
+    - a top-down task-closure reasoning rule
+    - an explicit “notification must be the final action of the round” rule
+    - Chosen because it captures both the architectural method and the operational workflow correction in the canonical repo instructions.
+- Decision:
+  - Update `AGENTS.md` so future reasoning about Nous tasks starts from:
+    1. user interaction flow
+    2. Nous internal execution flow
+    3. only then missing contracts / layers / implementations
+  - Also update the Notifications section so macOS notifications are sent strictly as the final action of the round, never at the beginning or mid-turn.
+- Changes made:
+  - Updated `AGENTS.md`
+  - Updated `docs/DEVELOPMENT_LOG.md`
+- Impact:
+  - The repo now encodes a stronger design method for future Nous task analysis:
+    - top-down task closure before component enumeration
+  - The notification workflow is now clarified operationally, reducing the chance of premature “done” signals before the actual round is complete.
+- Open questions / next steps:
+  - The next useful architectural follow-up is to generalize the top-down task method beyond coding tasks into a broader Nous task model covering:
+    - tasks requiring planning
+    - long-running tasks
+    - serial specialist execution
+    - concurrent specialist execution
+
+### Session: Write the unified task-intake and execution-depth model into architecture
+- Context / Trigger:
+  - After extending top-down thinking from coding tasks to general user requests, an important architectural correction emerged:
+    - framing the system as having a "short path" for simple commands risks drifting back toward mainstream workspace-centric agent frameworks
+    - that would weaken the core Nous thesis of being a persistent, person-centered assistant with continuity across channels and contexts
+  - The follow-up request was to write the corrected model into `ARCHITECTURE.md` as a formal design section.
+- Problem:
+  - The architecture already had strong pieces:
+    - Unified Presence
+    - Intent → Plan → Task
+    - Context Assembly
+    - Human Decision Queue
+    - Ambient Intent
+  - But it still lacked a single explicit section saying:
+    - all messages/commands/signals enter one unified task-intake system
+    - planning, long-running execution, and multi-agent organization are not separate entry worlds
+    - they are all downstream consequences of an **execution depth** decision made after understanding user state and intent
+  - Without this explicit section, it remained too easy to reason in terms of:
+    - command path vs task path
+    - shallow path vs deep path
+    instead of one unified intent system with variable depth.
+- Options considered:
+  - Option A: leave the correction in conversation only and rely on existing sections (`Unified Presence`, `Runtime Flow`, `Human Decision Queue`) to imply it.
+    - Rejected because the implication was too weak and the old workspace-centric reading would remain tempting.
+  - Option B: patch only the runtime-flow example text.
+    - Rejected because the issue was not an example problem; it was a missing top-level abstraction.
+  - Option C: add a dedicated architecture section that names the model explicitly and explains its relation to the existing layers.
+    - Chosen because it makes the corrected worldview a durable architectural contract rather than an interpretive footnote.
+- Decision:
+  - Add `## Unified Task Intake and Execution Depth Model` to `ARCHITECTURE.md`.
+  - Make four things explicit:
+    1. all user messages, commands, and ambient signals share one intake pipeline
+    2. the system first performs user-state grounding and intent inference
+    3. only then does it choose execution depth
+    4. "command-like" requests are not a separate ontology — only a shallower execution-depth choice
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added a new section:
+      - `Unified Task Intake and Execution Depth Model`
+    - added:
+      - the architectural correction against "short path" thinking
+      - unified intake pipeline diagram
+      - user interaction flow
+      - internal execution flow
+      - four dimensions of execution depth:
+        - planning depth
+        - time depth
+        - organization depth
+        - initiative depth
+      - explicit statement that commands are not a separate ontology
+      - mapping from the new model to existing architecture layers
+      - clarification of still-missing first-class steps:
+        - user-state grounding
+        - task contract formation
+        - execution depth selection
+        - delivery contract
+  - Updated `docs/DEVELOPMENT_LOG.md`
+- Analysis / trade-offs:
+  - This change intentionally biases the architecture away from optimization-first thinking and back toward user-centered continuity.
+  - The trade-off is that the architecture now asks more of the system up front:
+    - understanding the user
+    - relating incoming signals to prior state
+    - choosing how deeply to engage
+  - But that complexity is exactly the point; avoiding it would make Nous easier to implement while also making it much more ordinary.
+- Impact:
+  - The architecture now has a much clearer answer to:
+    - how a single-user personal assistant should receive tasks across channels
+    - why commands, planned tasks, long-running tasks, and ambient signals all belong to one system
+    - what "execution depth" means in a Nous-native worldview
+  - This materially reduces the chance that future implementation drifts toward a stateless or workspace-only agent shell.
+- Open questions / next steps:
+  - The next architectural refinement is likely to formalize:
+    1. `UserStateGrounding`
+    2. `TaskContract`
+    3. `ExecutionDepthDecision`
+    4. `DeliveryContract`
+  - Those concepts now exist clearly in architecture prose, but not yet as named code/runtime contracts.
+
+### Session: Implement the first task-intake contract and execution-depth seed in code
+- Context / Trigger:
+  - After moving the discussion from “missing modules” to “what a Nous task should feel like”, the next practical question became:
+    - what is the highest-leverage implementation step that helps Nous accept **any kind of task** more coherently?
+  - The answer was not to chase more tools or more planner complexity first.
+  - The highest-leverage gap was the missing intake middle layer between:
+    - raw user request
+    - immediate planning/execution
+- Problem:
+  - The runtime previously treated task intake too narrowly:
+    - parse intent
+    - plan tasks
+    - execute
+  - This meant the system had no explicit runtime object for:
+    - task contract
+    - execution depth
+    - clarification pressure
+  - As a result, all requests were implicitly forced into the same planning shape, even though the architecture had already moved toward:
+    - unified intake
+    - variable execution depth
+    - user-centered assistance rather than command routing
+- Options considered:
+  - Option A: leave the new architecture concepts as prose only until a much larger runtime refactor is ready.
+    - Rejected because that would postpone the first useful convergence point between architecture and implementation.
+  - Option B: jump straight to implementing `UserStateGrounding` and persistent task contracts in storage.
+    - Rejected because it would be too wide for one step and would drag in persistence/schema work before the new intake contract was even exercised in the orchestrator.
+  - Option C: implement the smallest coherent runtime seed:
+    - typed task-intake objects in core
+    - intake analysis in the parser
+    - planner behavior influenced by execution depth
+    - runtime prompt enriched with task contract + execution depth
+    - chosen because it creates one real vertical slice without overreaching.
+- Decision:
+  - Implement a first **Task Intake** seed across core + orchestrator:
+    - `TaskContract`
+    - `ExecutionDepthDecision`
+    - `TaskIntake`
+  - Use it to change orchestrator behavior in two concrete ways:
+    1. planning depth can now collapse to a single bounded task when appropriate
+    2. runtime system prompts receive the explicit contract/depth frame instead of only ambient context
+- Changes made:
+  - Added `packages/core/src/types/task-intake.ts`
+    - `PlanningDepth`
+    - `TimeDepth`
+    - `OrganizationDepth`
+    - `InitiativeMode`
+    - `TaskContract`
+    - `ExecutionDepthDecision`
+    - `TaskIntake`
+  - Updated `packages/core/src/index.ts`
+    - exported the new task-intake types
+  - Updated `packages/orchestrator/src/intent/parser.ts`
+    - added `analyze(rawText)` for structured task-intake analysis
+    - kept `parse(rawText)` for the narrower compatibility path
+    - introduced:
+      - task contract extraction
+      - execution depth extraction
+      - clarification-question extraction
+  - Updated `packages/orchestrator/src/planner/planner.ts`
+    - added `TaskPlanningOptions`
+    - planner now accepts contract/depth hints
+    - `planningDepth === "none"` now produces one bounded task instead of forcing a full DAG
+    - light/full planning now receive extra shaping hints from intake metadata
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - orchestrator now uses intake analysis, not only intent parsing
+    - stores contract/depth per intent during execution
+    - emits a new progress event: `intent.intake`
+    - injects task contract + execution depth into the runtime system prompt
+  - Updated `packages/orchestrator/src/index.ts`
+    - exported `TaskPlanningOptions`
+  - Updated `packages/infra/src/daemon/server.ts`
+    - surfaces intake summary/depth through thread delivery messages
+  - Updated tests:
+    - `packages/orchestrator/tests/intent-parser.test.ts`
+    - `packages/orchestrator/tests/task-planner.test.ts`
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+- Analysis / trade-offs:
+  - This implementation is intentionally a **seed**, not the final task-intake architecture.
+  - It still lacks:
+    - real user-state grounding
+    - persistence for contract/depth
+    - actual clarification blocking/decision-queue integration at intake time
+    - explicit `DeliveryContract`
+  - But it already changes the architecture/implementation relationship materially:
+    - task intake is no longer just “parse the goal”
+    - planning is no longer the only immediate next step
+    - runtime execution is now framed by a contract, not only by the task text
+- Impact:
+  - Nous now has its first real runtime embodiment of the new worldview:
+    - one unified intake
+    - execution depth as a first-class decision
+    - bounded planning where appropriate without introducing a separate “command ontology”
+  - This is a meaningful step toward “Nous can complete tasks” because it improves the intake boundary shared by all task types rather than optimizing only one niche execution path.
+- Open questions / next steps:
+  - The next most natural follow-up is likely:
+    1. `UserStateGrounding`
+    2. persistent `TaskContract` / `ExecutionDepthDecision`
+    3. intake-time clarification / decision-queue integration
+    4. `DeliveryContract`
+
+### Session: Complete the next task-intake slice with grounding, persistence, clarification gating, and structured delivery
+- Context / Trigger:
+  - After the first intake seed landed, the next concrete question was no longer “what concepts are missing in prose?” but:
+    - how do those concepts actually survive the runtime boundary?
+    - how do they change the user-visible flow when a task is ambiguous?
+    - how does Nous return something better than a bare `Intent achieved.` string?
+  - The user goal remained unchanged:
+    - keep pushing Nous toward a state where it can genuinely understand incoming intent and close small real tasks end-to-end.
+- Problem:
+  - The previous implementation still had four architectural breaks in the task-closure path:
+    1. `TaskContract` / `ExecutionDepthDecision` / clarification questions existed only as runtime sidecars and were not persisted with the intent object.
+    2. intake analysis still had no explicit `UserStateGrounding`, so parsing could not reliably incorporate active intents, memory hints, or current thread state.
+    3. clarification questions were surfaced only as advisory text; they did not actually block unsafe or low-quality execution.
+    4. final delivery still collapsed to a generic completion notification instead of a structured result with evidence.
+  - There was also one practical daemon integration bug hidden in the previous design:
+    - early progress events (`intent.intake`, clarification-needed signals) could fire before the daemon had mapped the new intent to its thread, so the user would miss the very messages that matter most at intake time.
+- Options considered:
+  - Option A: keep pushing planner/runtime sophistication first and defer the intake-state gaps.
+    - Rejected because deeper planning without a better intake contract would optimize the wrong boundary.
+  - Option B: persist intake metadata only, but leave clarification and delivery behavior largely unchanged.
+    - Rejected because that would improve storage traceability without materially improving user-facing task closure.
+  - Option C: implement the next coherent vertical slice:
+    - add grounding input
+    - persist intake metadata on intents
+    - introduce a real clarification gate
+    - produce structured intent delivery
+    - chosen because it materially improves both architecture integrity and actual task usability.
+- Decision:
+  - Extend the task-intake pipeline so that intake analysis becomes a first-class, persisted, user-visible contract instead of an ephemeral prelude.
+  - Concretely:
+    1. `Intent` now carries intake metadata as part of the object model, and SQLite persists it in intent metadata.
+    2. `UserStateGrounding` is now built from assembled context + recent thread messages and passed into intake analysis.
+    3. intents with material clarification questions now enter `awaiting_clarification` instead of silently planning/executing onward.
+    4. completion now emits a structured delivery payload instead of only a generic success marker.
+    5. daemon thread linkage is established at intent creation time so early intake/clarification events are not lost.
+- Changes made:
+  - Updated core intent / event / state contracts:
+    - `packages/core/src/types/intent.ts`
+      - added `awaiting_clarification` intent status
+    - `packages/core/src/types/event.ts`
+      - added `intent.clarification_needed`
+    - `packages/core/src/state-machines/intent-state-machine.ts`
+      - added transitions around `awaiting_clarification`
+  - Updated intake analysis in `packages/orchestrator/src/intent/parser.ts`
+    - added `IntentAnalysisOptions`
+    - intake prompt now accepts `UserStateGrounding`
+    - parsed `Intent` now embeds:
+      - `contract`
+      - `executionDepth`
+      - `clarificationQuestions`
+    - `TaskIntake` now returns `groundingSummary`
+  - Updated orchestration in `packages/orchestrator/src/orchestrator.ts`
+    - `IntentExecutionOptions` now accepts:
+      - `grounding`
+      - `onIntentCreated`
+    - `submitIntentBackground()` now:
+      - persists intake metadata directly on the intent
+      - emits `intent.clarification_needed` when questions exist
+      - sets intent status to `awaiting_clarification`
+      - skips planning/execution when clarification is required
+    - `waitForIntent()` now resolves correctly for clarification-gated intents and for already-settled states
+    - completion now emits a structured delivery summary/evidence payload
+  - Updated persistence:
+    - `packages/persistence/src/sqlite/connection.ts`
+      - added `metadata` column to `intents`
+      - added compatibility migration for older databases missing the column
+    - `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+      - persists and restores:
+        - `contract`
+        - `executionDepth`
+        - `clarificationQuestions`
+      - `getActive()` now includes clarification-blocked intents
+  - Added grounding helper:
+    - `packages/infra/src/intake/grounding.ts`
+      - builds deterministic `UserStateGrounding` from assembled context and thread messages
+  - Updated daemon / CLI surfaces:
+    - `packages/infra/src/daemon/server.ts`
+      - passes grounding into orchestration
+      - emits `decision_needed` messages for clarification gating
+      - formats structured completion delivery for threads
+      - added early intent-thread binding via `onIntentCreated`
+    - `packages/infra/src/cli/app.ts`
+      - builds grounding for direct non-daemon execution
+    - `packages/infra/src/cli/commands/run.ts`
+      - surfaces clarification requests and structured delivery in terminal output
+  - Added / expanded tests:
+    - `packages/orchestrator/tests/intent-parser.test.ts`
+      - verifies grounding is included in intake analysis input
+      - verifies parsed intent carries intake metadata
+    - `packages/persistence/tests/intent-store.test.ts`
+      - verifies metadata persistence / update semantics
+      - verifies `awaiting_clarification` is treated as active
+      - verifies old intent tables are migrated to include metadata
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅ (128 pass)
+  - `bunx biome check <touched files>` ✅
+- Analysis / trade-offs:
+  - This step intentionally improves the **intake boundary** rather than pretending the whole product is finished.
+  - The clarification gate is still first-version:
+    - it stops bad forward motion
+    - it informs the user through a `decision_needed` message
+    - but it does not yet include a full resume/edit/replan workflow for the same intent
+  - Structured delivery is still heuristic rather than LLM-authored or evidence-reranked.
+    - That is acceptable for now because the goal was to establish the delivery contract boundary, not optimize its sophistication prematurely.
+  - Using `onIntentCreated` is a pragmatic integration hook.
+    - It is not the final elegant event-routing architecture,
+    - but it fixes a real control-plane issue immediately and makes the daemon’s thread experience consistent with the orchestrator timeline.
+- Impact:
+  - Nous now has a materially stronger “understand → decide depth → stop for clarification when needed → deliver a structured result” path.
+  - The system is no longer treating task contract / execution depth / clarification as private orchestrator scratch state.
+  - Daemon threads now surface the earliest and most important intake decisions instead of only later execution artifacts.
+  - This is a meaningful step toward “Nous can identify intent and complete tasks” because the system now behaves more like a real assistant and less like a narrow planner-wrapper.
+- Open questions / next steps:
+  - The largest remaining gaps on the path to a truly usable general task-closure loop now look like:
+    1. clarification response / resume flow for an existing blocked intent
+    2. stronger delivery/evidence synthesis beyond heuristic concatenation
+    3. better working-set selection and compaction for long-running tasks
+    4. richer control for serial / parallel specialist execution beyond metadata selection
+    5. deeper task verification / harness-driven evaluation on real workflows
+
+### Session: Formalize the Thread / Intent / Decision model and wire clarification replies back into the original intent
+- Context / Trigger:
+  - After clarifying that Nous must resume the **same intent** after a clarification reply, the next architectural question became:
+    - what exactly is the relationship between a thread and an intent?
+  - The answer matters because if that boundary is wrong, clarification-resume will degenerate into one of two bad patterns:
+    - every reply becomes a new intent
+    - or thread state and execution state get conflated into one object
+  - The user explicitly asked for two things in sequence:
+    1. turn the relationship into a concrete architecture draft
+    2. then directly implement the clarification-resume path end-to-end
+- Problem:
+  - The repo already had `DialogueThread` and `Intent`, but the boundary between them was still only partially encoded in prose and runtime behavior.
+  - There was no first-class persistence object for a blocking clarification/decision.
+  - REPL/thread replies still treated user input too much like “submit another intent”, which breaks continuity.
+  - The system could stop and ask clarification questions, but it could not yet:
+    - treat the user reply as a response to the blocked intent
+    - update the original intent’s executable understanding
+    - resume planning on that same intent identity
+- Options considered:
+  - Option A: implement a fast path where clarification replies are simply appended to the old raw text and submitted as a new intent.
+    - Rejected because it destroys task identity and weakens traceability.
+  - Option B: store clarification only in thread messages and keep ad hoc daemon memory for pending questions.
+    - Rejected because restart safety and decision-queue semantics would remain weak.
+  - Option C: make the architecture explicit and then encode the minimum durable objects needed for the real flow:
+    - thread = conversation continuity
+    - intent = execution continuity
+    - decision = blocking bridge between them
+    - chosen because it matches Nous’s assistant-first philosophy and creates a clean extension path for future approvals/checkpoints.
+- Decision:
+  - Introduce a clearer three-object model:
+    - `Thread` for communication continuity
+    - `Intent` for execution continuity
+    - `Decision` for blocking coordination
+  - Clarification replies now resume the **original intent**, not a replacement intent.
+  - Add `intent.workingText` to distinguish:
+    - original human request (`raw`)
+    - latest executable understanding after clarification (`workingText`)
+- Architecture / document changes:
+  - Updated `ARCHITECTURE.md`
+    - added `Thread / Intent / Decision Relationship Model`
+    - documented invariants:
+      - tasks belong to intents, not threads
+      - messages belong to threads, not intents by default
+      - clarification replies happen in a thread but resume an intent
+      - clarification must not create a new intent identity
+    - documented clarification-resume flow and the role of `workingText`
+- Core model changes:
+  - Added `packages/core/src/types/decision.ts`
+    - `DecisionKind`
+    - `DecisionStatus`
+    - `Decision`
+  - Updated `packages/core/src/types/intent.ts`
+    - added `workingText?: string`
+  - Updated `packages/core/src/types/event.ts`
+    - added `intent.resumed`
+  - Updated `packages/core/src/index.ts`
+    - exported decision types
+- Persistence changes:
+  - Added `packages/persistence/src/interfaces/decision-store.ts`
+  - Added `packages/persistence/src/sqlite/decision-store.sqlite.ts`
+  - Updated `packages/persistence/src/sqlite/connection.ts`
+    - added `decisions` table + indexes
+  - Updated `packages/persistence/src/backend.ts`
+    - backend now exposes `decisions`
+  - Updated `packages/persistence/src/index.ts`
+    - exports decision store interfaces / sqlite implementation
+  - Updated `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+    - intent metadata now also persists `workingText`
+- Clarification-resume implementation changes:
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - initial intents now persist `workingText`
+    - factored planning into reusable `planIntent()`
+    - added `respondToClarification(intentId, responseText, options)`
+      - rebuilds `workingText`
+      - re-runs intake on the same intent identity
+      - updates contract/depth/questions on the original intent
+      - re-enters clarification if still ambiguous
+      - otherwise emits `intent.resumed` and continues planning
+    - added `resumeIntent(intentId)` as the explicit resume entrypoint for already-active intents
+  - Updated `packages/orchestrator/src/planner/planner.ts`
+    - planning now prefers `intent.workingText ?? intent.raw`
+  - Added `packages/infra/src/intake/thread-input-router.ts`
+    - structured classifier for thread replies:
+      - `decision_response`
+      - `new_intent`
+      - `mixed`
+      - `unclear`
+  - Updated `packages/infra/src/daemon/dialogue-service.ts`
+    - `sendMessage()` is now async and supports `onSendMessage`
+  - Updated `packages/infra/src/daemon/controller.ts`
+    - awaits async thread-message handling
+  - Updated `packages/infra/src/daemon/server.ts`
+    - daemon now persists clarification decisions
+    - `send_message` path can route a thread reply as a clarification response
+    - clarification answers now:
+      - mark the old decision answered
+      - revise the original intent
+      - either create a follow-up clarification decision or resolve and resume the intent
+    - explicit `createClarificationDecision()` helper added
+    - daemon now surfaces `intent.resumed`
+  - Updated `packages/infra/src/cli/commands/repl.ts`
+    - once attached to a thread, REPL now sends `send_message` instead of always `submit_intent`
+    - this is what allows natural in-thread clarification replies
+  - Updated `packages/infra/src/cli/commands/run.ts`
+    - surfaces resumed-intent progress in CLI output
+- Tests added / updated:
+  - Added `packages/persistence/tests/decision-store.test.ts`
+  - Added `packages/infra/tests/thread-input-router.test.ts`
+  - Added `packages/orchestrator/tests/orchestrator-clarification.test.ts`
+    - verifies that clarification response reuses the original intent id and resumes planning
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅ (133 pass)
+  - `bunx biome check <touched files>` ✅
+- Analysis / trade-offs:
+  - This is a real architectural improvement, not just a UX patch.
+  - The biggest design win is that Nous now distinguishes:
+    - the place where conversation continues (`thread`)
+    - the place where responsibility continues (`intent`)
+    - the explicit object representing a blocking coordination need (`decision`)
+  - `workingText` is an important compromise:
+    - it preserves the original request
+    - while still letting the executable intent evolve after clarification
+  - The current router is still intentionally conservative:
+    - `mixed` / `unclear` replies do not try to be clever; they ask the user to disambiguate
+  - The first implementation targets the **pre-plan clarification** case cleanly.
+    - mid-execution pause/resume is still a later step because it requires task-level suspension semantics
+- Impact:
+  - Nous can now stop on ambiguity, receive a natural reply in the same thread, and continue the **same task identity** instead of spawning a replacement task.
+  - This materially improves the assistant feel of the system and moves the runtime closer to genuine human-task continuity.
+  - The codebase now has a better foundation for future approval queue, checkpoint, and pause/resume work, because clarification is no longer a one-off special case.
+- Open questions / next steps:
+  - The most natural next step is to generalize this into a broader `DecisionQueue` model beyond clarification:
+    1. approval / irreversible action confirmation
+    2. conflict resolution between intents
+    3. richer resume semantics for already-planned / already-running intents
+  - We also still need stronger intent revision traceability than just `workingText` + events if we want a full historical revision graph later.
+
+### Session: Add daemon-level clarification-resume integration coverage and remove a resume-tracking race
+- Context / Trigger:
+  - The previous slice had already implemented the main clarification-resume path, but the strongest remaining risk was no longer the architecture draft itself.
+  - The real risk was operational confidence:
+    - does the daemon path actually route a natural in-thread user reply back into the blocked intent?
+    - does the same thread receive the resumed progress and final result?
+    - are the daemon’s internal tracking maps still coherent when resume happens very quickly?
+- Problem:
+  - Unit coverage already existed at:
+    - persistence level (`DecisionStore`)
+    - router level (`ThreadInputRouter`)
+    - orchestrator level (`respondToClarification`)
+  - But there was still no closer-to-real integration proof for:
+    - `submit_intent`
+    - clarification-needed delivery into a thread
+    - `send_message` clarification reply
+    - original intent resume
+    - task completion back into the same thread
+  - While adding that coverage, a subtle daemon race became apparent:
+    - `handleClarificationResponse()` re-called `trackIntentForThread()`
+    - if the resumed intent completed very quickly, outcome cleanup could remove tracking state first
+    - the later re-track could then recreate stale maps for an already-finished intent
+- Options considered:
+  - Option A: accept the existing unit coverage and move on.
+    - Rejected because the whole point of this slice was to prove the real assistant continuity path, not just isolated methods.
+  - Option B: add only another orchestrator-level test.
+    - Rejected because it still would not validate daemon/dialogue routing and thread delivery semantics.
+  - Option C: add a daemon-level scripted integration test and tighten the daemon tracking behavior at the same time.
+    - Chosen because it validates the user-visible path and closes a real lifecycle edge case.
+- Decision:
+  - Add a daemon integration test that exercises:
+    1. initial intent submission
+    2. clarification-needed message delivery
+    3. in-thread clarification reply via `send_message`
+    4. original intent completion in the same thread
+  - Replace the unconditional post-resume `trackIntentForThread()` call with a narrower `refreshTrackedIntentContext()` helper:
+    - only refresh already-tracked live context
+    - do not recreate tracking state after an intent has already been cleaned up as finished
+- Concrete changes:
+  - Added `packages/infra/tests/daemon-clarification-flow.test.ts`
+    - uses a scripted provider to drive:
+      - initial clarification-needed intake
+      - thread reply routing as `decision_response`
+      - clarified re-analysis
+      - final task completion
+    - verifies:
+      - same thread continuity
+      - same intent identity continuity
+      - resolved decision state
+      - resumed assistant message
+      - final result delivery
+  - Updated `packages/infra/src/daemon/server.ts`
+    - introduced `refreshTrackedIntentContext()`
+    - `handleClarificationResponse()` now refreshes only live tracked context instead of blindly re-tracking the intent
+- Validation:
+  - `bun test packages/infra/tests/daemon-clarification-flow.test.ts` ✅
+  - `bun run typecheck` ✅
+  - `bun test` ✅ (134 pass)
+  - `bunx biome check packages/infra/src/daemon/server.ts packages/infra/tests/daemon-clarification-flow.test.ts docs/DEVELOPMENT_LOG.md` ✅
+- Impact / Result:
+  - The clarification-resume path is now validated at the daemon/thread layer instead of only at inner subsystems.
+  - This materially increases confidence that “clarification后恢复原 intent” is not just conceptually correct, but actually works through the real interaction contract users will hit.
+  - The daemon’s intent-tracking lifecycle is also slightly more robust against fast-finish races after clarification.
+- Open questions / follow-ups:
+  - The next real boundary is still broader than clarification:
+    - generalized decision queue semantics
+    - mid-execution pause/resume
+    - richer intent revision history beyond a single `workingText`
+
+### Session: Separate semantic layers and generalize clarification into a DecisionQueue
+- Context / Trigger:
+  - The clarification-resume path was already working, but clarification still risked becoming a special-case branch instead of the first producer of a broader governance model.
+  - At the same time, a deeper architecture question surfaced: Nous now uses semantic reasoning in multiple places, and treating all of them as "just call an LLM" would eventually blur system boundaries.
+- Problem:
+  - The architecture still lacked an explicit statement that semantic problems in Nous come in different classes:
+    - understanding what the user means
+    - retrieving the right memory/artifact/history
+    - deciding whether human governance is required
+    - learning durable improvements from repeated traces
+  - The code had already started moving beyond clarification-only decisions, but the runtime/docs boundary was not yet crisp enough:
+    - decision kinds had expanded
+    - daemon routing had become generic
+    - but the repo still needed a cleaner DecisionQueue framing and explicit validation around the new persistence/controller contracts
+  - During this expansion, `packages/infra/src/daemon/server.ts` also ended up in a partially edited state and had to be checked/fixed before the design work could be considered stable.
+- Options considered:
+  - Option A: keep "semantic" as one broad bucket and let each subsystem choose ad hoc prompts/heuristics.
+    - Rejected because it would eventually mix up intent understanding, retrieval, governance, and evolution, making contracts blurry and observability weaker.
+  - Option B: document semantic layering explicitly and let different semantic classes map to different architectural mechanisms.
+    - Chosen because Nous needs stable boundaries early if it is going to grow into a persistent assistant rather than a pile of clever prompts.
+  - Option C: keep clarification as the only real `Decision`, and bolt approval/conflict/scope handling on later as separate controller flows.
+    - Rejected because that would recreate the same special-case trap in a different form.
+  - Option D: generalize now to a DecisionQueue model, while only activating the producers that are already real in runtime.
+    - Chosen because it gives the system the correct long-term boundary without forcing every future producer to be implemented immediately.
+- Decision:
+  - Split Nous semantic work into four explicit layers:
+    1. intent semantics
+    2. retrieval semantics
+    3. control/governance semantics
+    4. evolution semantics
+  - Treat governance semantics as a first-class `DecisionQueue` problem:
+    - `Decision` = one blocking coordination object
+    - `DecisionQueue` = the thread-facing runtime surface/policy for pending decisions
+  - Preserve the current two-state blocked intent model for now:
+    - `awaiting_clarification` for missing intent understanding
+    - `awaiting_decision` for broader governance blockers
+  - Keep `scope_confirmation` in the shared contract/model now, but defer its first concrete producer until the surrounding thread/intake boundary is shaped more confidently.
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added a dedicated **Semantic Layering Draft** section
+    - added a dedicated **Generic DecisionQueue Model** section
+    - expanded the thread/intent/decision relationship into a thread/intent/DecisionQueue framing
+    - documented current active producers vs contract-only future producer (`scope_confirmation`)
+  - Updated `packages/infra/src/daemon/server.ts`
+    - restored a missing `formatPendingDecision()` helper so the generalized decision prompting path is type-safe and compilable again
+  - Updated tests to reflect the generalized decision model:
+    - `packages/persistence/tests/decision-store.test.ts`
+      - added round-trip coverage for `approval` and `conflict_resolution` decisions
+      - verifies `responseMode`, `options`, `selectedOptionId`, `outcome`, and `relatedIntentIds`
+    - `packages/infra/tests/thread-input-router.test.ts`
+      - updated decision fixtures for the new required `responseMode` field
+    - `packages/infra/tests/daemon-controller.test.ts`
+      - added `approve_decision` controller wiring coverage
+- Validation:
+  - `bun run typecheck`
+  - `bun test`
+  - `bunx biome check packages/infra/src/daemon/server.ts packages/infra/tests/daemon-controller.test.ts packages/infra/tests/thread-input-router.test.ts packages/persistence/tests/decision-store.test.ts ARCHITECTURE.md docs/DEVELOPMENT_LOG.md`
+- Analysis / trade-offs:
+  - The biggest architectural point is not that Nous already solved every production problem. It is that the repo now states where each problem should live.
+  - Semantic layering prevents a common framework failure mode: using one generic LLM call as a substitute for understanding, retrieval, governance, and learning at the same time.
+  - DecisionQueue generalization is intentionally broader than current runtime producers. That is a feature, not scope creep: the architecture boundary is now ahead of the next few implementations.
+  - Keeping both `awaiting_clarification` and `awaiting_decision` is slightly redundant conceptually, but operationally useful right now because it preserves the distinction between "I do not yet understand the task" and "I understand it, but I cannot proceed without governance."
+- Impact:
+  - Nous now has a clearer semantic systems map instead of one undifferentiated "LLM intelligence" bucket.
+  - The generic decision path is more coherent end-to-end:
+    - typed model
+    - persistence fields
+    - controller ack path
+    - daemon prompting path
+    - architecture documentation
+  - This gives future work a much better place to land:
+    - approval checkpoints
+    - scope-confirmation producers
+    - richer conflict resolution
+    - future artifact/skill selection semantics
+- Open questions / next steps:
+  - The next runtime step should probably be a real producer for `scope_confirmation`, but only if the thread/intake boundary is modeled carefully enough that it does not accidentally split the user's original intent.
+  - The current semantic conflict layer is still heuristic-first. If conflict resolution becomes common, it should likely evolve toward a real LLM-assisted second layer with stronger evidence capture.
+  - A future cleanup may normalize blocked intents under a single `blocked` state with a reason enum, but that should wait until the distinction stops paying its way operationally.
+
+### Session: Add Runtime Harness driver-chain documentation + land the first real `scope_confirmation` producer + implement DecisionQueue queue/resume policy
+- Context / Trigger:
+  - A conceptual gap surfaced around the word **Harness**:
+    - the repo architecture already had the right responsibilities for “driving LLM work across dependent steps”
+    - but that logic was distributed across daemon/orchestrator/runtime layers rather than packaged as one obvious `Harness` object
+  - At the same time, the architecture still described `scope_confirmation` mostly as a contract-ready decision kind rather than a real runtime producer.
+  - The next practical step after generalizing `Decision` was therefore to:
+    1. make the runtime driver chain explicit in architecture
+    2. land a narrow but real `scope_confirmation` producer
+    3. turn “one pending decision per thread” from prose into actual queue/resume behavior
+- Problem:
+  - Without an explicit architecture diagram, it is easy to misremember where Nous’s runtime-driving responsibility actually lives:
+    - daemon/dialogue
+    - orchestrator
+    - scheduler
+    - runtime ReAct loop
+    - tool executor
+    - persistence/outbox
+  - `scope_confirmation` existed in the model, interpreter, and persistence, but there was still no concrete path that would actually produce one in runtime.
+  - The DecisionQueue still lacked a real operational policy for:
+    - when a new decision becomes `pending`
+    - when it must wait behind another decision
+    - how the next queued decision gets activated after the current one resolves
+- Options considered:
+  - Option A: keep explaining Harness only verbally and leave the runtime driver chain implicit in the layered architecture.
+    - Rejected because this specific concept is easy to flatten back into “just the inner while loop”, which undersells the outer task driver.
+  - Option B: make `scope_confirmation` broad immediately for any active intent/thread ambiguity, including mid-execution scope changes.
+    - Rejected because current runtime still does not support safe arbitrary mid-execution task suspension/rewrite.
+  - Option C: land a **narrow first producer** only where revision is still safe:
+    - active thread intent
+    - no tasks planned yet
+    - incoming message may either refine that intent or start a new one
+    - chosen because it is architecturally honest and operationally safe.
+  - Option D: keep DecisionQueue policy as a UI-level idea and avoid adding queue state to `DecisionStatus`.
+    - Rejected because queue semantics need to exist in persistence/runtime, not only in prose.
+- Decision:
+  - Document Nous’s runtime-driving chain explicitly as a **layered runtime harness**:
+    - daemon/dialogue = outer continuity + intake surface
+    - orchestrator = intent/decision/task formation
+    - scheduler = dependency/order driver
+    - runtime = inner ReAct harness
+    - tool executor = real side effects
+    - persistence/outbox = continuity/audit/delivery
+  - Introduce the first concrete `scope_confirmation` producer:
+    - only for **revisable active intents** (current narrow rule: active intent in thread with no tasks yet)
+    - if a new thread message is semantically ambiguous between:
+      - current-intent scope update
+      - separate new intent
+    - create `Decision(kind=scope_confirmation)`
+  - Add real DecisionQueue runtime policy:
+    - `pending` = currently active blocker for a thread
+    - `queued` = waiting behind another blocker in that thread
+    - decision resolution must run a **resume policy** before activating the next queued decision
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added **Runtime Harness / Task Driver Chain**
+    - updated `scope_confirmation` from “contract ready” to “first active producer”
+    - documented DecisionQueue runtime queue/resume policy
+  - Updated `packages/core/src/types/decision.ts`
+    - added `DecisionStatus = "queued"`
+  - Updated persistence contracts:
+    - `packages/persistence/src/interfaces/decision-store.ts`
+      - added `getQueuedByThread()`
+    - `packages/persistence/src/sqlite/decision-store.sqlite.ts`
+      - implemented queued-decision retrieval
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - added `reviseIntentBeforePlanning(intentId, revisionText, options)`
+    - this is the narrow/safe pre-plan revision path used by the first `scope_confirmation` producer
+  - Added `packages/infra/src/intake/thread-scope-router.ts`
+    - LLM structured classifier for:
+      - `current_intent`
+      - `new_intent`
+      - `ambiguous`
+  - Updated `packages/infra/src/daemon/server.ts`
+    - added revisable-active-intent thread handling before blind new-intent intake
+    - added first `scope_confirmation` producer
+    - added direct current-intent pre-plan scope revision path
+    - added queued decision activation policy
+    - added `scheduledIntentExecutions` guard so pre-plan scope revision does not accidentally double-schedule execution
+    - added resume handling for:
+      - `scope_current_intent`
+      - `scope_new_intent`
+    - generalized decision creation so new blockers become:
+      - `pending` when thread is clear
+      - `queued` when another blocker is already active
+  - Tests added / updated:
+    - added `packages/infra/tests/thread-scope-router.test.ts`
+    - added `packages/infra/tests/decision-queue-flow.test.ts`
+      - verifies the first real `scope_confirmation` producer
+      - verifies queued decisions activate after current decision resolution
+    - updated `packages/persistence/tests/decision-store.test.ts`
+      - verifies queued decision retrieval order
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check packages/core/src/types/decision.ts packages/persistence/src/interfaces/decision-store.ts packages/persistence/src/sqlite/decision-store.sqlite.ts packages/persistence/tests/decision-store.test.ts packages/orchestrator/src/orchestrator.ts packages/infra/src/daemon/server.ts packages/infra/src/intake/thread-scope-router.ts packages/infra/tests/thread-scope-router.test.ts packages/infra/tests/decision-queue-flow.test.ts ARCHITECTURE.md docs/DEVELOPMENT_LOG.md` ✅
+- Analysis / trade-offs:
+  - The first `scope_confirmation` producer is intentionally **narrow**.
+    - It only fires where the current intent is still revisable before planning.
+    - This avoids lying to ourselves about supporting arbitrary mid-execution scope rewrites before we actually have pause/suspend semantics.
+  - Adding `queued` to `DecisionStatus` is a real architectural improvement, not incidental test scaffolding.
+    - It makes queue policy persistable
+    - it keeps “one pending decision per thread” honest
+    - it gives daemon restart behavior something explicit to restore
+  - The current resume policy is still thread-local and single-instance.
+    - It is enough for local continuity
+    - but future work may need richer cross-thread / cross-channel prioritization if the queue becomes more sophisticated
+  - `reviseIntentBeforePlanning()` is deliberately narrower than clarification-resume.
+    - clarification continues the same intent after missing information
+    - pre-plan scope revision updates the same intent before tasks exist
+    - true mid-execution revision is still a later architectural problem
+- Impact:
+  - The repo now has a much clearer story for “who drives the work”:
+    - not just the inner LLM/tool loop
+    - but the full driver chain from thread intake down to tool execution and outbox delivery
+  - `scope_confirmation` is no longer only a type-level promise; it now has a real runtime producer.
+  - DecisionQueue now behaves more like an actual queue:
+    - active blocker first
+    - later blockers queued
+    - explicit activation after resolution
+- Open questions / next steps:
+  - The next boundary after this slice is **mid-execution intent revision**:
+    - pausing planned/running tasks safely
+    - revising intent scope
+    - resuming without duplication or lost work
+  - Queue policy is still FIFO within a thread. A later version may want:
+    - priority
+    - urgency
+    - fallback channel escalation
+  - If scope-confirmation usage grows, we may want stronger traceability for:
+    - why the router judged a message ambiguous
+    - whether the final human choice should feed future routing heuristics or eval datasets
+
+### Session: Turn scope revision from pre-plan only into a real execution-boundary runtime policy
+- Context / Trigger:
+  - After landing the first real `scope_confirmation` producer and DecisionQueue queue/resume policy, the next obvious gap was still open:
+    - Nous could preserve original intent identity through clarification
+    - Nous could even revise scope before planning
+    - but once tasks already existed, runtime still had no honest path for “the user changed the task while work is already underway”
+  - The project goal here was not to fake “full arbitrary mid-flight mutation”, but to make the runtime genuinely able to:
+    - accept a current-intent scope update
+    - preserve the same intent identity
+    - avoid launching stale queued work
+    - re-plan the remaining work at a safe boundary
+- Problem:
+  - Before this change, `scope_confirmation` and current-intent scope updates were only truly safe in the **no-task-yet** case.
+  - If tasks already existed:
+    - there was no persistent place to hold a queued scope change
+    - the scheduler would keep dispatching ready tasks even if the user had already updated the intent
+    - there was no runtime notion of “wait for the current execution slice to finish, then rewrite the remaining graph”
+  - In other words, Nous still lacked a real **execution-boundary revision policy**.
+- Options considered:
+  - Option A: keep `scope_confirmation` intentionally narrow forever and reject any scope update after planning starts.
+    - Rejected because it preserves implementation safety at the cost of breaking the product promise of thread continuity and intent continuity.
+  - Option B: allow arbitrary in-place mutation of running work immediately.
+    - Rejected because the current runtime does not have cancellation / rollback / live task patch semantics; pretending otherwise would be architecturally dishonest.
+  - Option C: introduce an **execution-boundary** policy:
+    - if nothing is actively running, rewrite the remaining graph now
+    - if something is actively running, persist a pending revision, stop dispatching further ready tasks, and apply the revision at the next safe boundary
+    - Chosen because it is materially more capable than pre-plan-only revision while still staying inside safe runtime invariants.
+- Decision:
+  - Add a first-class `intent.pendingRevision` contract to persistence/runtime.
+  - Expand scope update handling from:
+    - pre-plan only
+    - to **pre-plan + immediate replan + deferred execution-boundary replan**
+  - Treat `intent.pendingRevision` as a scheduler-level dispatch brake:
+    - already running tasks may finish
+    - further ready tasks for that intent must not dispatch
+    - when active tasks drain to zero, Nous re-runs intake on the same intent identity and rebuilds the remaining task graph
+  - Broaden `scope_confirmation`’s meaningful runtime value:
+    - it no longer only protects pre-plan ambiguity
+    - it can now safely resume into current-intent execution-boundary revision as well
+- Changes made:
+  - Updated core intent/event contracts:
+    - `packages/core/src/types/intent.ts`
+      - added `PendingIntentRevision`
+      - added optional `intent.pendingRevision`
+    - `packages/core/src/types/event.ts`
+      - added `intent.revision_requested`
+      - added `intent.replanned`
+    - `packages/core/src/index.ts`
+      - exported the new intent revision type
+  - Updated persistence:
+    - `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+      - added metadata round-trip for `pendingRevision`
+    - `packages/persistence/tests/intent-store.test.ts`
+      - added coverage for pending-revision persistence
+  - Updated scheduling/runtime orchestration:
+    - `packages/orchestrator/src/scheduler/scheduler.ts`
+      - added `shouldDispatchTask()` hook
+      - scheduler can now hold ready tasks when an intent has a pending revision
+    - `packages/orchestrator/src/orchestrator.ts`
+      - added `applyIntentScopeUpdate()`
+        - chooses between:
+          - `pre_plan_revise`
+          - `immediate_replan`
+          - `deferred_replan`
+      - added `maybeApplyPendingIntentRevisionIfSafe()`
+        - applies the deferred revision once no task is `assigned` / `running`
+      - added execution-boundary replan logic
+        - preserves completed-task evidence
+        - deletes unfinished stale tasks
+        - rebuilds `workingText`
+        - re-runs intake
+        - re-plans same intent identity
+      - `handleTaskReady()` now checks for pending revision after task completion before normal completion finalization
+  - Updated daemon integration:
+    - `packages/infra/src/daemon/server.ts`
+      - widened scope-sensitive thread handling from “revisable no-task intent” to the latest active thread-owned intent
+      - current-intent scope updates now call the new orchestrator policy
+      - daemon user feedback now distinguishes:
+        - immediate scope application
+        - remaining-work replan
+        - deferred application at next safe execution boundary
+  - Updated CLI trace surfaces:
+    - `packages/infra/src/cli/commands/run.ts`
+      - added progress rendering for revision-queued / replanned states
+    - `packages/infra/src/cli/commands/events.ts`
+      - added event coloring for revision events
+  - Tests added / updated:
+    - added `packages/orchestrator/tests/orchestrator-scope-revision.test.ts`
+      - verifies deferred mid-execution scope update + boundary replan
+    - updated `packages/infra/tests/decision-queue-flow.test.ts`
+      - verifies a running current-intent scope update is deferred instead of forced into a decision
+      - keeps existing `scope_confirmation` coverage working under the richer runtime
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅
+  - `bunx biome check packages/core/src/types/intent.ts packages/core/src/index.ts packages/core/src/types/event.ts packages/persistence/src/sqlite/intent-store.sqlite.ts packages/persistence/tests/intent-store.test.ts packages/orchestrator/src/scheduler/scheduler.ts packages/orchestrator/src/orchestrator.ts packages/orchestrator/src/index.ts packages/orchestrator/tests/orchestrator-scope-revision.test.ts packages/infra/src/daemon/server.ts packages/infra/src/cli/commands/run.ts packages/infra/src/cli/commands/events.ts packages/infra/tests/decision-queue-flow.test.ts` ✅
+- Analysis / trade-offs:
+  - This is still **not** arbitrary live cancellation/rewrite.
+    - running work is allowed to finish
+    - the graph rewrite happens only at a safe boundary
+    - that is a conscious safety boundary, not an omission by accident
+  - `intent.pendingRevision` is intentionally an intent-level contract, not a thread-only temporary buffer.
+    - that keeps runtime governance explicit
+    - and makes daemon restart / persistence semantics more coherent
+  - The scheduler hook matters architecturally.
+    - without it, Nous could accept a user scope update while still dispatching stale queued tasks
+    - which would destroy the very intent continuity we are trying to protect
+  - The current implementation still rewrites the **remaining** graph conservatively.
+    - completed work is preserved as evidence
+    - but there is not yet a richer revision-history graph or semantic reuse of previously completed subtasks beyond prompt-level evidence
+- Impact:
+  - Nous now has a real answer to:
+    - “What happens if the user changes the task while work is already in flight?”
+  - The answer is no longer “only before planning”.
+  - Instead:
+    - same intent identity is preserved
+    - pending scope change is persisted
+    - stale queued work is blocked
+    - remaining work is replanned at the next safe boundary
+  - This materially upgrades Nous from a pre-plan-only intent system toward a true persistent task runtime.
+- Open questions / next steps:
+  - The next deeper boundary is **true live task interruption / cancellation semantics**:
+    - how to stop a running tool call or agent loop safely
+    - how to model rollback / partial side effects
+    - how to distinguish reversible vs irreversible steps
+  - `pendingRevision` is currently a single merged buffer.
+    - later we may want a richer revision history / revision ledger rather than only the latest merged text
+  - Completed-work reuse is still prompt-level, not artifact-level.
+    - a future version could treat completed task outputs as governed artifacts that later replans can reference more structurally
+
+### Session: Land bounded live interruption / cancellation semantics + tool side-effect governance + revision ledger
+- Context / Trigger:
+  - After execution-boundary scope revision landed, the next architectural layer was no longer “can Nous revise scope?” but:
+    - can Nous **stop** work honestly?
+    - can it distinguish a read-only safe interrupt from a write/destructive unsafe interrupt?
+    - can it record revision history as a real ledger rather than only overwriting `workingText`?
+  - The goal was not to fake full rollback/cancellation machinery, but to make the next layer **real and bounded**:
+    - explicit cancellation request path
+    - runtime interruption policy
+    - tool-level interruption metadata
+    - revision history persistence
+- Problem:
+  - Before this slice:
+    - `cancel_intent` existed in the protocol space but had no real server/runtime behavior
+    - runtime had no live interrupt handle for a running task
+    - tool definitions only described capability + schema + timeout, which was insufficient for interruption governance
+    - scope changes only kept the latest merged `workingText`; there was still no revision ledger for auditability
+  - That meant Nous still lacked a coherent answer to:
+    - “stop now”
+    - “stop after this current risky step”
+    - “what exactly changed between the user’s revisions?”
+- Options considered:
+  - Option A: keep cancellation as a future concern and continue relying on `pendingRevision` only.
+    - Rejected because long-running task governance is incomplete if the user cannot stop or interrupt work explicitly.
+  - Option B: treat every running tool as immediately abortable.
+    - Rejected because process-level interruptibility is not the same as semantic safety; write/destructive tools may leave partial side effects.
+  - Option C: introduce a **bounded interruption contract**:
+    - queued work cancels immediately
+    - running work checks tool semantics first
+    - read-only cooperative tools can be interrupted now
+    - write/destructive or boundary-only tools finish the current tool step, then stop
+    - Chosen because it is honest, implementable, and architecturally extensible.
+- Decision:
+  - Add a first real cancellation path across:
+    - protocol
+    - dialogue service
+    - daemon
+    - orchestrator
+    - runtime
+  - Persist intent-level control state:
+    - `pendingCancellation`
+    - `revisionHistory`
+  - Extend tool definitions with governance semantics:
+    - `sideEffectClass`
+    - `idempotency`
+    - `interruptibility`
+    - optional rollback policy / hint
+  - Treat scheduler dispatch as blocked whenever an intent has:
+    - `pendingRevision`
+    - or `pendingCancellation`
+- Changes made:
+  - Updated core contracts:
+    - `packages/core/src/types/tool.ts`
+      - tool definitions now declare side-effect / idempotency / interruptibility / rollback metadata
+    - `packages/core/src/types/task.ts`
+      - added `TaskStatus = "cancelled"`
+    - `packages/core/src/types/event.ts`
+      - added:
+        - `intent.cancel_requested`
+        - `intent.cancelled`
+        - `task.cancel_requested`
+        - `task.cancelled`
+        - `tool.cancel_requested`
+        - `tool.cancelled`
+    - `packages/core/src/types/intent.ts`
+      - added:
+        - `IntentRevisionRecord`
+        - `revisionHistory`
+        - `pendingCancellation`
+        - richer `pendingRevision` with revision ids
+    - `packages/core/src/types/protocol.ts`
+      - added `CancelIntentPayload` / `CancelIntentAckPayload`
+  - Updated persistence:
+    - `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+      - persisted `revisionHistory`
+      - persisted `pendingCancellation`
+      - persisted richer `pendingRevision.revisionIds`
+    - `packages/persistence/tests/intent-store.test.ts`
+      - added round-trip coverage for revision ledger + pending cancellation metadata
+  - Updated runtime/tool layer:
+    - `packages/runtime/src/tools/executor.ts`
+      - added `AbortSignal`-aware execution path
+      - added interrupted tool result handling
+    - builtin tools now declare governance metadata:
+      - `file_read`
+      - `file_write`
+      - `glob`
+      - `grep`
+      - `shell`
+    - `packages/runtime/src/agent/runtime.ts`
+      - added runtime interrupt handle
+      - added immediate-vs-boundary cancellation behavior based on tool semantics
+      - added task/tool cancel events
+    - added `packages/runtime/tests/agent-runtime-interruption.test.ts`
+      - verifies immediate interrupt for read-only cooperative tool
+      - verifies boundary-only cancel for non-read-only tool
+  - Updated orchestrator:
+    - `packages/orchestrator/src/orchestrator.ts`
+      - added `cancelIntent()`
+      - tracks running runtimes so cancellation can reach the live execution loop
+      - blocks scheduler dispatch on both pending revision and pending cancellation
+      - finalizes intent cancellation once active work drains
+      - records revision history for:
+        - pre-plan revise
+        - deferred replan requests
+        - applied replans
+    - added `packages/orchestrator/tests/orchestrator-cancel-intent.test.ts`
+      - verifies queued work cancels immediately and the intent is abandoned
+  - Updated daemon / protocol surface:
+    - `packages/infra/src/daemon/dialogue-service.ts`
+      - added cancel-intent callback plumbing
+    - `packages/infra/src/daemon/controller.ts`
+      - implemented `cancel_intent`
+    - `packages/infra/src/daemon/server.ts`
+      - wired cancel-intent resolution into orchestrator
+      - added thread-level progress rendering for:
+        - revision queued
+        - replanned
+        - cancel requested
+        - cancelled
+    - added `packages/infra/tests/daemon-cancel-flow.test.ts`
+      - verifies tracked thread intent cancellation end-to-end
+    - updated `packages/infra/tests/daemon-controller.test.ts`
+      - added controller-level cancel-intent coverage
+  - Updated CLI progress surfaces:
+    - `packages/infra/src/cli/commands/run.ts`
+      - added cancellation progress rendering
+    - `packages/infra/src/cli/commands/events.ts`
+      - added event colors for cancellation events
+  - Updated core task-state-machine tests:
+    - `packages/core/tests/task-state-machine.test.ts`
+      - added `running -> cancelled`
+      - updated transition expectations
+- Validation:
+  - `bun run typecheck` ✅
+  - targeted interruption/cancellation tests ✅
+  - full `bun test` pending after docs consolidation in this same session
+- Analysis / trade-offs:
+  - This is still **bounded interruptibility**, not universal rollback.
+    - read-only cooperative tools can be interrupted immediately
+    - write/destructive tools currently stop at the next safe boundary
+    - this is a deliberate safety contract, not an accidental limitation
+  - `pendingCancellation` mirrors `pendingRevision` architecturally.
+    - both are intent-level runtime governance signals
+    - both block further dispatch
+    - both survive beyond a single transient LLM call
+  - The revision ledger is intentionally lightweight.
+    - it is not yet a full revision graph with diff semantics
+    - but it finally records requested vs applied updates instead of only rewriting `workingText`
+  - `cancel_intent` currently uses explicit protocol rather than free-text “stop” interpretation.
+    - that keeps the first producer precise
+    - natural-language cancellation routing can come later as a separate semantic layer
+- Impact:
+  - Nous now has a much stronger answer to real production questions:
+    - how to stop work
+    - how to interrupt safely
+    - how to avoid launching stale queued work after a stop request
+    - how to preserve revision traceability over time
+  - The runtime is materially closer to a real long-running task system rather than a pure optimistic planner/executor loop.
+- Open questions / next steps:
+  - There is still no true **rollback executor** for write/destructive tools.
+    - current rollback is hint-level / manual
+  - LLM-call interruption itself is still cooperative-at-boundary.
+    - Nous can stop before the next tool/action boundary
+    - but provider-level streaming/token abort control is not fully modeled yet
+  - A future version may want to generalize:
+    - `pendingRevision`
+    - `pendingCancellation`
+    - other future control directives
+    - into a more unified execution-governance queue for intents
+
+### Session: Unify execution-governance trace into intent directives + add free-text cancel routing
+- Context / Trigger:
+  - After landing bounded interruption, explicit `cancel_intent`, and revision ledger, the next incompleteness was no longer basic stop support.
+  - The remaining gap was architectural:
+    - runtime control state was still split across `pendingRevision` and `pendingCancellation`
+    - free-text “stop / never mind / 别做了” still was not a real producer
+    - cancelling an intent did not yet explicitly clean up thread-facing pending decisions for that intent
+  - That meant the system could stop work through protocol, but the **governance story across intent runtime + thread DecisionQueue** was still not clean enough.
+- Problem:
+  - `pendingRevision` and `pendingCancellation` were operationally useful, but they were still two parallel special-case fields rather than a more general execution-governance trace.
+  - If the user cancelled an intent from thread text while a decision was pending, Nous still risked treating the message as:
+    - clarification text
+    - or generic thread input
+    - instead of as intent cancellation.
+  - Even after cancellation, DecisionQueue ownership cleanup was underspecified:
+    - pending / queued decisions owned by the cancelled intent could outlive that intent unless explicitly settled.
+- Options considered:
+  - Option A: keep `pendingRevision` / `pendingCancellation` as the long-term runtime model and only add one more free-text cancel branch.
+    - Rejected because that would fix symptoms but keep governance state structurally fragmented.
+  - Option B: delete the pending fields immediately and replace everything with a brand-new directive queue abstraction everywhere.
+    - Rejected because it would be a larger refactor than needed right now and would risk destabilizing already-working runtime paths.
+  - Option C: introduce an **intent execution directive ledger** now, while preserving `pendingRevision` / `pendingCancellation` as convenience projections and compatibility fields.
+    - Chosen because it improves architecture without forcing a full rewrite of current runtime logic.
+- Decision:
+  - Add `intent.executionDirectives[]` as the broader intent-level execution-governance ledger.
+    - current directive kinds:
+      - `scope_revision`
+      - `cancellation`
+  - Keep:
+    - `pendingRevision`
+    - `pendingCancellation`
+    as fast runtime projections / convenience views for the currently blocking state.
+  - Extend thread routing so both surfaces can recognize current-intent cancellation from free text:
+    - active-intent routing (`ThreadScopeRouter`)
+    - pending-decision routing (`ThreadInputRouter`)
+  - Treat cancellation as a governance event that also settles DecisionQueue ownership:
+    - cancel outstanding pending / queued decisions owned by that intent
+    - then activate the next queued decision in the thread if one exists
+- Changes made:
+  - Updated core intent contracts:
+    - `packages/core/src/types/intent.ts`
+      - added:
+        - `IntentExecutionDirectiveStatus`
+        - `ScopeRevisionDirective`
+        - `CancellationDirective`
+        - `IntentExecutionDirective`
+        - `intent.executionDirectives[]`
+    - `packages/core/src/index.ts`
+      - exported the new intent execution directive types
+  - Updated persistence:
+    - `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+      - persisted and normalized `executionDirectives`
+      - added directive round-trip normalization for:
+        - scope revision directives
+        - cancellation directives
+    - `packages/persistence/tests/intent-store.test.ts`
+      - extended metadata round-trip coverage to include `executionDirectives`
+  - Updated orchestrator runtime governance:
+    - `packages/orchestrator/src/orchestrator.ts`
+      - scheduler dispatch now checks a broader blocking-execution-directive invariant
+      - scope update paths now append / apply `scope_revision` directives
+      - cancellation path now appends / updates `cancellation` directives
+      - intent final cancellation now:
+        - marks cancellation directives as `applied`
+        - marks still-pending scope revision directives as `superseded`
+    - updated tests:
+      - `packages/orchestrator/tests/orchestrator-scope-revision.test.ts`
+      - `packages/orchestrator/tests/orchestrator-cancel-intent.test.ts`
+      - now assert directive-state transitions in addition to legacy pending-field behavior
+  - Updated thread semantic routing:
+    - `packages/infra/src/intake/thread-scope-router.ts`
+      - added `cancel_current_intent`
+    - `packages/infra/src/intake/thread-input-router.ts`
+      - added `cancel_current_intent` even when a decision is pending
+    - updated tests:
+      - `packages/infra/tests/thread-scope-router.test.ts`
+      - `packages/infra/tests/thread-input-router.test.ts`
+  - Updated daemon governance behavior:
+    - `packages/infra/src/daemon/server.ts`
+      - added shared `requestIntentCancellation(...)`
+      - active thread messages can now cancel the current intent from free text
+      - pending-decision thread messages can also cancel the owning intent from free text
+      - outstanding pending / queued decisions for a cancelled intent are now marked `cancelled`
+      - next queued decision in the thread is activated after that cleanup
+      - `finalizeAbandonedIntent(...)` now also settles lingering decisions owned by that intent
+    - updated / added end-to-end tests:
+      - `packages/infra/tests/daemon-cancel-flow.test.ts`
+        - added in-thread free-text cancel coverage
+      - `packages/infra/tests/decision-queue-flow.test.ts`
+        - added pending-decision cancellation + next-decision activation coverage
+  - Updated architecture documentation:
+    - `ARCHITECTURE.md`
+      - added:
+        - **Intent execution directive ledger**
+        - **Free-text stop / cancel routing**
+- Validation:
+  - `bun run typecheck` ✅
+  - `bun test` ✅ (`154 pass / 0 fail`)
+  - `bunx biome check ...` ✅
+- Analysis / trade-offs:
+  - This is intentionally a **hybrid step**, not a purity rewrite.
+    - `pendingRevision` / `pendingCancellation` still exist
+    - but they are no longer the only meaningful architectural story
+  - The directive ledger is stronger for interview-grade traceability because it records:
+    - ordering
+    - status transitions
+    - superseded governance requests
+  - Free-text cancellation is now real, but still intentionally narrow.
+    - Nous recognizes stop/cancel intent at the thread-routing layer
+    - it does not yet implement a fully distinct pause / hold / defer semantic family
+  - DecisionQueue cleanup is now more honest.
+    - a cancelled intent should not keep owning active human blockers
+    - this prevents governance dead-ends where the thread still waits on a dead intent
+- Impact:
+  - Nous now has a cleaner two-plane governance story:
+    - **DecisionQueue** for human-facing blocking coordination
+    - **executionDirectives** for intent-facing runtime governance
+  - Cancellation is no longer only a protocol command; it is now also a semantic thread action.
+  - Intent cancellation now properly propagates to the thread governance surface instead of leaving stale pending decisions behind.
+- Open questions / next steps:
+  - `executionDirectives` currently works as a ledger + blocking model, but not yet as a full generalized directive queue with:
+    - pause
+    - resume
+    - approval-after-risky-boundary
+  - free-text “stop” is now supported, but free-text “pause for now / continue later” still needs a distinct semantic/control contract
+  - rollback remains hint-level; execution directive governance is now stronger than rollback capability itself
+
+### Session: Land pause / resume directives, risky-boundary approval checkpoints, and structured rollback contracts
+- Context / Trigger:
+  - After free-text cancel and the first execution-directive ledger landed, the remaining gap was explicit:
+    - Nous still had no honest `pause / resume` contract
+    - approval-after-risky-boundary existed only as a future direction
+    - rollback was still hint-level rather than executable
+    - free-text “先暂停 / 回头继续” was still not distinct from cancel semantics
+  - The goal of this round was not to fake universal suspension/rollback, but to make this next layer **real, bounded, and architecturally consistent**.
+- Problem:
+  - The execution-governance surface still handled cancellation better than pause/defer.
+  - DecisionQueue could queue/resume decisions, but pausing a blocked intent did not yet have real runtime semantics.
+  - Tool governance metadata existed, but there was still no structured rollback plan or runtime rollback executor.
+  - Approval existed for ambient-intent consent, but not yet for “you already crossed a risky task boundary; should I continue?”
+- Options considered:
+  - Option A: keep pause/resume as future work and only add more router phrases.
+    - Rejected because the missing piece was not wording coverage; it was the absence of a real governance contract.
+  - Option B: pretend to support true mid-task suspension and exact continuation.
+    - Rejected because the current runtime does not snapshot live continuation state; this would be dishonest.
+  - Option C: add a bounded **task-boundary pause** contract, a **post-task risky approval** checkpoint, and a **structured rollback plan/executor**.
+    - Chosen because it matches the real runtime boundaries while materially improving production realism.
+- Decision:
+  - Extend the intent execution directive ledger with:
+    - `pause`
+    - `resume`
+    - `approval_wait`
+  - Treat pause as **intent-level governance**, not fake coroutine suspension:
+    - if no task is active, pause immediately
+    - if a task is active, record `pendingPause` and stop at the next safe task boundary
+  - Extend pause directives with `resumeStatus` so resume can restore:
+    - `active`
+    - `awaiting_clarification`
+    - `awaiting_decision`
+  - Generalize DecisionQueue resume policy:
+    - pausing a blocked intent re-queues its owned pending decisions instead of cancelling them
+    - resuming can reactivate those queued decisions
+  - Add approval-after-risky-boundary as the first real **post-task checkpoint**:
+    - runtime summarizes risky tool usage and rollback availability
+    - orchestrator enters `approval_wait` only when:
+      - risky tools were used
+      - unfinished work still remains
+      - checkpoint policy requires human review
+  - Upgrade rollback from hint-level to contract-level:
+    - tool handlers can now return structured rollback plans
+    - `ToolExecutor.rollback(...)` executes real bounded rollback for supported plan kinds
+- Changes made:
+  - Updated core contracts:
+    - `packages/core/src/types/intent.ts`
+      - added `PendingIntentPause.resumeStatus`
+      - extended execution directives with:
+        - `pause`
+        - `resume`
+        - `approval_wait`
+    - `packages/core/src/state-machines/intent-state-machine.ts`
+      - added legal transitions involving `paused`
+    - `packages/core/src/types/event.ts`
+      - added:
+        - `intent.pause_requested`
+        - `intent.paused`
+        - `intent.approval_requested`
+  - Updated runtime/tool governance:
+    - `packages/runtime/src/tools/executor.ts`
+      - tool handlers may now return `{ output, rollbackPlan }`
+      - `ToolResult` now carries approval/rollback metadata all the way through execution
+      - added real `rollback(...)` execution for:
+        - `restore_file`
+        - `delete_file`
+        - `manual`
+    - builtin tools:
+      - `file_write`
+        - now declares `approvalMode: "ask"`
+        - now emits real rollback plans:
+          - restore previous contents
+          - or delete newly created file
+      - `shell`
+        - now emits structured manual rollback contract
+      - read-only tools now explicitly declare `approvalMode: "auto"`
+    - `packages/runtime/src/agent/runtime.ts`
+      - now returns tool-governance evidence with each task result:
+        - tool results
+        - risky tool names
+        - rollback plans
+    - added `packages/runtime/tests/tool-executor-rollback.test.ts`
+      - verifies real rollback for `file_write`
+  - Updated persistence:
+    - `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+      - persists / normalizes:
+        - `pendingPause`
+        - `pause`
+        - `resume`
+        - `approval_wait`
+    - `packages/persistence/tests/intent-store.test.ts`
+      - added round-trip coverage for new pause / approval metadata
+  - Updated orchestrator governance:
+    - `packages/orchestrator/src/orchestrator.ts`
+      - added:
+        - `pauseIntent(...)`
+        - `approveRiskBoundaryContinuation(...)`
+      - extended `resumeIntent(...)` to support paused intents honestly
+      - scheduler dispatch now blocks on:
+        - pending pause
+        - requested approval wait
+        - non-active intent state
+      - task completion path now handles boundary governance in order:
+        1. cancellation finalization
+        2. pause finalization
+        3. risky-boundary approval wait
+        4. deferred revision application
+        5. completion
+    - added `packages/orchestrator/tests/orchestrator-pause-approval.test.ts`
+      - verifies:
+        - immediate pause
+        - deferred pause
+        - risky-boundary approval wait
+        - approval continuation
+  - Updated daemon / DecisionQueue behavior:
+    - `packages/infra/src/intake/thread-scope-router.ts`
+      - added:
+        - `pause_current_intent`
+        - `resume_current_intent`
+    - `packages/infra/src/intake/thread-input-router.ts`
+      - added:
+        - `pause_current_intent`
+      - so “先暂停 / 回头再说” is no longer conflated with cancel or decision-response
+    - `packages/infra/src/daemon/server.ts`
+      - added:
+        - `requestIntentPause(...)`
+        - `requestIntentResume(...)`
+      - scope-sensitive thread routing now handles active **and paused** intents
+      - pausing a blocked intent re-queues owned decisions instead of cancelling them
+      - queued decisions whose owner intent is paused are skipped until resume
+      - `intent.approval_requested` progress now produces a real `approval` decision with producer `risky_boundary`
+      - risky-boundary approval rejection now pauses the intent instead of abandoning it
+    - updated tests:
+      - `packages/infra/tests/thread-scope-router.test.ts`
+      - `packages/infra/tests/thread-input-router.test.ts`
+      - `packages/infra/tests/decision-queue-flow.test.ts`
+        - added pause/resume decision-queue coverage
+        - added risky-boundary approval rejection coverage
+  - Updated architecture documentation:
+    - `ARCHITECTURE.md`
+      - extended DecisionQueue / execution-governance sections with:
+        - pause/resume contract
+        - risky-boundary approval contract
+        - structured rollback contract
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test` ✅ (`165 pass / 0 fail`)
+  - `bunx @biomejs/biome check ...` ✅ on touched files
+- Analysis / trade-offs:
+  - Pause is still **bounded pause**, not universal task continuation.
+    - that is intentional honesty, not a missing if-statement
+  - Approval-after-risky-boundary currently happens **after task completion**, not mid-tool.
+    - this preserves a truthful boundary and avoids promising side-effect precision we do not have
+  - Rollback is now a real contract, but still **bounded rollback**.
+    - `file_write` is the first truly reversible built-in
+    - `shell` remains structured-manual
+  - DecisionQueue and execution directives are now more clearly separated:
+    - DecisionQueue = human-facing blocking coordination
+    - execution directives = intent-facing runtime governance
+    - pause/resume had to touch both planes to be real
+- Impact:
+  - Nous now has a much more production-honest control story for long-running work:
+    - stop
+    - pause
+    - resume
+    - checkpoint before continuing after risky work
+    - bounded rollback where the tool can actually provide it
+  - Free-text “先暂停 / 回头继续” is now a real semantic control path instead of a future TODO.
+  - The runtime harness now has a clearer **task-boundary governance layer** between inner tool execution and outer thread/decision orchestration.
+- Open questions / next steps:
+  - There is still no true continuation snapshot for mid-task resume.
+  - Rollback plans are executable now, but not yet promoted into a broader user-facing rollback policy / UX.
+  - Risky-boundary approval currently pauses on rejection; future work may add configurable “pause vs rollback vs abandon” producer policies.

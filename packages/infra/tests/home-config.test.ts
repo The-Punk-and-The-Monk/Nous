@@ -40,6 +40,17 @@ describe("Nous home config", () => {
 			readFileSync(join(paths.configDir, "config.json"), "utf8"),
 		) as { daemon: { host: string } };
 		expect(config.daemon.host).toBe("127.0.0.1");
+		const providerConfig = JSON.parse(
+			readFileSync(join(paths.configDir, "providers.json"), "utf8"),
+		) as {
+			provider: {
+				priority: string[];
+				openaiModel: string;
+				claudeModel: string;
+			};
+		};
+		expect(providerConfig.provider.priority[0]).toBe("openai");
+		expect(providerConfig.provider.openaiModel).toBe("gpt-5.1");
 		const secrets = JSON.parse(
 			readFileSync(join(paths.secretsDir, "providers.json"), "utf8"),
 		) as {

@@ -39,6 +39,12 @@ describe("task state machine", () => {
 		expect(status).toBe("abandoned");
 	});
 
+	test("allows running → cancelled", () => {
+		let status: TaskStatus = "running";
+		status = transitionTask(status, "cancelled");
+		expect(status).toBe("cancelled");
+	});
+
 	test("throws on invalid transition", () => {
 		expect(() => transitionTask("created", "running")).toThrow(
 			InvalidTransitionError,
@@ -53,14 +59,20 @@ describe("task state machine", () => {
 
 	test("canTransition returns boolean without throwing", () => {
 		expect(canTransition("created", "queued")).toBe(true);
+		expect(canTransition("queued", "cancelled")).toBe(true);
 		expect(canTransition("created", "done")).toBe(false);
 		expect(canTransition("running", "done")).toBe(true);
 		expect(canTransition("done", "created")).toBe(false);
 	});
 
 	test("validTransitions returns correct targets", () => {
-		expect(validTransitions("created")).toEqual(["queued"]);
-		expect(validTransitions("running")).toEqual(["done", "failed", "timeout"]);
+		expect(validTransitions("created")).toEqual(["queued", "cancelled"]);
+		expect(validTransitions("running")).toEqual([
+			"done",
+			"cancelled",
+			"failed",
+			"timeout",
+		]);
 		expect(validTransitions("done")).toEqual([]);
 		expect(validTransitions("abandoned")).toEqual([]);
 	});

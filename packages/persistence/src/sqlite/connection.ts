@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS intents (
   constraints TEXT NOT NULL DEFAULT '[]',
   priority INTEGER NOT NULL DEFAULT 0,
   human_checkpoints TEXT NOT NULL DEFAULT 'always',
+  metadata TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active',
   source TEXT NOT NULL DEFAULT 'human',
   created_at TEXT NOT NULL,
@@ -144,6 +145,33 @@ CREATE TABLE IF NOT EXISTS dialogue_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_dialogue_messages_thread ON dialogue_messages(thread_id, created_at);
 
+-- Decision queue
+CREATE TABLE IF NOT EXISTS decisions (
+  id TEXT PRIMARY KEY,
+  intent_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  questions TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',
+  response_mode TEXT NOT NULL DEFAULT 'free_text',
+  options TEXT NOT NULL DEFAULT '[]',
+  selected_option_id TEXT,
+  outcome TEXT,
+  related_intent_ids TEXT NOT NULL DEFAULT '[]',
+  answer_text TEXT,
+  answer_message_id TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  answered_at TEXT,
+  resolved_at TEXT,
+  FOREIGN KEY (intent_id) REFERENCES intents(id),
+  FOREIGN KEY (thread_id) REFERENCES dialogue_threads(id)
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_decisions_thread ON decisions(thread_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_decisions_intent ON decisions(intent_id, status, created_at);
+
 -- Persistent outbox
 CREATE TABLE IF NOT EXISTS message_outbox (
   id TEXT PRIMARY KEY,
@@ -162,10 +190,61 @@ CREATE INDEX IF NOT EXISTS idx_message_outbox_pending ON message_outbox(status, 
 
 export function runMigrations(db: Database): void {
 	db.exec(MIGRATION_001);
+	ensureColumn(
+		db,
+		"intents",
+		"metadata",
+		"ALTER TABLE intents ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'",
+	);
+	ensureColumn(
+		db,
+		"decisions",
+		"response_mode",
+		"ALTER TABLE decisions ADD COLUMN response_mode TEXT NOT NULL DEFAULT 'free_text'",
+	);
+	ensureColumn(
+		db,
+		"decisions",
+		"options",
+		"ALTER TABLE decisions ADD COLUMN options TEXT NOT NULL DEFAULT '[]'",
+	);
+	ensureColumn(
+		db,
+		"decisions",
+		"selected_option_id",
+		"ALTER TABLE decisions ADD COLUMN selected_option_id TEXT",
+	);
+	ensureColumn(
+		db,
+		"decisions",
+		"outcome",
+		"ALTER TABLE decisions ADD COLUMN outcome TEXT",
+	);
+	ensureColumn(
+		db,
+		"decisions",
+		"related_intent_ids",
+		"ALTER TABLE decisions ADD COLUMN related_intent_ids TEXT NOT NULL DEFAULT '[]'",
+	);
 }
 
 export function initDatabase(path = ":memory:"): Database {
 	const db = createDatabase(path);
 	runMigrations(db);
 	return db;
+}
+
+function ensureColumn(
+	db: Database,
+	tableName: string,
+	columnName: string,
+	alterSql: string,
+): void {
+	const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as {
+		name: string;
+	}[];
+	if (columns.some((column) => column.name === columnName)) {
+		return;
+	}
+	db.exec(alterSql);
 }

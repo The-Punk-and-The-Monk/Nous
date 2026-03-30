@@ -6,10 +6,13 @@ import type {
 	LLMProvider,
 	Logger,
 	Task,
+	ToolDef,
+	ToolResult,
 	ToolUseBlock,
 } from "@nous/core";
 import { createLogger, now, prefixedId } from "@nous/core";
 import type { EventStore, TaskStore } from "@nous/persistence";
+import { ToolInterruptedError } from "../tools/executor.ts";
 import type { ToolExecutor } from "../tools/executor.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { ContextManager } from "./context.ts";
@@ -30,10 +33,33 @@ export interface AgentRuntimeConfig {
 
 export interface AgentResult {
 	success: boolean;
+	cancelled?: boolean;
 	output: string;
 	iterations: number;
 	totalInputTokens: number;
 	totalOutputTokens: number;
+	toolResults: ToolResult[];
+	usedToolNames: string[];
+	riskyToolNames: string[];
+	rollbackPlans: NonNullable<ToolResult["rollbackPlan"]>[];
+}
+
+export interface RuntimeInterruptRequest {
+	accepted: boolean;
+	mode: "immediate" | "after_tool";
+	activeToolName?: string;
+}
+
+interface RuntimeInterruptState {
+	requestedAt: string;
+	reason: string;
+	mode: "immediate" | "after_tool";
+}
+
+interface ActiveToolExecution {
+	tool: ToolDef;
+	toolUseId: string;
+	controller: AbortController;
 }
 
 /** The core ReAct execution loop for an agent */
@@ -49,6 +75,9 @@ export class AgentRuntime {
 	private maxIterations: number;
 	private maxTokens: number;
 	private systemPrompt: string;
+	private pendingInterrupt?: RuntimeInterruptState;
+	private activeToolExecution?: ActiveToolExecution;
+	private currentTaskId?: string;
 
 	private log: Logger;
 
@@ -69,8 +98,46 @@ export class AgentRuntime {
 		this.log = createLogger(`agent:${config.agentId}`);
 	}
 
+	requestInterrupt(reason: string): RuntimeInterruptRequest {
+		const activeTool = this.activeToolExecution?.tool;
+		const mode =
+			activeTool && !canInterruptToolImmediately(activeTool)
+				? "after_tool"
+				: "immediate";
+		const next = this.pendingInterrupt ?? {
+			requestedAt: now(),
+			reason,
+			mode,
+		};
+		this.pendingInterrupt = next;
+		if (this.currentTaskId) {
+			this.emitEvent("task.cancel_requested", "task", this.currentTaskId, {
+				reason,
+				mode,
+			});
+			if (this.activeToolExecution) {
+				this.emitEvent("tool.cancel_requested", "task", this.currentTaskId, {
+					toolName: this.activeToolExecution.tool.name,
+					reason,
+					mode,
+				});
+			}
+		}
+
+		if (mode === "immediate" && this.activeToolExecution) {
+			this.activeToolExecution.controller.abort(reason);
+		}
+
+		return {
+			accepted: true,
+			mode,
+			activeToolName: this.activeToolExecution?.tool.name,
+		};
+	}
+
 	/** Execute a task through the ReAct loop */
 	async executeTask(task: Task): Promise<AgentResult> {
+		this.currentTaskId = task.id;
 		const heartbeat = new HeartbeatEmitter(
 			this.eventStore,
 			this.agentId,
@@ -103,6 +170,7 @@ export class AgentRuntime {
 		let iterations = 0;
 		let totalInputTokens = 0;
 		let totalOutputTokens = 0;
+		const toolResults: ToolResult[] = [];
 
 		try {
 			const tools = this.toolRegistry.toLLMTools(this.capabilities);
@@ -142,6 +210,19 @@ export class AgentRuntime {
 				// Add assistant message
 				messages.push({ role: "assistant", content: response.content });
 
+				if (this.pendingInterrupt) {
+					heartbeat.stop();
+					return this.finalizeCancelledTask(
+						task,
+						this.pendingInterrupt.reason,
+						this.pendingInterrupt.mode,
+						iterations,
+						totalInputTokens,
+						totalOutputTokens,
+						toolResults,
+					);
+				}
+
 				// Check stop reason
 				if (
 					response.stopReason === "end_turn" ||
@@ -166,13 +247,14 @@ export class AgentRuntime {
 					});
 
 					heartbeat.stop();
-					return {
+					return buildAgentResult({
 						success: true,
 						output: textOutput,
 						iterations,
 						totalInputTokens,
 						totalOutputTokens,
-					};
+						toolResults,
+					});
 				}
 
 				if (response.stopReason === "tool_use") {
@@ -203,17 +285,53 @@ export class AgentRuntime {
 							input: toolUse.input,
 						});
 
+						const controller = new AbortController();
+						this.activeToolExecution = {
+							tool: toolDef,
+							toolUseId: toolUse.id,
+							controller,
+						};
+						const currentInterrupt = this.getPendingInterrupt();
+						const interruptReason = currentInterrupt?.reason;
+						const interruptMode = currentInterrupt?.mode;
+						if (interruptReason && canInterruptToolImmediately(toolDef)) {
+							controller.abort(interruptReason);
+						}
+
 						const result = await this.toolExecutor.execute(
 							toolDef,
 							toolUse.input,
 							this.capabilities,
+							{ signal: controller.signal },
 						);
+						this.activeToolExecution = undefined;
+						toolResults.push(result);
 
-						this.emitEvent("tool.executed", "task", task.id, {
-							toolName: toolUse.name,
-							success: result.success,
-							durationMs: result.durationMs,
-						});
+						if (result.interrupted) {
+							this.emitEvent("tool.cancelled", "task", task.id, {
+								toolName: toolUse.name,
+								durationMs: result.durationMs,
+								rollbackHint: result.rollbackHint,
+							});
+							if (interruptReason && interruptMode) {
+								heartbeat.stop();
+								return this.finalizeCancelledTask(
+									task,
+									interruptReason,
+									interruptMode,
+									iterations,
+									totalInputTokens,
+									totalOutputTokens,
+									toolResults,
+								);
+							}
+						} else {
+							this.emitEvent("tool.executed", "task", task.id, {
+								toolName: toolUse.name,
+								success: result.success,
+								durationMs: result.durationMs,
+							});
+						}
 
 						resultBlocks.push({
 							type: "tool_result",
@@ -221,6 +339,19 @@ export class AgentRuntime {
 							content: result.output,
 							isError: !result.success,
 						});
+
+						if (interruptReason && interruptMode) {
+							heartbeat.stop();
+							return this.finalizeCancelledTask(
+								task,
+								interruptReason,
+								interruptMode,
+								iterations,
+								totalInputTokens,
+								totalOutputTokens,
+								toolResults,
+							);
+						}
 					}
 
 					messages.push({ role: "user", content: resultBlocks });
@@ -247,13 +378,28 @@ export class AgentRuntime {
 
 			heartbeat.stop();
 			return {
-				success: false,
-				output: timeoutMsg,
-				iterations,
-				totalInputTokens,
-				totalOutputTokens,
+				...buildAgentResult({
+					success: false,
+					output: timeoutMsg,
+					iterations,
+					totalInputTokens,
+					totalOutputTokens,
+					toolResults,
+				}),
 			};
 		} catch (err) {
+			if (err instanceof ToolInterruptedError && this.pendingInterrupt) {
+				heartbeat.stop();
+				return this.finalizeCancelledTask(
+					task,
+					this.pendingInterrupt.reason,
+					this.pendingInterrupt.mode,
+					iterations,
+					totalInputTokens,
+					totalOutputTokens,
+					toolResults,
+				);
+			}
 			const errorMsg = (err as Error).message;
 			this.log.error("Task execution failed", {
 				taskId: task.id,
@@ -270,14 +416,56 @@ export class AgentRuntime {
 			});
 
 			heartbeat.stop();
-			return {
+			return buildAgentResult({
 				success: false,
 				output: errorMsg,
 				iterations,
 				totalInputTokens,
 				totalOutputTokens,
-			};
+				toolResults,
+			});
+		} finally {
+			this.currentTaskId = undefined;
+			this.activeToolExecution = undefined;
+			this.pendingInterrupt = undefined;
 		}
+	}
+
+	private finalizeCancelledTask(
+		task: Task,
+		reason: string,
+		mode: RuntimeInterruptState["mode"],
+		iterations: number,
+		totalInputTokens: number,
+		totalOutputTokens: number,
+		toolResults: ToolResult[],
+	): AgentResult {
+		const output = `Task cancelled: ${reason}`;
+		this.taskStore.update(task.id, {
+			status: "cancelled",
+			completedAt: now(),
+			error: reason,
+		});
+		this.emitEvent("task.cancelled", "task", task.id, {
+			reason,
+			mode,
+			activeToolName: this.activeToolExecution?.tool.name,
+		});
+		return {
+			...buildAgentResult({
+				success: false,
+				output,
+				iterations,
+				totalInputTokens,
+				totalOutputTokens,
+				toolResults,
+			}),
+			cancelled: true,
+		};
+	}
+
+	private getPendingInterrupt(): RuntimeInterruptState | undefined {
+		return this.pendingInterrupt;
 	}
 
 	private emitEvent(
@@ -304,4 +492,50 @@ function extractText(content: ContentBlock[]): string {
 		.filter((b) => b.type === "text")
 		.map((b) => (b as { text: string }).text)
 		.join("\n");
+}
+
+function canInterruptToolImmediately(tool: ToolDef): boolean {
+	return (
+		tool.interruptibility === "cooperative" &&
+		tool.sideEffectClass === "read_only"
+	);
+}
+
+function buildAgentResult(params: {
+	success: boolean;
+	output: string;
+	iterations: number;
+	totalInputTokens: number;
+	totalOutputTokens: number;
+	toolResults: ToolResult[];
+}): AgentResult {
+	const usedToolNames = dedupeStrings(
+		params.toolResults.map((result) => result.toolName),
+	);
+	const riskyToolNames = dedupeStrings(
+		params.toolResults
+			.filter((result) => result.sideEffectClass !== "read_only")
+			.map((result) => result.toolName),
+	);
+	const rollbackPlans = params.toolResults
+		.map((result) => result.rollbackPlan)
+		.filter((plan): plan is NonNullable<ToolResult["rollbackPlan"]> =>
+			Boolean(plan),
+		);
+
+	return {
+		success: params.success,
+		output: params.output,
+		iterations: params.iterations,
+		totalInputTokens: params.totalInputTokens,
+		totalOutputTokens: params.totalOutputTokens,
+		toolResults: params.toolResults,
+		usedToolNames,
+		riskyToolNames,
+		rollbackPlans,
+	};
+}
+
+function dedupeStrings(values: string[]): string[] {
+	return [...new Set(values)];
 }

@@ -12,14 +12,17 @@ export interface ConflictDecision {
 	verdict: "independent" | "resource_contention" | "dependent" | "conflicting";
 	reason?: string;
 	requiresReview?: boolean;
+	relatedIntentIds?: string[];
 }
 
 export interface ScheduleIntentInput {
+	intentId?: string;
 	text: string;
 	scope: ChannelScope;
 }
 
 interface ActiveClaim {
+	intentId?: string;
 	mode: ResourceClaim["mode"];
 	promise: Promise<void>;
 	text: string;
@@ -27,13 +30,78 @@ interface ActiveClaim {
 	claims: ResourceClaim[];
 }
 
+interface ConflictInspection {
+	claims: ResourceClaim[];
+	scopeKey: string;
+	overlaps: Set<string>;
+	blockers: Set<Promise<void>>;
+	verdict: ConflictDecision["verdict"];
+	requiresReview: boolean;
+	reason?: string;
+	relatedIntentIds: Set<string>;
+}
+
 export class StaticIntentConflictManager {
 	private readonly activeClaims = new Map<string, ActiveClaim[]>();
+
+	analyze(input: ScheduleIntentInput): ConflictDecision {
+		const inspection = this.inspect(input);
+		return {
+			queued: inspection.blockers.size > 0,
+			overlaps: [...inspection.overlaps],
+			verdict: inspection.verdict,
+			reason: inspection.reason,
+			requiresReview: inspection.requiresReview,
+			relatedIntentIds: [...inspection.relatedIntentIds],
+		};
+	}
 
 	schedule(
 		input: ScheduleIntentInput,
 		run: () => Promise<void>,
 	): ConflictDecision & { completion: Promise<void> } {
+		const inspection = this.inspect(input);
+		const completion = Promise.all([...inspection.blockers])
+			.then(run)
+			.finally(() => {
+				for (const claim of inspection.claims) {
+					const current = this.activeClaims.get(claim.key) ?? [];
+					const remaining = current.filter(
+						(entry) => entry.promise !== completion,
+					);
+					if (remaining.length > 0) {
+						this.activeClaims.set(claim.key, remaining);
+					} else {
+						this.activeClaims.delete(claim.key);
+					}
+				}
+			});
+
+		for (const claim of inspection.claims) {
+			const current = this.activeClaims.get(claim.key) ?? [];
+			current.push({
+				intentId: input.intentId,
+				mode: claim.mode,
+				promise: completion,
+				text: input.text,
+				scopeKey: inspection.scopeKey,
+				claims: inspection.claims,
+			});
+			this.activeClaims.set(claim.key, current);
+		}
+
+		return {
+			queued: inspection.blockers.size > 0,
+			overlaps: [...inspection.overlaps],
+			verdict: inspection.verdict,
+			reason: inspection.reason,
+			requiresReview: inspection.requiresReview,
+			relatedIntentIds: [...inspection.relatedIntentIds],
+			completion,
+		};
+	}
+
+	private inspect(input: ScheduleIntentInput): ConflictInspection {
 		const claims = deriveResourceClaims(input.text, input.scope);
 		const scopeKey = deriveScopeKey(input.scope);
 		const overlaps = new Set<string>();
@@ -41,6 +109,7 @@ export class StaticIntentConflictManager {
 		let verdict: ConflictDecision["verdict"] = "independent";
 		let requiresReview = false;
 		let reason: string | undefined;
+		const relatedIntentIds = new Set<string>();
 
 		const activeExecutions = dedupeActiveExecutions(this.activeClaims);
 
@@ -49,12 +118,18 @@ export class StaticIntentConflictManager {
 				if (active.mode === "write" || claim.mode === "write") {
 					overlaps.add(claim.key);
 					blockers.add(active.promise);
+					if (active.intentId && active.intentId !== input.intentId) {
+						relatedIntentIds.add(active.intentId);
+					}
 				}
 			}
 		}
 
 		for (const active of activeExecutions) {
 			if (active.scopeKey !== scopeKey && overlaps.size === 0) continue;
+			if (active.intentId && active.intentId !== input.intentId) {
+				relatedIntentIds.add(active.intentId);
+			}
 			const semantic = analyzeSemanticRelationship(input.text, active.text);
 			if (semantic === "conflicting") {
 				verdict = "conflicting";
@@ -77,42 +152,15 @@ export class StaticIntentConflictManager {
 			reason = `Detected overlapping active work on ${[...overlaps].join(", ")}. Running sequentially.`;
 		}
 
-		const completion = Promise.all([...blockers])
-			.then(run)
-			.finally(() => {
-				for (const claim of claims) {
-					const current = this.activeClaims.get(claim.key) ?? [];
-					const remaining = current.filter(
-						(entry) => entry.promise !== completion,
-					);
-					if (remaining.length > 0) {
-						this.activeClaims.set(claim.key, remaining);
-					} else {
-						this.activeClaims.delete(claim.key);
-					}
-				}
-			});
-
-		for (const claim of claims) {
-			const current = this.activeClaims.get(claim.key) ?? [];
-			current.push({
-				mode: claim.mode,
-				promise: completion,
-				text: input.text,
-				scopeKey,
-				claims,
-			});
-			this.activeClaims.set(claim.key, current);
-		}
-
-		const overlapList = [...overlaps];
 		return {
-			queued: blockers.size > 0,
-			overlaps: overlapList,
+			claims,
+			scopeKey,
+			overlaps,
+			blockers,
 			verdict,
-			reason,
 			requiresReview,
-			completion,
+			reason,
+			relatedIntentIds,
 		};
 	}
 }
@@ -258,14 +306,14 @@ function inferIntentAction(text: string): string {
 
 function areOpposedActions(left: string, right: string): boolean {
 	return (
+		(left === "add" && right === "remove") ||
 		(left === "remove" && right === "add") ||
-		(left === "add" && right === "remove")
+		(left === "enable" && right === "disable") ||
+		(left === "disable" && right === "enable")
 	);
 }
 
 function normalizeTarget(value: string | undefined): string | undefined {
-	if (!value) return undefined;
-	const trimmed = value.trim();
-	if (!trimmed) return undefined;
-	return trimmed.replace(/\\/g, "/").replace(/\/+/g, "/").toLowerCase();
+	const normalized = value?.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+	return normalized ? normalized.replace(/\/$/, "") : undefined;
 }

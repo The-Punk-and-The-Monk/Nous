@@ -8,6 +8,18 @@ export type {
 	StructuredGoal,
 	Constraint,
 	CheckpointPolicy,
+	IntentRevisionApplyMode,
+	IntentRevisionRecord,
+	PendingIntentRevision,
+	PendingIntentCancellation,
+	PendingIntentPause,
+	IntentExecutionDirectiveStatus,
+	ScopeRevisionDirective,
+	CancellationDirective,
+	PauseDirective,
+	ResumeDirective,
+	ApprovalWaitDirective,
+	IntentExecutionDirective,
 } from "./types/intent.ts";
 
 export type {
@@ -32,6 +44,10 @@ export type {
 export type {
 	ToolDef,
 	ToolResult,
+	ToolInterruptibility,
+	ToolRollbackPolicy,
+	ToolRollbackPlan,
+	RollbackExecutionResult,
 } from "./types/tool.ts";
 
 export type {
@@ -75,6 +91,59 @@ export type {
 	ProcedureCandidate,
 	ValidationState,
 } from "./types/evolution.ts";
+export type {
+	PlanningDepth,
+	TimeDepth,
+	OrganizationDepth,
+	InitiativeMode,
+	InterruptionPolicy,
+	DeliveryMode,
+	UserStateGrounding,
+	TaskContract,
+	ExecutionDepthDecision,
+	TaskIntake,
+} from "./types/task-intake.ts";
+export type {
+	Decision,
+	DecisionKind,
+	DecisionStatus,
+	DecisionResponseMode,
+	DecisionOutcome,
+	DecisionOption,
+} from "./types/decision.ts";
+export type {
+	ArtifactKind,
+	ArtifactOwner,
+	ArtifactRiskClass,
+	ArtifactStatus,
+	ArtifactValidationState,
+	ArtifactScope,
+	ArtifactSourceType,
+	ArtifactTrustLevel,
+	ArtifactRef,
+	EvidenceRef,
+	ArtifactMetric,
+	ArtifactProvenance,
+	GovernedArtifact,
+	ModelHint,
+	PromptAsset,
+	ToolSideEffectClass,
+	ToolIdempotency,
+	ToolApprovalMode,
+	ToolAdapterType,
+	ToolRetryPolicy,
+	ToolArtifact,
+	ArtifactCostProfile,
+	ArtifactLatencyProfile,
+	SubagentProfileRef,
+	SkillArtifact,
+	HarnessScenarioType,
+	FixtureRef,
+	AssertionRule,
+	FaultRule,
+	HarnessArtifact,
+	OperationalArtifact,
+} from "./types/artifact.ts";
 
 export type {
 	NousMessage,
@@ -108,6 +177,10 @@ export type {
 	SubmitIntentAckPayload,
 	SendMessagePayload,
 	SendMessageAckPayload,
+	ApproveDecisionPayload,
+	ApproveDecisionAckPayload,
+	CancelIntentPayload,
+	CancelIntentAckPayload,
 	ThreadSnapshot,
 	GetThreadPayload,
 	StatusSnapshot,
@@ -146,10 +219,15 @@ export type {
 	ToolResultBlock,
 	LLMToolDef,
 	LLMRequest,
+	LLMResponseFormat,
 	LLMResponse,
+	LLMStructuredOutputMode,
 	StreamChunk,
 } from "./llm/types.ts";
-export type { LLMProvider } from "./llm/provider.ts";
+export type {
+	LLMProvider,
+	LLMProviderCapabilities,
+} from "./llm/provider.ts";
 export {
 	LLMError,
 	RateLimitError,

@@ -32,6 +32,22 @@ export interface LLMToolDef {
 	inputSchema: Record<string, unknown>;
 }
 
+export type LLMStructuredOutputMode =
+	| "prompt_only"
+	| "json_object"
+	| "json_schema"
+	| "tool_calling";
+
+export type LLMResponseFormat =
+	| { type: "text" }
+	| { type: "json_object" }
+	| {
+			type: "json_schema";
+			name: string;
+			schema: Record<string, unknown>;
+			strict?: boolean;
+	  };
+
 export interface LLMRequest {
 	messages: LLMMessage[];
 	system?: string;
@@ -39,6 +55,7 @@ export interface LLMRequest {
 	maxTokens: number;
 	temperature?: number;
 	stopSequences?: string[];
+	responseFormat?: LLMResponseFormat;
 }
 
 export interface LLMResponse {

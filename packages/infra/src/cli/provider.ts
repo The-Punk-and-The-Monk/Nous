@@ -35,7 +35,15 @@ export function createLLMProvider(
 	const config = loadNousConfig({ env });
 	const secretStore = options.secretStore ?? new FileSecretStore({ env });
 	const secrets = secretStore.getProviderSecrets();
-	const compatBaseURL = env.OPENAI_BASE_URL;
+	const directBaseURL = firstDefined(
+		env.OPENAI_API_BASE_URL,
+		env.OPENAI_BASE_URL,
+		config.provider.openaiBaseURL,
+	);
+	const compatBaseURL = firstDefined(
+		env.OPENAI_COMPAT_BASE_URL,
+		config.provider.openaiCompatBaseURL,
+	);
 	const openAIApiKey = firstDefined(env.OPENAI_API_KEY, secrets.openai?.apiKey);
 	const openAIOrgId = firstDefined(
 		env.OPENAI_ORG_ID,
@@ -59,6 +67,22 @@ export function createLLMProvider(
 		secrets.anthropic?.authToken,
 	);
 
+	if (compatBaseURL) {
+		const explicitCompatBaseURL = compatBaseURL;
+		return {
+			provider: new OpenAICompatProvider({
+				baseURL: explicitCompatBaseURL,
+				apiKey: firstDefined(
+					env.OPENAI_API_KEY,
+					secrets.openaiCompat?.apiKey,
+					secrets.openai?.apiKey,
+				),
+				model: env.OPENAI_MODEL ?? config.provider.openaiModel,
+			}),
+			providerName: `openai-compat (${explicitCompatBaseURL})`,
+		};
+	}
+
 	for (const candidate of config.provider.priority) {
 		if (candidate === "openai_compat" && compatBaseURL) {
 			return {
@@ -75,7 +99,7 @@ export function createLLMProvider(
 			return {
 				provider: new OpenAIProvider({
 					apiKey: openAIApiKey,
-					baseURL: env.OPENAI_API_BASE_URL,
+					baseURL: directBaseURL,
 					organization: openAIOrgId,
 					project: openAIProjectId,
 					model: env.OPENAI_MODEL ?? config.provider.openaiModel,
@@ -120,7 +144,7 @@ export function createLLMProvider(
 		return {
 			provider: new OpenAIProvider({
 				apiKey: openAIApiKey,
-				baseURL: env.OPENAI_API_BASE_URL,
+				baseURL: directBaseURL,
 				organization: openAIOrgId,
 				project: openAIProjectId,
 				model: env.OPENAI_MODEL ?? config.provider.openaiModel,

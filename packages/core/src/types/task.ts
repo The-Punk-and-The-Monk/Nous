@@ -6,6 +6,7 @@ export type TaskStatus =
 	| "assigned"
 	| "running"
 	| "done"
+	| "cancelled"
 	| "failed"
 	| "timeout"
 	| "escalated"
@@ -39,19 +40,21 @@ export interface Task {
 
 /** Valid state transitions for the Task state machine */
 export const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-	created: ["queued"],
-	queued: ["assigned"],
-	assigned: ["running"],
-	running: ["done", "failed", "timeout"],
+	created: ["queued", "cancelled"],
+	queued: ["assigned", "cancelled"],
+	assigned: ["running", "cancelled"],
+	running: ["done", "cancelled", "failed", "timeout"],
 	done: [],
-	failed: ["queued", "escalated"],
-	timeout: ["queued", "escalated"],
-	escalated: ["queued", "abandoned"],
+	cancelled: [],
+	failed: ["queued", "escalated", "cancelled"],
+	timeout: ["queued", "escalated", "cancelled"],
+	escalated: ["queued", "abandoned", "cancelled"],
 	abandoned: [],
 };
 
 /** Terminal states — no further transitions possible */
 export const TERMINAL_STATES: ReadonlySet<TaskStatus> = new Set([
 	"done",
+	"cancelled",
 	"abandoned",
 ]);

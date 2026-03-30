@@ -3,8 +3,10 @@ import type {
 	ContentBlock,
 	LLMMessage,
 	LLMProvider,
+	LLMProviderCapabilities,
 	LLMRequest,
 	LLMResponse,
+	LLMResponseFormat,
 	StreamChunk,
 } from "@nous/core";
 import { LLMError, createLogger } from "@nous/core";
@@ -49,6 +51,12 @@ export class ClaudeCliProvider implements LLMProvider {
 		this.cwd = options.cwd ?? process.cwd();
 		this.timeout = options.timeout ?? 300000;
 		this.claudePath = options.claudePath ?? "claude";
+	}
+
+	getCapabilities(): LLMProviderCapabilities {
+		return {
+			structuredOutputModes: ["json_schema", "prompt_only"],
+		};
 	}
 
 	async chat(request: LLMRequest): Promise<LLMResponse> {
@@ -148,7 +156,10 @@ export class ClaudeCliProvider implements LLMProvider {
 
 		// If no tools requested and temperature is 0, this is a structured output call
 		// (intent parsing, task planning). Use --json-schema to enforce JSON output.
-		if (
+		const jsonSchema = toClaudeJsonSchema(request.responseFormat);
+		if (jsonSchema) {
+			args.push("--json-schema", JSON.stringify(jsonSchema));
+		} else if (
 			(!request.tools || request.tools.length === 0) &&
 			request.temperature === 0
 		) {
@@ -259,6 +270,19 @@ export class ClaudeCliProvider implements LLMProvider {
 			});
 		});
 	}
+}
+
+function toClaudeJsonSchema(
+	format?: LLMResponseFormat,
+): Record<string, unknown> | undefined {
+	if (!format || format.type === "text") return undefined;
+	if (format.type === "json_object") {
+		return {
+			type: "object",
+			additionalProperties: true,
+		};
+	}
+	return format.schema;
 }
 
 function mapStopReason(reason: string | undefined): LLMResponse["stopReason"] {

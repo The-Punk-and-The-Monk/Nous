@@ -3,6 +3,7 @@ import type {
 	ContentBlock,
 	LLMMessage,
 	LLMProvider,
+	LLMProviderCapabilities,
 	LLMRequest,
 	LLMResponse,
 	StreamChunk,
@@ -35,6 +36,12 @@ export class AnthropicProvider implements LLMProvider {
 		});
 		this.model = options.model ?? "claude-sonnet-4-20250514";
 		this.maxRetries = options.maxRetries ?? 3;
+	}
+
+	getCapabilities(): LLMProviderCapabilities {
+		return {
+			structuredOutputModes: ["prompt_only", "tool_calling"],
+		};
 	}
 
 	async chat(request: LLMRequest): Promise<LLMResponse> {

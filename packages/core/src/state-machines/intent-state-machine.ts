@@ -2,7 +2,33 @@ import { NousError } from "../errors.ts";
 import type { IntentStatus } from "../types/intent.ts";
 
 const INTENT_TRANSITIONS: Record<IntentStatus, IntentStatus[]> = {
-	active: ["achieved", "abandoned"],
+	active: [
+		"paused",
+		"awaiting_clarification",
+		"awaiting_decision",
+		"achieved",
+		"abandoned",
+	],
+	paused: [
+		"active",
+		"awaiting_clarification",
+		"awaiting_decision",
+		"abandoned",
+	],
+	awaiting_clarification: [
+		"active",
+		"paused",
+		"awaiting_decision",
+		"achieved",
+		"abandoned",
+	],
+	awaiting_decision: [
+		"active",
+		"paused",
+		"awaiting_clarification",
+		"achieved",
+		"abandoned",
+	],
 	achieved: [],
 	abandoned: [],
 };

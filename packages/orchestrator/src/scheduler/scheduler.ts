@@ -12,6 +12,7 @@ export interface SchedulerConfig {
 	pollIntervalMs?: number;
 	onTaskReady?: (task: Task) => void;
 	onEscalation?: (task: Task, reason: string) => void;
+	shouldDispatchTask?: (task: Task) => boolean;
 }
 
 export class TaskScheduler {
@@ -21,6 +22,7 @@ export class TaskScheduler {
 	private pollIntervalMs: number;
 	private onTaskReady: (task: Task) => void;
 	private onEscalation: (task: Task, reason: string) => void;
+	private shouldDispatchTask: (task: Task) => boolean;
 	private intervalId: ReturnType<typeof setInterval> | null = null;
 
 	constructor(config: SchedulerConfig) {
@@ -30,6 +32,7 @@ export class TaskScheduler {
 		this.pollIntervalMs = config.pollIntervalMs ?? 5000;
 		this.onTaskReady = config.onTaskReady ?? (() => {});
 		this.onEscalation = config.onEscalation ?? (() => {});
+		this.shouldDispatchTask = config.shouldDispatchTask ?? (() => true);
 	}
 
 	start(): void {
@@ -68,6 +71,9 @@ export class TaskScheduler {
 	private dispatchReady(): void {
 		const ready = this.taskStore.getReady();
 		for (const task of ready) {
+			if (!this.shouldDispatchTask(task)) {
+				continue;
+			}
 			this.onTaskReady(task);
 		}
 	}

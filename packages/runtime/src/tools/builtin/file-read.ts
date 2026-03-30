@@ -17,9 +17,17 @@ export const fileReadDef: ToolDef = {
 	},
 	requiredCapabilities: ["fs.read"],
 	timeoutMs: 10000,
+	sideEffectClass: "read_only",
+	idempotency: "idempotent",
+	interruptibility: "after_tool",
+	approvalMode: "auto",
+	rollbackPolicy: "none",
 };
 
-export const fileReadHandler: ToolHandler = async (input) => {
+export const fileReadHandler: ToolHandler = async (input, context) => {
+	if (context.signal.aborted) {
+		throw new Error("file_read interrupted before start");
+	}
 	const path = input.path as string;
 	return await readFile(path, "utf-8");
 };
