@@ -53,6 +53,16 @@ export type {
 export type {
 	MemoryEntry,
 	MemoryTier,
+	MemorySourceKind,
+	MemoryProducerLayer,
+	MemorySourceRefKind,
+	MemorySourceRef,
+	MemoryEvidenceRef,
+	MemoryProvenance,
+	BaseMemoryMetadata,
+	EpisodicMemoryMetadata,
+	SemanticMemoryMetadata,
+	ProspectiveMemoryMetadata,
 	ProceduralMemory,
 	ProceduralStep,
 } from "./types/memory.ts";

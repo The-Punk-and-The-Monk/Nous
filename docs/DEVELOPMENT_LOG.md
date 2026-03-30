@@ -2458,3 +2458,351 @@ For significant sessions, capture:
   - There is still no true continuation snapshot for mid-task resume.
   - Rollback plans are executable now, but not yet promoted into a broader user-facing rollback policy / UX.
   - Risky-boundary approval currently pauses on rejection; future work may add configurable “pause vs rollback vs abandon” producer policies.
+
+### Session: Establish MemoryService boundary and land the first canonical memory schema
+- Context / Trigger:
+  - After the control/governance layer was committed (`027f8ed feat: land decision queue governance and runtime control contracts`), the next architectural focus shifted to the memory system.
+  - The user explicitly asked for three things before going deeper into implementation:
+    1. write down the `MemoryService` draft
+    2. write down the metadata / provenance schema draft
+    3. write down the retrieval pipeline layering draft
+  - The goal was not to jump straight into metabolism or procedural memory, but to start from the correct runtime boundary.
+- Problem:
+  - Memory logic was still spread across multiple places:
+    - daemon directly called `backend.memory.store(...)`
+    - daemon / CLI directly instantiated `HybridMemoryRetriever`
+    - metadata shape for stored memories was still effectively ad hoc
+  - This fragmentation was tolerable for the first retrieval loop, but it would become architectural debt once we add:
+    - real embeddings / vector retrieval
+    - provenance-aware ranking
+    - metabolism
+    - prospective memory producers
+  - In other words, the system had a usable **memory substrate**, but not yet a governed memory boundary.
+- Options considered:
+  - Option A: keep adding memory producers and retrievers directly at call sites.
+    - Rejected because it would hard-wire policy into daemon/CLI code and make later upgrades expensive.
+  - Option B: jump directly to vector DB / metabolism work first.
+    - Rejected because the more urgent gap was architectural shape, not retrieval horsepower.
+  - Option C: first introduce a unified `MemoryService`, define canonical metadata/provenance envelopes, and explicitly frame retrieval as a layered pipeline.
+    - Chosen because it gives future memory work a clear landing zone without pretending that full RAG already exists.
+- Decision:
+  - Document the current reality honestly:
+    - current state = **memory substrate + first retrieval loop**
+    - not yet = **true RAG + metabolism + procedural memory**
+  - Introduce `MemoryService` as the runtime memory boundary responsible for:
+    - ingestion
+    - retrieval-for-context
+    - access feedback
+    - future metabolism hooks
+  - Add canonical memory metadata / provenance types in `@nous/core`.
+  - Start the first implementation pass by routing daemon / CLI memory usage through the new service.
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added:
+      - **Current Implementation Reality** under Memory
+      - **MemoryService — Runtime Memory Boundary**
+      - **Canonical Metadata / Provenance Schema**
+      - **Layered retrieval contract**
+  - Updated core memory contracts:
+    - `packages/core/src/types/memory.ts`
+      - added:
+        - `MemorySourceKind`
+        - `MemoryProducerLayer`
+        - `MemorySourceRef`
+        - `MemoryEvidenceRef`
+        - `MemoryProvenance`
+        - `BaseMemoryMetadata`
+        - `EpisodicMemoryMetadata`
+        - `SemanticMemoryMetadata`
+        - `ProspectiveMemoryMetadata`
+    - `packages/core/src/index.ts`
+      - exported the new memory schema types
+  - Added runtime boundary:
+    - `packages/runtime/src/memory/service.ts`
+      - implemented:
+        - `ingestHumanIntent(...)`
+        - `ingestIntentOutcome(...)`
+        - `retrieve(...)`
+        - `retrieveForContext(...)`
+        - `recordAccess(...)`
+  - Refined retrieval substrate:
+    - `packages/runtime/src/memory/retrieval.ts`
+      - retrieval input now accepts `threadId`
+      - retrieval document building now considers:
+        - `threadId`
+        - `intentId`
+        - `sourceKind`
+  - Wired the new boundary into runtime consumers:
+    - `packages/runtime/src/index.ts`
+      - exported `MemoryService`
+    - `packages/infra/src/daemon/server.ts`
+      - replaced direct memory ingest / retrieval calls with `MemoryService`
+      - human intent memories now capture `intentId` once available
+    - `packages/infra/src/cli/app.ts`
+      - switched one-shot context retrieval to `MemoryService`
+  - Added tests:
+    - `packages/runtime/tests/memory-service.test.ts`
+      - verifies:
+        - canonical episodic metadata for human intent ingestion
+        - semantic outcome ingestion
+        - retrieval-for-context access recording
+        - escalated outcome staying episodic
+- Validation:
+  - `bun x tsc --noEmit` ✅
+- Analysis / trade-offs:
+  - This is intentionally a **boundary-first** step, not a full memory rewrite.
+    - retrieval still uses the existing heuristic hybrid retriever
+    - storage is still SQLite + current schema
+    - we did not pretend vector / graph / metabolism already exist
+  - The new metadata schema is deliberately **canonical but sparse**.
+    - early producers can fill only part of the envelope
+    - later producers can enrich provenance without redesigning the memory object
+  - `MemoryService` currently sits in `packages/runtime`, even though some producers live in `packages/infra`.
+    - that is intentional: the memory boundary belongs to runtime policy, not to a single ingress channel
+- Impact:
+  - Nous now has the first real architectural seam for future memory work instead of scattered direct store/retriever calls.
+  - Memory ingestion is beginning to converge on a canonical lineage model rather than loosely shaped metadata blobs.
+  - Retrieval is now framed as a policy stack, which makes future vector/graph/rerank work much easier to land cleanly.
+- Open questions / next steps:
+  - Add richer producers beyond human intent / intent outcome:
+    - decisions
+    - tool-result summaries
+    - prospective commitments
+  - Upgrade retrieval from heuristic hybrid scoring toward:
+    - embedding provider abstraction
+    - vector backend
+    - explicit fusion / rerank / packing stages
+  - Decide whether the next memory step should be:
+    - prospective memory producer
+    - retrieval pipeline refactor
+    - episodic → semantic digestion substrate
+
+### Session: Re-center the architecture around personal-assistant primacy and federated collective intelligence
+- Context / Trigger:
+  - After discussing ambient intent / proactive behavior, a deeper product correction became explicit:
+    - Nous's ultimate goal is not merely a technically impressive agent runtime or swarm system
+    - it is a **self-evolving collective intelligence in service of human welfare**
+    - but that collective future is only legitimate if Nous first becomes a **proactive, considerate, reliable intelligent personal assistant**
+  - The user also pushed on two specific architectural gaps:
+    - ambient/proactive behavior should not remain a mostly heuristic signal-response path
+    - Nous should explicitly model a background reflective layer — the "后台记忆漫游器" / memory rover idea
+- Problem:
+  - `ARCHITECTURE.md` already had strong OS/runtime, continuity, perception, and inter-Nous sections, but the center of gravity still leaned too much toward:
+    - persistent runtime infrastructure
+    - collective/network architecture
+    - executable task-oriented proactivity
+  - What was missing was a sharper statement that:
+    - personal assistant quality is the **primary product truth**
+    - collective intelligence is a **federated amplification layer**, not the primary UI or governing mind
+    - proactive behavior includes reminders, check-ins, celebration, offers, and silence decisions — not only executable ambient intents
+- Options considered:
+  - Option A: keep the existing document structure and add a small note near ambient intent only.
+    - Rejected because the issue was not local to perception; it affected North Star, philosophy, inter-Nous, and roadmap framing.
+  - Option B: add a standalone correction section but leave the rest of the document mostly unchanged.
+    - Rejected because it would create a "new truth in one corner, old truth everywhere else" inconsistency.
+  - Option C: add a dedicated correction section **and** thread the new framing back through the most important architectural touchpoints.
+    - Chosen because the correction is philosophical and systemic, not a feature note.
+- Decision:
+  - Add a dedicated section:
+    - `《Nous 的“个人优先的联邦群体智能”架构修正草案》`
+  - Reframe the top-level architecture around this ordering:
+    1. personal assistant first
+    2. federated collective intelligence second
+    3. private core local by default, shareable shell only through governance
+  - Expand the proactive architecture from "ambient intent" toward:
+    - staged signal triage
+    - background reflection / memory rover
+    - proactive candidates broader than executable intents
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - refined **The Unifying Insight**:
+      - OS-grade substrate + personal-assistant behavioral form
+    - refined **Why Nous**:
+      - explicitly tied ordering/intelligence back to human welfare
+    - rewrote **North Star and Current Architectural Center**:
+      - north star = human-welfare-oriented collective intelligence
+      - current center = persistent personal assistant runtime
+      - architectural test now explicitly includes improving personal assistant quality
+    - added:
+      - `《Nous 的“个人优先的联邦群体智能”架构修正草案》`
+    - expanded **Core Vocabulary** with:
+      - `Proactive Cognition`
+      - `ProactiveCandidate`
+      - `RelationshipBoundary`
+      - refined `AmbientIntent` as one actionable subtype rather than the whole proactive category
+    - updated **Semantic Layering Draft**:
+      - background semantics now modeled as staged triage + richer reflection
+    - rewrote **Perception Pipeline**:
+      - from cheap attention-only framing
+      - to a two-stage model:
+        1. signal triage / attention
+        2. proactive cognition / background reflector
+      - added the architectural home for the "memory rover"
+      - clarified that not every proactive act should collapse into an intent
+      - documented current implementation honesty: code still only has the early skeleton
+    - updated **Comparative Analysis**:
+      - added personal-assistant-quality as a differentiating dimension
+      - clarified that Nous combines OS substrate with assistant behavior
+    - updated **Inter-Nous / Collective Intelligence** sections:
+      - collective intelligence is now explicitly framed as a federation of personal-first local Nous instances
+      - v1 shared pool is limited to governed shareable-shell artifacts, not raw private-core material
+      - networking is documented as an optional extension of the local assistant, never its owner
+    - updated **Phase 0 MVP** framing:
+      - first success criterion is local assistant quality, not network activity
+      - proactive cognition is now described as a skeleton in MVP rather than the fully mature target
+- Impact:
+  - The document now aligns more tightly with the real Nous thesis:
+    - reliable OS substrate underneath
+    - warm proactive personal assistant at the product layer
+    - federated collective intelligence as the scaling layer
+  - This reduces a major long-term risk:
+    - accidentally building a swarm/runtime system first and only later trying to "add humanity" on top
+  - It also creates a cleaner future landing zone for:
+    - user/relationship modeling
+    - reflective proactive cognition
+    - private-core vs shareable-shell governance
+- Open questions / next steps:
+  - Make the new proactive architecture concrete in object models:
+    - `ProactiveCandidate`
+    - relationship/interruptibility policy
+    - reflection agenda / memory-rover contracts
+  - Decide how strong-model reflective cognition should be scheduled:
+    - periodic loop
+    - event-triggered
+    - budget-governed hybrid
+  - Continue reconciling the implementation roadmap so MVP remains honest while still aiming at the personal-assistant-first thesis
+
+### Session: Make proactive cognition concrete with three first-class architecture objects
+- Context / Trigger:
+  - After re-centering the architecture around personal-assistant primacy, the next obvious gap was that the new ideas were still partly conceptual.
+  - The user explicitly asked to make all three missing pieces concrete:
+    - `ProactiveCandidate`
+    - `RelationshipBoundary`
+    - `ReflectionAgenda / Memory Rover`
+- Problem:
+  - Without explicit object models, the proactive architecture would remain vulnerable to three common failure modes:
+    - everything collapses back into `AmbientIntent`
+    - relationship/interruptibility behavior stays hidden in prompts instead of architecture
+    - the "memory rover" remains a metaphor rather than a governed runtime component
+  - In that state, future implementation would likely drift into ad hoc controller logic and make the personal-assistant thesis harder to preserve.
+- Options considered:
+  - Option A: keep these as prose-only ideas in the Perception section.
+    - Rejected because runtime design would then have no explicit contracts to implement against.
+  - Option B: model only `ProactiveCandidate` and leave boundary / reflection scheduling implicit.
+    - Rejected because candidate generation without relationship policy and agenda objects would still be too underspecified.
+  - Option C: add all three as first-class architecture objects and explicitly connect them in the proactive runtime flow.
+    - Chosen because proactive behavior needs object boundaries just like intent/governance/memory do.
+- Decision:
+  - Add first-class data model drafts for:
+    - `ProactiveCandidate`
+    - `RelationshipBoundary`
+    - `ReflectionAgendaItem`
+    - `ReflectionRun`
+  - Explicitly define the runtime contract:
+    - signal / memory / commitment change
+    - `ReflectionAgendaItem`
+    - `Memory Rover`
+    - `RelationshipBoundary`
+    - `ProactiveCandidate`
+    - delivery / decision / ambient-intent routing
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - under **Core Data Models**, added:
+      - `### ProactiveCandidate`
+      - `### RelationshipBoundary`
+      - `### ReflectionAgenda / Memory Rover`
+    - defined:
+      - proactive candidate kinds
+      - candidate scoring / interruption / approval / provenance fields
+      - relationship style / proactivity / interruption / intimacy / autonomy policies
+      - reflection agenda categories, budgeting, dedupe/cooldown, and synthesis runs
+    - under **Perception Pipeline**, added:
+      - `### Runtime contract: Agenda → Reflection → Candidate`
+      - clarified the separation of responsibilities among:
+        - agenda
+        - relationship boundary
+        - proactive candidate
+- Analysis / trade-offs:
+  - This is still a **draft object model**, not an implementation commitment to every field.
+  - The benefit of making the objects richer now is architectural clarity:
+    - future implementation can trim fields
+    - but it is harder to rediscover missing boundaries after code has already sprawled
+  - `RelationshipBoundary` is intentionally marked as private-core data.
+    - that is important because it is closer to relational/user-state modeling than to exportable collective artifacts
+- Impact:
+  - The proactive architecture now has a much more concrete landing zone for future implementation.
+  - Nous's "someone who cares about you" direction is no longer expressed only as philosophy; it now has object-level architectural structure.
+  - This also strengthens the compatibility between personal assistant and collective intelligence:
+    - relational judgment stays local
+    - shareable artifacts stay governed and abstracted
+- Open questions / next steps:
+  - Decide whether the next implementation step should start from:
+    - `ReflectionAgenda` persistence
+    - `RelationshipBoundary` persistence and defaults
+    - `ProactiveCandidate` delivery/governance pipeline
+  - Define which parts of `RelationshipBoundary` should be:
+    - explicit user config
+    - learned cautiously over time
+    - always require confirmation before changing
+
+### Session: Start a daily progress matrix and sync today's architecture summary into Obsidian
+- Context / Trigger:
+  - After a full day of advancing memory, proactive cognition, personal-assistant-first architecture, and federated-intelligence framing, the user asked for a new view of progress from two dimensions:
+    1. **module maturity**
+    2. **roadmap phase / sprint progress**
+  - The user then asked to:
+    - start a repo-local progress matrix tracking document
+    - write today's summary into the Obsidian Nous notebook
+- Problem:
+  - `ARCHITECTURE.md` contains the target system and phased plan, and `docs/DEVELOPMENT_LOG.md` captures change traceability, but the repo lacked a compact artifact answering:
+    - which modules are currently ahead or behind
+    - which sprints/phases are effectively done vs only conceptually entered
+  - Without this matrix, daily steering risks becoming intuitive rather than explicit, especially when some modules (governance/daemon) are much further than others (memory/evolution/network).
+- Options considered:
+  - Option A: continue using only `ARCHITECTURE.md` + `DEVELOPMENT_LOG.md`.
+    - Rejected because those two documents answer different questions and do not provide a daily snapshot matrix.
+  - Option B: add a lightweight repo-local progress matrix updated in daily summaries.
+    - Chosen because it creates a stable operating view without overloading architecture or changelog documents.
+- Decision:
+  - Create `docs/PROGRESS_MATRIX.md` as the repo-local daily progress dashboard.
+  - Seed it with a first snapshot for `2026-03-30` covering:
+    - module maturity matrix
+    - sprint / phase progress matrix
+    - overall asymmetry diagnosis
+    - today's most important architectural gains
+    - next steering implication
+  - Sync a condensed but still interview-grade summary of today's Nous work into the external Obsidian notebook under the existing `2026-03-30` date heading.
+- Changes made:
+  - Added `docs/PROGRESS_MATRIX.md`
+    - established status scale
+    - added the first daily entry for `2026-03-30`
+    - recorded module-by-module maturity and sprint/phase progress
+  - Updated `docs/DEVELOPMENT_LOG.md`
+  - Updated external Obsidian note:
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/阿锋勇闯大模型.md`
+    - under:
+      - `### Nous (νοῦς) — 自主 Agent 框架开发全记录`
+      - `#### 开发日志`
+      - `##### 2026-03-30`
+- Analysis / trade-offs:
+  - The matrix uses **rough qualitative estimates**, not faux-precision metrics.
+    - this is intentional: the goal is steering honesty, not dashboard theater
+  - The matrix explicitly preserves asymmetry:
+    - governance / daemon / substrate are ahead
+    - memory / proactive cognition / evolution / collective remain behind
+  - Obsidian sync stays user-triggered.
+    - that preserves the repo-local log as the canonical engineering trace
+    - while still supporting end-of-day narrative consolidation when requested
+- Impact:
+  - Nous now has a daily steering artifact distinct from both architecture and changelog docs.
+  - Future daily reviews can quickly answer:
+    - what is strong
+    - what is lagging
+    - what the next highest-leverage move should be
+  - Today's architecture work is now reflected not only in repo docs but also in the external long-form Nous notebook.
+- Open questions / next steps:
+  - Decide whether `docs/PROGRESS_MATRIX.md` should later gain:
+    - test coverage status by module
+    - risk level column
+    - “next owner/action” column
+  - Keep the matrix lightweight enough to stay updated daily rather than becoming another stale planning artifact

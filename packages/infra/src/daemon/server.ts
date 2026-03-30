@@ -6,7 +6,6 @@ import type {
 	DaemonEnvelope,
 	Decision,
 	LLMProvider,
-	MemoryEntry,
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
@@ -14,9 +13,8 @@ import type { ProgressEvent } from "@nous/orchestrator";
 import { createPersistenceBackend } from "@nous/persistence";
 import {
 	ContextAssembler,
-	HybridMemoryRetriever,
+	MemoryService,
 	renderContextForSystemPrompt,
-	renderMemoryHints,
 } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
 import { loadNousConfig } from "../config/home.ts";
@@ -56,9 +54,10 @@ export class NousDaemon {
 	private readonly supervisor: ProcessSupervisor;
 	private readonly conflicts = new StaticIntentConflictManager();
 	private readonly contextAssembler = new ContextAssembler();
-	private readonly memoryRetriever = new HybridMemoryRetriever(
-		this.backend.memory,
-	);
+	private readonly memory = new MemoryService({
+		store: this.backend.memory,
+		agentId: "nous",
+	});
 	private readonly perception: PerceptionService;
 	private readonly threadInputRouter: ThreadInputRouter;
 	private readonly threadScopeRouter: ThreadScopeRouter;
@@ -686,7 +685,10 @@ export class NousDaemon {
 			},
 		);
 
-		this.storeIntentRequestMemory(payload);
+		this.storeIntentRequestMemory({
+			...payload,
+			intentId: intent.id,
+		});
 
 		if (intent.status === "awaiting_clarification") {
 			await this.createClarificationDecision(intent, payload.threadId);
@@ -1589,13 +1591,11 @@ export class NousDaemon {
 				status: intent.status,
 				source: intent.source,
 			})),
-			recentMemoryHints: renderMemoryHints(
-				this.memoryRetriever.retrieve({
-					agentId: "nous",
-					query: params.text,
-					scope: params.scope,
-				}),
-			),
+			recentMemoryHints: this.memory.retrieveForContext({
+				query: params.text,
+				scope: params.scope,
+				threadId: params.threadId,
+			}),
 		});
 		const systemPrompt = renderContextForSystemPrompt(assembledContext);
 		const grounding = buildUserStateGrounding({
@@ -2149,23 +2149,13 @@ export class NousDaemon {
 		threadId: string;
 		text: string;
 		channel: Channel;
+		intentId?: string;
 	}): void {
-		this.backend.memory.store({
-			id: prefixedId("mem"),
-			tier: "episodic",
-			agentId: "nous",
-			content: `User intent: ${payload.text}`,
-			metadata: {
-				threadId: payload.threadId,
-				projectRoot: payload.channel.scope.projectRoot,
-				focusedFile: payload.channel.scope.focusedFile,
-				labels: payload.channel.scope.labels ?? [],
-				source: "human_intent",
-			},
-			createdAt: now(),
-			lastAccessedAt: now(),
-			accessCount: 0,
-			retentionScore: 1,
+		this.memory.ingestHumanIntent({
+			threadId: payload.threadId,
+			intentId: payload.intentId,
+			text: payload.text,
+			scope: payload.channel.scope,
 		});
 	}
 
@@ -2179,35 +2169,14 @@ export class NousDaemon {
 		const scope = this.intentScopeById.get(intentId);
 		const threadId = this.threadByIntentId.get(intentId);
 		const outputs = this.intentOutputsById.get(intentId) ?? [];
-		const summary = outputs
-			.filter(Boolean)
-			.slice(-3)
-			.map((output, index) => `Output ${index + 1}: ${truncate(output, 280)}`)
-			.join("\n");
-
-		const memory: MemoryEntry = {
-			id: prefixedId("mem"),
-			tier: outcome === "intent.achieved" ? "semantic" : "episodic",
-			agentId: "nous",
-			content: [
-				`Intent outcome: ${outcome === "intent.achieved" ? "achieved" : "escalated"}`,
-				`Intent: ${text}`,
-				summary || "No task output captured.",
-			].join("\n"),
-			metadata: {
-				intentId,
-				projectRoot: scope?.projectRoot,
-				focusedFile: scope?.focusedFile,
-				labels: scope?.labels ?? [],
-				source: "intent_outcome",
-				status: outcome,
-			},
-			createdAt: now(),
-			lastAccessedAt: now(),
-			accessCount: 0,
-			retentionScore: outcome === "intent.achieved" ? 1.2 : 0.8,
-		};
-		this.backend.memory.store(memory);
+		this.memory.ingestIntentOutcome({
+			intentId,
+			intentText: text,
+			outcome,
+			scope,
+			threadId,
+			outputs,
+		});
 		this.procedureSeeds.recordTrace({
 			id: prefixedId("trace"),
 			intentId,

@@ -5,6 +5,7 @@ export interface MemoryRetrievalInput {
 	query: string;
 	agentId?: string;
 	scope?: ChannelScope;
+	threadId?: string;
 	limit?: number;
 	candidateLimit?: number;
 	tiers?: MemoryTier[];
@@ -47,7 +48,7 @@ export class HybridMemoryRetriever {
 
 	retrieve(input: MemoryRetrievalInput): RetrievedMemory[] {
 		const queryEmbedding = this.embeddingModel.embedText(
-			buildQueryDocument(input.query, input.scope),
+			buildQueryDocument(input.query, input.scope, input.threadId),
 		);
 		const candidates = this.store
 			.query({
@@ -110,9 +111,14 @@ export function renderMemoryHints(results: RetrievedMemory[]): string[] {
 	});
 }
 
-function buildQueryDocument(query: string, scope?: ChannelScope): string {
+function buildQueryDocument(
+	query: string,
+	scope?: ChannelScope,
+	threadId?: string,
+): string {
 	return [
 		query,
+		threadId ?? "",
 		scope?.projectRoot ?? "",
 		scope?.focusedFile ?? "",
 		...(scope?.labels ?? []),
@@ -133,10 +139,16 @@ function buildMemoryDocument(entry: MemoryEntry): string {
 		typeof metadata.projectRoot === "string" ? metadata.projectRoot : "";
 	const threadId =
 		typeof metadata.threadId === "string" ? metadata.threadId : "";
+	const intentId =
+		typeof metadata.intentId === "string" ? metadata.intentId : "";
+	const sourceKind =
+		typeof metadata.sourceKind === "string" ? metadata.sourceKind : "";
 	return [
 		entry.content,
 		projectRoot,
 		threadId,
+		intentId,
+		sourceKind,
 		tags.join(" "),
 		labels.join(" "),
 	]

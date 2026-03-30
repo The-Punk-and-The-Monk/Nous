@@ -4,9 +4,8 @@ import { Orchestrator } from "@nous/orchestrator";
 import { createPersistenceBackend } from "@nous/persistence";
 import {
 	ContextAssembler,
-	HybridMemoryRetriever,
+	MemoryService,
 	renderContextForSystemPrompt,
-	renderMemoryHints,
 } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
 import { ensureNousHome } from "../config/home.ts";
@@ -236,7 +235,10 @@ export async function main(args: string[]): Promise<void> {
 	// Default: treat the entire argument string as an intent
 	const intentText = args.join(" ");
 	const contextAssembler = new ContextAssembler();
-	const memoryRetriever = new HybridMemoryRetriever(backend.memory);
+	const memory = new MemoryService({
+		store: backend.memory,
+		agentId: "nous",
+	});
 	const permissionCapabilities = resolvePermissionCapabilities(
 		loadPermissionPolicy(),
 		{ projectRoot: process.cwd() },
@@ -253,16 +255,13 @@ export async function main(args: string[]): Promise<void> {
 			status: intent.status,
 			source: intent.source,
 		})),
-		recentMemoryHints: renderMemoryHints(
-			memoryRetriever.retrieve({
-				agentId: "nous",
-				query: intentText,
-				scope: {
-					workingDirectory: process.cwd(),
-					projectRoot: process.cwd(),
-				},
-			}),
-		),
+		recentMemoryHints: memory.retrieveForContext({
+			query: intentText,
+			scope: {
+				workingDirectory: process.cwd(),
+				projectRoot: process.cwd(),
+			},
+		}),
 	});
 	const systemPrompt = renderContextForSystemPrompt(assembledContext);
 	const grounding = buildUserStateGrounding({

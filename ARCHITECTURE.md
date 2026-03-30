@@ -112,7 +112,7 @@ This is not a new concept. This is exactly how an excellent human executive assi
 
 The entire reasoning chain reduces to one statement:
 
-> **Design AI agents as an operating system, not as an enhanced chatbot.**
+> **Build AI agents on an operating-system-grade substrate, but shape them as proactive personal assistants, not enhanced chatbots.**
 
 An operating system solves the core problem: how do multiple unreliable processes reliably accomplish complex tasks?
 
@@ -125,6 +125,8 @@ The answers are well-known (since the 1970s):
 
 These answers apply directly to AI agents — they are the new "processes." Nous applies OS principles to the AI agent domain.
 
+But substrate is not the whole product. The **operating system** is the reliability substrate; the **personal assistant** is the behavioral form. If Nous gets the substrate right but behaves like a cold workflow engine, it fails as a product. If it behaves warmly but lacks OS-grade reliability, it fails as an agent system. Both layers are required.
+
 ### Why "Nous"
 
 The name was chosen with intent, not decoration.
@@ -136,10 +138,10 @@ Chaotic tasks, failing agents, accumulating events
                     ↓
                   Nous
                     ↓
-Ordered execution, reliable results, humans only decide
+Ordered execution, reliable help, human welfare remains central
 ```
 
-The name is philosophically precise: this framework is not a tool — it is the organizing principle that transforms the chaos of AI execution into an ordered world.
+The name is philosophically precise: this framework is not a tool — it is the organizing principle that transforms the chaos of AI execution into an ordered world in service of humans, not in service of automation for its own sake.
 
 ---
 
@@ -151,16 +153,55 @@ Five principles that govern every design decision. Each is derived from the firs
 
 Nous must be reasoned about on **two levels at the same time**:
 
-1. **North Star (highest guiding idea):** Nous should ultimately become a **self-evolving collective intelligence** — not a better chat wrapper, but a network of persistent instances that can accumulate, validate, and exchange useful intelligence over time.
-2. **Current architectural center (what we build around today):** the necessary base form is a **persistent agent runtime** — a long-lived, auditable, policy-governed system that can carry identity, memory, and execution across channels and sessions.
+1. **North Star (highest guiding idea):** Nous should ultimately become a **self-evolving collective intelligence in service of human welfare** — not a better chat wrapper and not a disembodied swarm, but a federation of persistent Nous instances that can accumulate, validate, and exchange useful intelligence over time without erasing personal sovereignty.
+2. **Current architectural center (what we build around today):** the necessary base form is a **persistent personal assistant runtime** — a long-lived, auditable, policy-governed system that can carry identity, memory, initiative, and execution across channels and sessions for one human first.
 
 This distinction matters. The North Star prevents us from building a dead-end local tool. The current architectural center prevents us from prematurely building distributed complexity before the local substrate is real.
 
-**Architectural test:** every major design decision should satisfy all three:
+**Architectural test:** every major design decision should satisfy all four:
 
 - **Works locally first** — it improves the single-instance persistent runtime.
+- **Deepens personal assistant quality** — it makes single-user Nous more proactive, considerate, reliable, and context-aware.
 - **Preserves future collective growth** — it does not block multi-instance learning, exchange, or evolution later.
 - **Avoids premature swarm complexity** — it does not force distributed coordination into v1 where local contracts would suffice.
+
+### 《Nous 的“个人优先的联邦群体智能”架构修正草案》 / Personal-First Federated Collective Intelligence
+
+The architecture should be read with a strict ordering:
+
+1. **Nous must first become a proactive, considerate, reliable personal assistant.**
+2. **Collective intelligence emerges from many such assistants; it does not replace them.**
+3. **The network exists to strengthen the local human-assistant relationship, not to harvest or override it.**
+
+This implies a hard distinction between the **private core** of a local Nous and the **shareable shell** that may participate in collective learning.
+
+| Layer | What lives here | Default policy |
+|-------|------------------|----------------|
+| **Private Core** | raw dialogue, user-state signals, relationship judgments, intimate memories, reflective reasoning, pending commitments, local context assemblies | local only, never shared by default |
+| **Shareable Shell** | validated skills, governed tools, anonymized harness/eval traces, abstracted pattern summaries, approved collective proposals | shareable only through explicit governance, provenance, and policy |
+
+Collective intelligence therefore means:
+
+- **not** one global hive mind with local terminals attached
+- **not** a centralized optimization layer that trades away personal context boundaries
+- **not** raw-memory sharing between users
+
+It means:
+
+- a federation of **sovereign local Nous instances**
+- each instance is loyal to its local human first
+- intelligence flows outward only after abstraction, validation, and policy checks
+- shared learning flows back only when it improves local welfare and respects local boundaries
+
+This also changes how we think about proactive behavior. A good personal assistant should not only react to explicit commands; it should also notice, remember, reflect, encourage, remind, and gently offer help. Therefore the local architecture must include:
+
+- **Proactive Cognition** — a background reflective loop, not just cheap event filtering
+- **Relationship Boundary** — explicit policy for tone, intimacy, interruption, and care
+- **Proactive Candidate outputs** — not every proactive act is a task; some are check-ins, celebrations, reminders, offers, or silent watchpoints
+
+The resulting invariant is:
+
+> **personal assistant quality is the primary product truth; collective intelligence is the amplification layer built on top of that truth.**
 
 1. **Failure is the norm, not the exception.**
    Every component assumes it will crash. Recovery paths are built in from the start, not bolted on.
@@ -170,9 +211,9 @@ This distinction matters. The North Star prevents us from building a dead-end lo
    Every entity (Task, Agent, Intent) has an explicit state machine. No implicit state allowed.
    *(From OS principle: process state machines are the foundation of reliable scheduling.)*
 
-3. **Humans decide, machines execute.**
-   The system minimizes human cognitive burden, not human control granularity.
-   *(From the abstraction history: each era moves humans further from operation toward pure decision-making.)*
+3. **Human welfare is the point; machines execute in service of it.**
+   The system should reduce cognitive and operational burden while preserving human agency, boundaries, and dignity.
+   *(From the abstraction history: each era moves humans further from operation toward pure decision-making — but the end goal is flourishing, not automation throughput.)*
 
 4. **Observability is built-in, not a plugin.**
    Every operation is queryable, replayable, and auditable by design.
@@ -202,7 +243,10 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **Provenance** | Cross-cutting | Origin and evidence metadata attached to memories, skills, and proposals — where it came from, how it was derived, and whether it can be trusted/shared |
 | **Sensor** | Infrastructure | A continuous input source that passively observes the environment (file watcher, calendar, screen, mic, etc.) |
 | **Attention Filter** | Orchestration | Evaluates raw perception signals and decides what is worth processing — the "is this interesting?" gate |
-| **Ambient Intent** | Orchestration | A goal inferred from environment signals, not explicitly stated by a human — system-initiated action |
+| **Proactive Cognition** | Orchestration | A lower-frequency reflective loop that synthesizes signals, memory, prospective commitments, and user state into governed proactive candidates — the "background caring mind" of Nous |
+| **ProactiveCandidate** | Orchestration / Dialogue | A system-initiated candidate output: reminder, check-in, celebration, suggestion, offer, silent watchpoint, or actionable ambient task |
+| **RelationshipBoundary** | Cross-cutting | User-specific policy for proactivity, intimacy, interruption, tone, and what forms of care or initiative are welcome |
+| **Ambient Intent** | Orchestration | An actionable subtype of proactive output: a goal inferred from environment/state signals, not explicitly stated by a human — system-initiated work that enters the normal intent pipeline |
 | **ProcedureCandidate** | Evolution | A reusable execution pattern observed from successful runs, not yet fully validated as a stable Skill |
 | **Skill** | Evolution | A reusable execution path crystallized from successful experience — the unit of learned competence |
 | **PromptAsset** | Runtime | A versioned reusable instruction template with variables and metadata; may seed an Agent or Skill, but is not itself a Skill |
@@ -665,6 +709,202 @@ interface AmbientIntent extends Intent {
 }
 ```
 
+### ProactiveCandidate
+
+`AmbientIntent` should not carry the whole burden of Nous's proactive behavior. Many valuable assistant acts are not tasks. So the system needs a wider proactive object family:
+
+```typescript
+type ProactiveCandidateKind =
+  | "check_in"
+  | "celebration"
+  | "reminder"
+  | "suggestion"
+  | "offer"
+  | "ambient_intent"
+  | "protective_intervention"
+  | "silent_watchpoint";
+
+interface ProactiveCandidate {
+  id: string;
+  kind: ProactiveCandidateKind;
+
+  summary: string;                 // Human-readable one-line explanation
+  messageDraft: string;            // What Nous would actually say/show
+  rationale: string;               // Why this is timely and useful now
+
+  // If kind == "ambient_intent", this is the action-oriented path
+  proposedIntentText?: string;     // The intent text that would enter the normal pipeline
+
+  // Decision quality
+  confidence: number;              // "I am right about the need"
+  valueScore: number;              // "This is worth surfacing"
+  interruptionCost: number;        // "How costly is it to interrupt right now"
+  urgency: "low" | "normal" | "high";
+
+  // Delivery / governance
+  recommendedMode: "silent" | "async_notify" | "ask_first" | "auto_execute";
+  requiresApproval: boolean;
+  cooldownKey?: string;            // Avoid repeating the same suggestion too often
+  expiresAt?: string;              // If this moment passes, the candidate is stale
+
+  // Traceability
+  sourceSignalIds: string[];
+  sourceMemoryIds: string[];
+  sourceIntentIds: string[];
+  sourceThreadIds: string[];
+  sourceAgendaItemIds: string[];
+
+  status: "candidate" | "queued" | "delivered" | "converted" | "dismissed" | "expired";
+
+  scope: Scope;
+  provenance: Provenance;
+}
+```
+
+**Key rule:** only `kind == "ambient_intent"` becomes an `Intent`. The other kinds route into dialogue / outbox / decision governance directly.
+
+**Why this object matters:** if Nous only knows how to proactively generate tasks, it becomes a workflow machine. `ProactiveCandidate` lets it also:
+
+- care
+- remind
+- encourage
+- offer
+- hold back and stay silent when that is the right move
+
+### RelationshipBoundary
+
+To be a good personal assistant, Nous must not only ask "can I do this?" but also "what kind of relationship with this user is welcome?" That requires an explicit boundary model.
+
+```typescript
+interface RelationshipBoundary {
+  id: string;
+  userId: string;
+
+  assistantStyle: {
+    warmth: "low" | "balanced" | "high";
+    directness: "low" | "balanced" | "high";
+    celebrationStyle: "subtle" | "warm" | "enthusiastic";
+    checkInStyle: "rare" | "situational" | "proactive";
+  };
+
+  proactivityPolicy: {
+    initiativeLevel: "minimal" | "balanced" | "high";
+    allowedKinds: ProactiveCandidateKind[];
+    blockedKinds: ProactiveCandidateKind[];
+    requireApprovalForKinds: ProactiveCandidateKind[];
+  };
+
+  interruptionPolicy: {
+    quietHours?: Array<{
+      start: string;               // "22:00"
+      end: string;                 // "08:00"
+      timezone: string;
+    }>;
+    maxUnpromptedMessagesPerDay: number;
+    preferredDelivery: "thread" | "notification" | "digest";
+    urgentBypassKinds: ProactiveCandidateKind[];
+  };
+
+  intimacyPolicy: {
+    emotionalMirroring: "minimal" | "measured" | "warm";
+    personalInference: "conservative" | "moderate";
+    neverAssumeEmotionalState: boolean;
+    avoidTopics: string[];
+  };
+
+  autonomyPolicy: {
+    allowOffersWithoutPrompt: boolean;
+    allowAmbientAutoExecution: boolean;
+    maxAutoExecutionRisk: "none" | "low_only" | "policy_controlled";
+  };
+
+  scope: Scope;                    // Usually user-global, but may be project/thread refined
+  createdAt: string;
+  updatedAt: string;
+  provenance: Provenance;
+}
+```
+
+**Key rule:** `RelationshipBoundary` belongs to the **private core**, not the shareable shell. It is about the local human-assistant relationship and should never be exported as raw data.
+
+**Why this object matters:** without it, "proactivity" quickly degrades into either:
+
+- spammy interruption
+- creepy overreach
+- emotionally flat utility behavior
+
+This object gives the architecture a place to encode tone, cadence, restraint, and consent.
+
+### ReflectionAgenda / Memory Rover
+
+The background reflective loop needs explicit runtime objects too. Otherwise "memory rover" stays a metaphor instead of a governed system.
+
+```typescript
+type ReflectionAgendaCategory =
+  | "closure"
+  | "deadline"
+  | "friction"
+  | "progress"
+  | "environment_change"
+  | "wellbeing"
+  | "follow_up"
+  | "relationship";
+
+interface ReflectionAgendaItem {
+  id: string;
+  category: ReflectionAgendaCategory;
+  summary: string;                 // Why this item deserves reflection
+  drivingQuestion: string;         // "Does the user need a reminder / offer / encouragement?"
+
+  priority: number;                // Higher = reflect sooner
+  dueAt?: string;
+  dedupeKey: string;
+  cooldownUntil?: string;
+
+  budgetClass: "cheap" | "standard" | "deep";
+  sourceSignalIds: string[];
+  sourceMemoryIds: string[];
+  sourceIntentIds: string[];
+  sourceThreadIds: string[];
+
+  status: "queued" | "leased" | "synthesized" | "dismissed" | "expired";
+
+  scope: Scope;
+  provenance: Provenance;
+}
+
+interface ReflectionRun {
+  id: string;
+  agendaItemIds: string[];
+  retrievedMemoryIds: string[];
+  producedCandidateIds: string[];
+
+  modelClass: "fast" | "strong";
+  maxTokensBudget: number;
+  tokensUsed: number;
+
+  outcome: "no_action" | "candidate_emitted" | "deferred";
+  startedAt: string;
+  finishedAt?: string;
+}
+```
+
+`Memory Rover` is the runtime service that:
+
+1. leases `ReflectionAgendaItem`s
+2. retrieves relevant memory / commitments / context
+3. evaluates them under `RelationshipBoundary`
+4. emits `ProactiveCandidate`s or decides silence is better
+
+**Key invariants:**
+
+- it is **agenda-driven**, not a blind random walk over memory
+- it is **budget-governed**, not an unlimited background thinker
+- it is **relationship-bound**, not free to say whatever it infers
+- it may legitimately output **no action**
+
+Silence is a first-class valid result, not a failure mode.
+
 ### ProcedureCandidate
 
 ```typescript
@@ -1017,6 +1257,179 @@ Effective permission at runtime = AgentDeclaredNeeds ∩ PermissionRules ∩ Int
 
 **Memory Metabolism:** Memory is not a static store — it is actively transformed. Episodic memories (individual events) are digested into semantic knowledge (general facts), which are compiled into procedural skills (reusable execution paths). Stale memories decay unless reinforced by usage. This process is the engine behind the Evolution Engine (see below).
 
+### Current Implementation Reality
+
+The current codebase has **not** yet reached the full memory architecture described here.
+
+What exists today is best described as:
+
+- **memory substrate**
+  - `SQLiteMemoryStore`
+  - 5-tier enum and basic entry model
+- **first retrieval loop**
+  - hybrid lexical + local-semantic heuristic retrieval
+  - context assembly consumes compact memory hints
+  - daemon already auto-ingests:
+    - incoming human intents
+    - intent outcomes
+
+What does **not** exist yet:
+
+- real embedding provider abstraction in production use
+- sqlite-vec / ANN retrieval
+- graph traversal
+- provenance-aware chunking and packing
+- metabolism pipeline
+- true procedural / prospective producers
+
+This distinction matters architecturally. If we pretend the current implementation is already “RAG memory”, we will scatter ad hoc patches across daemon, retriever, and future evolution code. The right framing is:
+
+> current state = **memory substrate + first retrieval loop**
+> not yet = **true RAG + metabolism + procedural memory**
+
+### MemoryService — Runtime Memory Boundary
+
+The runtime needs a **single memory boundary object**, not a growing set of direct calls to:
+
+- `memory.store(...)`
+- `HybridMemoryRetriever`
+- per-tier helpers
+- future metabolism jobs
+
+That boundary is `MemoryService`.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                  Runtime / Infra Producers                  │
+│  daemon   orchestrator   runtime   perception   evolution   │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ ingest / retrieve / feedback
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                        MemoryService                         │
+│                                                              │
+│  1. Ingest boundary                                           │
+│     - canonicalize metadata / provenance                      │
+│     - choose tier                                              │
+│     - persist entry                                            │
+│                                                              │
+│  2. Retrieval boundary                                        │
+│     - query formulation                                       │
+│     - candidate retrieval                                     │
+│     - ranking / packing                                       │
+│     - return context-ready memory hints                       │
+│                                                              │
+│  3. Feedback boundary                                         │
+│     - record access / reinforcement                           │
+│     - emit evidence for metabolism later                      │
+│                                                              │
+│  4. Future hooks                                              │
+│     - episodic → semantic digestion                           │
+│     - semantic → procedural compilation                       │
+│     - prospective scheduling / reminders                      │
+└──────────────┬───────────────────────────────┬───────────────┘
+               │                               │
+               ▼                               ▼
+      Memory Store Substrate            Retrieval Substrate
+  (SQLite today, pluggable later)   (FTS today, vector/graph later)
+```
+
+Minimal contract:
+
+```typescript
+interface MemoryService {
+  ingestHumanIntent(...): MemoryEntry;
+  ingestIntentOutcome(...): MemoryEntry;
+  retrieveForContext(...): string[];
+  recordAccess(memoryId: string): void;
+
+  // future
+  ingestDecision(...): MemoryEntry;
+  ingestProspectiveCommitment(...): MemoryEntry;
+  runMetabolismPass(...): Promise<void>;
+}
+```
+
+Why this boundary matters:
+
+- **daemon / CLI / future MCP channels** should not each invent their own memory shape
+- **retrieval policy** should not be hard-coded into context assembly call sites
+- **metabolism** must have one place to hook into ingestion + access feedback
+- **interview-grade traceability** improves when memory production is explicit and canonical
+
+What `MemoryService` is **not**:
+
+- not the full storage engine
+- not the context assembler
+- not the evolution engine
+- not a synonym for one specific retrieval algorithm
+
+It is the **governed runtime boundary** between producers/consumers and the underlying memory substrate.
+
+### Canonical Metadata / Provenance Schema
+
+Every durable Tier 2+ memory should carry a canonical metadata envelope, even if early-stage producers only fill part of it.
+
+```typescript
+interface BaseMemoryMetadata {
+  schemaVersion: "memory.v1";
+  sourceKind: MemorySourceKind;
+  threadId?: string;
+  intentId?: string;
+  taskId?: string;
+  decisionId?: string;
+  projectRoot?: string;
+  focusedFile?: string;
+  labels?: string[];
+  tags?: string[];
+  provenance: {
+    source: MemorySourceKind;
+    observedAt: string;
+    producer: {
+      layer: "dialogue" | "daemon" | "orchestrator" | "runtime" | "perception" | "evolution" | "human";
+      name: string;
+      version?: string;
+    };
+    sourceRefs?: Array<{ kind: "thread" | "message" | "intent" | "task" | "decision" | "event" | "memory" | "tool_call" | "sensor_signal"; id: string }>;
+    evidenceRefs?: Array<{ kind: string; id: string; role?: "source" | "support" | "contradiction" | "rollback" }>;
+    parentMemoryIds?: string[];
+    confidence?: number;
+  };
+}
+```
+
+Tier-specific rules:
+
+- **episodic metadata**
+  - describes **what happened**
+  - should point back to concrete thread / intent / task lineage
+  - may include:
+    - `outcomeStatus`
+    - `toolsUsed`
+    - `success`
+- **semantic metadata**
+  - describes **what claim/fact was distilled**
+  - should carry:
+    - `factType`
+    - `derivedFromMemoryIds`
+    - claim-level confidence
+- **prospective metadata**
+  - describes **what must happen later**
+  - should carry:
+    - `dueAt`
+    - `remindAt`
+    - `fulfillmentStatus`
+    - `blocking`
+
+Why provenance is first-class:
+
+- retrieval should prefer memories with clearer evidence chains
+- contradiction / supersession later depends on traceable lineage
+- metabolism must know which episodes produced which semantic claims
+- user-facing explanations need source attribution without replaying whole transcripts
+
+This is also where Nous intentionally differs from “just dump strings into vector DB” memory designs. Nous memory is not only about similarity; it is about **governed recall with lineage**.
+
 ### RAG Retrieval Pipeline
 
 FTS5 keyword matching alone is insufficient for semantic memory retrieval. "How do I add linting?" and "set up ESLint in the project" are the same intent expressed differently — keyword matching misses this. The memory system uses a **multi-path retrieval pipeline** with fusion and re-ranking.
@@ -1066,6 +1479,69 @@ FTS5 keyword matching alone is insufficient for semantic memory retrieval. "How 
 │  └──────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────┘
 ```
+
+#### Layered retrieval contract
+
+The retrieval pipeline should be treated as a **layered contract**, not a single `search()` call:
+
+1. **Query formulation**
+   - input:
+     - user/task text
+     - scope
+     - thread / active intent state
+   - output:
+     - normalized retrieval query
+     - optional sub-queries
+
+2. **Candidate generation**
+   - lexical path
+   - semantic/vector path
+   - graph/provenance path
+   - future prospective/deadline path
+
+3. **Fusion + dedupe**
+   - merge heterogeneous candidate sets
+   - normalize scores
+   - remove duplicates / superseded entries
+
+4. **Re-rank**
+   - tier-aware prioritization
+   - confidence / provenance boost
+   - recency / access / retention adjustments
+   - optional LLM reranker later
+
+5. **Packing**
+   - fit the context budget
+   - prefer compact summaries over raw episodes when equivalent
+   - preserve provenance handles so the runtime can explain “why this memory was used”
+
+6. **Feedback**
+   - record access
+   - record whether retrieval helped
+   - create future reinforcement / contradiction / digestion signals
+
+Current vs future status:
+
+- **current code**
+  - partial query grounding
+  - heuristic hybrid scoring
+  - compact hint rendering
+  - access-count reinforcement
+- **future code**
+  - explicit multi-path candidate objects
+  - vector backend abstraction
+  - graph traversal
+  - RRF / learned fusion
+  - provenance-aware packer
+  - retrieval evaluation hooks
+
+Architecturally, this means:
+
+- `MemoryStore` is the **substrate**
+- `MemoryService` is the **runtime boundary**
+- the retrieval pipeline is the **policy stack**
+
+These are different layers and should not collapse into one class.
 
 ### Memory Storage Architecture
 
@@ -1386,12 +1862,13 @@ Those are all semantic in some sense, but they are **not the same layer**. They 
 
    This is why the memory direction is hybrid retrieval / RAG, not FTS-only and not "ask the model to remember."
 
-3. **High-frequency background semantics should be heuristic-first, with escalation paths**
+3. **Background semantics should be staged: cheap triage first, richer reflection second**
    - perception filtering
    - attention scoring
-   - cheap ambient triage
+   - reflection agenda building
+   - proactive candidate synthesis
 
-   The reason is cost and cadence: these paths run continuously, so they cannot assume a large-model call on every signal. Heuristics should filter first; richer semantic interpretation can happen after promotion.
+   The reason is cost and cadence: these paths run continuously, so they cannot assume a large-model call on every raw signal. Cheap heuristics or small models should pre-filter first; stronger semantic interpretation should happen on a smaller set of promoted agendas, including memory/prospective reflection.
 
 4. **Governance semantics must be objectified**
    - clarification
@@ -2261,42 +2738,152 @@ This preserves context budget and reduces tool-selection noise.
 
 ## Perception Pipeline: From Environment to Action
 
-The perception path runs **continuously in parallel** with the request path. It is the mechanism by which the system achieves always-on awareness without requiring human input.
+Perception alone is not enough. If Nous is supposed to feel like a proactive, considerate personal assistant, it cannot stop at "detect signal → maybe create task." It also needs a **background reflective layer** that revisits memory, commitments, timing, and user state to ask:
+
+- what might the user need right now?
+- what is worth reminding, celebrating, or gently checking in on?
+- what should stay silent for now but remain watch-listed?
+
+So the proactive path runs **continuously in parallel** with the request path, but in two stages:
+
+1. **cheap continuous sensing / triage**
+2. **smarter lower-frequency reflection / synthesis**
 
 ```
-Environment (files, calendar, email, screen, ...)
+Environment / Time / Dialogue / Memory / Commitments
+  │
+  ├─ files, git, calendar, email, screen
+  ├─ pending prospective memories
+  ├─ recent task outcomes
+  └─ thread / user-state changes
   │
   ▼
-L4 Sensors (always running, stateless observers)
-  │  fs.watcher: "src/auth.ts modified"
-  │  calendar.poll: "standup in 10 minutes"
-  │  email.listener: "deploy failure notification from CI"
+L4 Signal Producers
+  │  stateless sensors + scheduled watchpoints
   │
   ▼
-L3 Perception Log (append-only buffer, high volume)
-  │  Stores raw signals with timestamps
-  │  Retention: short-lived, compacted after evaluation
+L3 Perception Log + Reflection Inputs
+  │  append-only raw signals
+  │  plus agenda-worthy memory/prospective cues
   │
   ▼
-L1 Attention Filter (runs on a cycle, e.g. every 10s)
-  │  For each unevaluated signal:
-  │    LLM call (fast model): "Is this relevant given current intents + agent state?"
-  │    → Score relevance 0-1
-  │    → discard (noise), log (interesting but not actionable), or promote (actionable)
-  │
-  │  Promoted signals:
-  ▼
-L0 Ambient Intent
-  │  confidence >= threshold → auto-execute (enters normal Intent → Plan → Task flow)
-  │  confidence < threshold  → Human Decision Queue ("I noticed X, should I do Y?")
+Stage A — Signal Triage / Attention
+  │  high-frequency, cheap
+  │  heuristics + small/fast model where needed
+  │  outputs:
+  │    - discard
+  │    - log
+  │    - add to reflection agenda
+  │    - promote immediately if clearly actionable
   │
   ▼
-  Normal orchestration flow (same as Human Intent from here)
+Stage B — Proactive Cognition / Background Reflector
+  │  lower-frequency, smarter
+  │  stronger LLM synthesis over:
+  │    - selected signals
+  │    - retrieved memories
+  │    - prospective commitments
+  │    - relationship boundary / interruptibility policy
+  │
+  ▼
+Proactive Candidates
+  │
+  ├─ check_in
+  ├─ celebration
+  ├─ reminder
+  ├─ suggestion
+  ├─ offer
+  ├─ ambient_intent
+  └─ silent_watchpoint
+  │
+  ▼
+Governance + Delivery
+  │
+  ├─ low-risk async message → outbox / notification
+  ├─ needs consent → DecisionQueue
+  ├─ actionable and allowed → Ambient Intent → normal intent pipeline
+  └─ not yet appropriate → store as watchpoint / defer
 ```
 
-**Key design constraint:** The perception pipeline must be **cheap**. Sensors emit raw data (no LLM calls). The Attention Filter uses the lightest possible model. Only promoted signals trigger full-cost orchestration. This keeps the always-on cost bounded.
+### Background Reflector / "Memory Rover"
 
-**Backpressure:** Each Sensor has an `emitRateLimit`. If a sensor emits faster than the Attention Filter can process, signals are buffered in the Perception Log. If the buffer exceeds capacity, oldest unprocessed signals are dropped (with a `signal.dropped` event logged).
+This reflective layer is the architectural home for the "后台记忆漫游器" idea.
+
+It should **not** be a random walk over the whole memory store. It should be **agenda-driven**, revisiting questions such as:
+
+- what promises or paused items still need closure?
+- what repeated friction suggests the user is stuck?
+- what recent progress is worth encouragement or celebration?
+- what upcoming commitment or deadline needs a timely reminder?
+- what environment change matters in light of the user's current goals?
+- when is silence more respectful than interruption?
+
+This is where a stronger model belongs. Raw signals are too frequent for an expensive model on every tick; reflective synthesis is not.
+
+### Not every proactive act is an Intent
+
+`AmbientIntent` remains important, but it should be treated as only **one subtype** of proactive output.
+
+Many valuable assistant behaviors are not tasks:
+
+- "You made real progress on this today — nice work."
+- "You said this deadline matters; do you want me to summarize what remains?"
+- "You've paused this for a while. Should I help you reopen it?"
+
+If Nous collapses all of these into tasks, it becomes a workflow machine instead of a considerate assistant.
+
+### Cost and backpressure rules
+
+The system still needs bounded always-on cost:
+
+- **Signal producers** must remain cheap and mostly stateless
+- **Stage A triage** handles high-volume filtering and backpressure
+- **Stage B reflection** runs only:
+  - on promoted agendas
+  - on periodic reflection ticks
+  - or on high-value state changes
+
+Each Sensor still has an `emitRateLimit`. If raw signals arrive faster than Stage A can process them, they are buffered in the Perception Log; oldest unprocessed signals can be dropped with a `signal.dropped` event. The stronger reflective layer should never be the first line of defense against raw volume.
+
+**Current implementation note:** today's codebase only implements the early skeleton of this design (FS/Git sensors + heuristic attention + ambient promotion path). The full target architecture adds the agenda-driven reflective layer and richer proactive candidate family described above.
+
+### Runtime contract: Agenda → Reflection → Candidate
+
+The three core runtime objects fit together like this:
+
+```
+Signal / memory / commitment change
+  │
+  ▼
+ReflectionAgendaItem
+  │  created by triage, scheduler, or memory/prospective producers
+  │
+  ▼
+Memory Rover / ReflectionRun
+  │  retrieves context
+  │  reasons under budget
+  │  consults RelationshipBoundary
+  │
+  ▼
+ProactiveCandidate
+  │
+  ├─ dialogue / notification
+  ├─ DecisionQueue
+  ├─ AmbientIntent
+  └─ silent_watchpoint
+```
+
+This separation matters:
+
+- `ReflectionAgendaItem` answers: **what deserves thought?**
+- `RelationshipBoundary` answers: **what kind of initiative is welcome?**
+- `ProactiveCandidate` answers: **what, if anything, should be surfaced or done now?**
+
+Without this split, the system tends to collapse:
+
+- agenda into raw signal spam
+- relationship into hidden prompt vibes
+- proactive output into over-eager task creation
 
 ---
 
@@ -2915,7 +3502,8 @@ Daemon restarts (auto via systemd/launchd, or manual)
 | Permission model | Global permissions | None | None | User-controlled, directory/command scoped, Claude Code-style |
 | Observability | Log files | Callbacks | Log files | Event sourcing, full causal chain |
 | Human interaction | Chat + Cron | Chat | Chat | Intent layer + minimal-interruption decision queue |
-| Perception | None | None | None | Sensors + Attention Filter + Ambient Intent |
+| Perception | None | None | None | Sensors + staged proactive cognition + ambient intent |
+| Personal assistant quality | Workspace/task centric | App/developer centric | Goal loop centric | Personal-first: continuity, memory, proactive cognition, relationship-aware governance |
 | Self-evolution | None | None | None | 4-layer: experience → skill → gap detection → self-mutation |
 | Memory + RAG | FTS only | Short-term only | File-based | 5-tier + vector + graph + re-ranking |
 | Tool creation | None | None | None | 3-tier tools: Nous creates new tools from detected gaps |
@@ -2931,9 +3519,9 @@ Daemon restarts (auto via systemd/launchd, or manual)
 **The core difference in approach:**
 
 - OpenClaw / LangChain / AutoGPT: Start from a **chatbot** and bolt on agent features.
-- Nous: Start from an **operating system** and add intelligence.
+- Nous: Start from an **operating-system-grade substrate**, then shape it into a **persistent personal assistant** that can later federate.
 
-The latter is more structurally sound. An OS-first design gets reliability, scheduling, isolation, and observability for free — they are inherent in the model, not afterthoughts.
+The latter is more structurally sound. An OS-first design gets reliability, scheduling, isolation, and observability as substrate; the personal-assistant layer adds care, continuity, and initiative. Both are first-class in the Nous design.
 
 ---
 
@@ -3363,7 +3951,14 @@ interface EvolutionState {
 
 How do Nous instances talk to each other? This is a fundamental infrastructure decision that affects privacy, scalability, reliability, and user control. We reason from first principles.
 
-This is the **destination architecture** for collective intelligence. The important v1 rule is that even before full networking exists, a local Nous instance must already model the right primitives — **Instance identity, Scope boundaries, Provenance, Skill validation, and CommunicationPolicy**. Otherwise inter-Nous exchange would require rewriting local assumptions instead of extending them.
+This is the **destination architecture** for collective intelligence. But collective intelligence must be understood correctly:
+
+> it is **not** a supra-user hive mind with local terminals attached.
+> it is a **federation of personal-first Nous instances**.
+
+Each local Nous remains loyal to its own human first. The network exists to make that local assistant wiser and more capable, not to drain raw intimacy into a central brain.
+
+The important v1 rule is that even before full networking exists, a local Nous instance must already model the right primitives — **Instance identity, Scope boundaries, Provenance, Skill validation, CommunicationPolicy, and local/private vs shareable/public boundaries**. Otherwise inter-Nous exchange would require rewriting local assumptions instead of extending them.
 
 ### Why Not Pure Centralized, Why Not Pure P2P
 
@@ -4307,7 +4902,7 @@ procedural → skill (via Evolution Engine):
 
 ### 13. Collective Intelligence Infrastructure
 
-**Decision: Centralized pool hosted by Nous project for v1. Validation-based trust scoring. Reciprocity incentive.**
+**Decision: Centralized pool hosted by Nous project for v1, but only for governed shareable artifacts. Validation-based trust scoring. Reciprocity incentive.**
 
 **v1 architecture:**
 
@@ -4315,6 +4910,16 @@ procedural → skill (via Evolution Engine):
 Nous Project hosts:
   - Shared Procedural Pool (Postgres + pgvector, hosted)
   - REST API for contribution/retrieval
+  - Only shareable-shell artifacts enter the pool:
+      - validated skills
+      - anonymized pattern summaries
+      - governed eval/harness outcomes
+      - approved collective proposals
+  - Raw private-core data never enters:
+      - raw dialogue transcripts
+      - user-state reflections
+      - relationship judgments
+      - intimate episodic memories
   - No P2P in v1 — all exchange goes through the pool
 
 Why centralized for v1:
@@ -4324,7 +4929,7 @@ Why centralized for v1:
   - Matches Phase 2 star topology from Communication Architecture
 ```
 
-**Privacy verification:** Before a pattern is accepted into the pool, an automated LLM-based privacy scan checks for PII, file paths, usernames, API keys, and project-specific references. Patterns that fail are rejected with an explanation. This is not perfect (LLM-based detection has false negatives), so v2 adds a formal differential privacy layer.
+**Privacy verification:** Before a pattern is accepted into the pool, an automated LLM-based privacy scan checks for PII, file paths, usernames, API keys, project-specific references, and over-personalized relational context. Patterns that fail are rejected with an explanation. This is not perfect (LLM-based detection has false negatives), so v2 adds a formal differential privacy layer plus stricter artifact-type gates.
 
 **Incentive model:** Reciprocity. A Nous instance that only consumes patterns without contributing gets rate-limited on retrieval. Contribution score = `patterns_shared * avg_validation_score`. Top contributors get priority access. This mirrors academic citation: you publish to gain access to the community's knowledge.
 
@@ -4335,6 +4940,8 @@ Why centralized for v1:
 ### 14. Inter-Nous Communication Infrastructure
 
 **Decision: Cloudflare Workers for relay in v1. libsodium for E2E encryption. Relay-assisted tunneling (no STUN/TURN). Matrix-inspired federation for v2.**
+
+**Personal-first invariant:** networking is always an extension of the local assistant, never its owner. A user can fully disable the network and still retain a complete Nous. Enabling the network increases optional collective reach; it does not redefine the local system's identity or duties.
 
 | Component | v1 Choice | Rationale |
 |-----------|-----------|-----------|
@@ -4458,7 +5065,7 @@ This section bridges architecture into execution: what to build first, what reso
 
 ### Phase 0: MVP — The Core Loop
 
-**Goal:** A single-user Nous that can receive an intent, decompose it into tasks, execute them with agents, and learn from the results. **Ambient Intent is in MVP** — the perception pipeline (FS + Git sensors → Attention Filter → Ambient Intent) ships from day one as a core differentiator. The Relay Network also exists from Day 1, so even the first two Nous instances can communicate.
+**Goal:** A single-user Nous that already feels like a **proactive, considerate, reliable personal assistant**: it can receive an intent, decompose it into tasks, execute them with agents, and learn from the results. **Ambient / proactive cognition is in MVP** — the perception pipeline ships from day one as a core differentiator. The Relay Network may exist from Day 1 as groundwork, but the first product truth is local assistant quality, not network activity.
 
 **MVP scope (what ships):**
 
@@ -4473,12 +5080,12 @@ Dialogue: Thread tracking                —
 Dialogue: Conflict detection (Layer 1)   Layer 2 (LLM semantic analysis, refined)
 Dialogue: Multi-turn conversation        —
 L0: Intent parsing (basic)               —
-L0: Ambient Intent pipeline              Calendar/email/screen sensors
+L0: Proactive cognition skeleton         Calendar/email/screen sensors
 L1: Task DAG planner                     Multi-strategy routing
 L1: Task Scheduler + state machine       —
 L1: Agent Router (single strategy)       —
 L1: Context Assembly (env + project)     User context from RAG (needs memory)
-L1: Attention Filter (fast model)        —
+L1: Signal triage / attention            Full reflective cognition loop
 L2: Agent Runtime (ReAct loop)           Shadow execution
 L2: Tool System (Tier 1 + Tier 2)       Tier 3 (Evolved tools)
 L2: Memory Manager (Tier 1-3 + RAG)     Full metabolism + Tier 4-5
