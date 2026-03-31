@@ -4615,3 +4615,69 @@ For significant sessions, capture:
   - The next natural continuation is likely one of:
     - broaden Tier 2 verification tools (`test_runner`, structured diff/application tools)
     - or use the richer tool vocabulary to strengthen Sprint 9 procedural-memory / execution-trace compilation.
+
+### Session: Enrich execution traces with tool semantics for procedural seeding
+- Context / Trigger:
+  - The previous session landed the first real Tier 2 tool slice, which improved present-day task execution and made tool names more semantically meaningful.
+  - That immediately exposed a follow-up gap: the evolution/procedure-seed path still treated execution traces mostly as intent text plus final outputs, so the new tool vocabulary could not materially improve Sprint 9 learning quality yet.
+- Problem:
+  - `ExecutionTrace` and `ProcedureCandidate` were too thin to support believable procedural memory:
+    - they did not preserve which tools were actually used
+    - they did not preserve which task shapes the intent decomposed into
+  - Because of that, procedure candidates risked becoming little more than repeated-intent counters rather than reusable execution patterns.
+  - Inter-Nous procedure-summary exchange also would have exported only shallow summaries, even when local procedure seeds had richer evidence available.
+- Options considered:
+  - Option A: leave procedure seeding intentionally thin until a full execution-trace system exists.
+    - Rejected because the repo already has a working seed path; starving it of tool/task evidence would waste the value of the newly added Tier 2 tools.
+  - Option B: jump directly to full step-by-step procedural compilation from agent transcripts.
+    - Rejected because it would be a much larger design jump and risks overfitting before the lighter trace contract is stabilized.
+  - Option C: enrich the current trace spine with a bounded set of higher-signal fields now:
+    - task summaries
+    - used tool names
+    - risky tool names
+    - attempt counts on procedure candidates
+    - Chosen because it is small enough for the current substrate but strong enough to materially improve the quality of local and exportable procedure seeds.
+- Decision:
+  - Extend `ExecutionTrace` with:
+    - `taskSummaries`
+    - `usedToolNames`
+    - `riskyToolNames`
+  - Extend `ProcedureCandidate` with:
+    - `attemptCount`
+    - aggregated `taskSummaries`
+    - aggregated `toolNames`
+    - aggregated `riskyToolNames`
+  - Propagate task/tool evidence across the full runtime chain:
+    - `AgentRuntime` already knew the tool usage result
+    - `Orchestrator` now emits that evidence on task progress events
+    - `NousDaemon` now accumulates it per intent and writes it into procedure traces on intent completion/escalation
+  - Extend inter-Nous procedure-summary export so richer local procedure seeds preserve their tool/task semantics when shared.
+- Changes made:
+  - Updated `packages/core/src/types/evolution.ts`
+    - enriched `ExecutionTrace`
+    - enriched `ProcedureCandidate`
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - include task description and tool-usage metadata in progress events for completed/failed/cancelled tasks
+  - Updated `packages/infra/src/daemon/server.ts`
+    - track per-intent task summaries, used tool names, and risky tool names
+    - merge those signals into the trace recorded at intent outcome time
+  - Updated `packages/infra/src/evolution/local-procedure-seed.ts`
+    - aggregate attempt counts
+    - aggregate task summaries
+    - aggregate tool / risky-tool names
+    - persist the richer evidence into promoted procedure artifacts
+  - Updated `packages/infra/src/network/exchange.ts`
+    - include the richer procedure metadata in exported bundles
+  - Updated `packages/infra/tests/procedure-seed.test.ts`
+  - Updated `packages/infra/tests/network-exchange.test.ts`
+    - validate local aggregation and export/import preservation of tool semantics
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/procedure-seed.test.ts packages/infra/tests/network-exchange.test.ts` ✅
+- Impact / Result:
+  - Procedure seeds are now closer to actual reusable execution patterns rather than repeated-intent counters.
+  - The Tier 2 tool slice added earlier now has a real downstream beneficiary in the evolution path, because traces can preserve semantically meaningful tool usage.
+  - Inter-Nous procedure summaries can now carry more useful abstraction content without jumping all the way to raw trace sharing.
+- Open questions / follow-ups:
+  - The current trace enrichment is still aggregated at intent/task-summary level, not full ordered step graphs; a future procedural compiler should decide when to retain sequence-level detail and when to stay abstract.
+  - Risky-tool names are now preserved, but procedure validation still only keys mainly on repeated success count; a future step should use richer validation heuristics that consider stability of tool sequence and outcome quality.

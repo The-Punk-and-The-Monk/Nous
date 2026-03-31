@@ -26,10 +26,14 @@ describe("LocalProcedureSeedStore", () => {
 			status: "achieved",
 			projectRoot: "/repo/app",
 			outputs: ["reported status"],
+			taskSummaries: ["Inspect daemon state", "Report active intents"],
+			usedToolNames: ["git_status", "memory_search"],
+			riskyToolNames: [],
 			createdAt: new Date().toISOString(),
 		});
 		expect(first.candidate.validationState).toBe("proposed");
 		expect(first.procedurePromoted).toBe(false);
+		expect(first.candidate.toolNames).toEqual(["git_status", "memory_search"]);
 
 		const second = store.recordTrace({
 			id: "trace_2",
@@ -39,10 +43,14 @@ describe("LocalProcedureSeedStore", () => {
 			status: "achieved",
 			projectRoot: "/repo/app",
 			outputs: ["reported status again"],
+			taskSummaries: ["Inspect daemon state"],
+			usedToolNames: ["git_status"],
+			riskyToolNames: [],
 			createdAt: new Date().toISOString(),
 		});
 		expect(second.candidate.validationState).toBe("validated");
 		expect(second.procedurePromoted).toBe(true);
+		expect(second.candidate.attemptCount).toBe(2);
 
 		const filesafe = "summarize-daemon-status-and-report-active-intents";
 		expect(existsSync(join(root, "traces", "trace_1.json"))).toBe(true);
@@ -51,8 +59,17 @@ describe("LocalProcedureSeedStore", () => {
 
 		const procedure = JSON.parse(
 			readFileSync(join(root, "procedures", `${filesafe}.json`), "utf8"),
-		) as { validationState: string; successCount: number };
+		) as {
+			validationState: string;
+			successCount: number;
+			attemptCount: number;
+			toolNames: string[];
+			taskSummaries: string[];
+		};
 		expect(procedure.validationState).toBe("validated");
 		expect(procedure.successCount).toBe(2);
+		expect(procedure.attemptCount).toBe(2);
+		expect(procedure.toolNames).toEqual(["git_status", "memory_search"]);
+		expect(procedure.taskSummaries).toContain("Inspect daemon state");
 	});
 });

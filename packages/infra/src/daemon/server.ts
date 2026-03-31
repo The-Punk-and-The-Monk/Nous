@@ -84,6 +84,9 @@ export class NousDaemon {
 	private readonly intentTextById = new Map<string, string>();
 	private readonly intentScopeById = new Map<string, Channel["scope"]>();
 	private readonly intentOutputsById = new Map<string, string[]>();
+	private readonly intentTaskSummariesById = new Map<string, string[]>();
+	private readonly intentToolNamesById = new Map<string, string[]>();
+	private readonly intentRiskyToolNamesById = new Map<string, string[]>();
 	private readonly turnStateByIntentId = new Map<string, TurnState>();
 	private readonly scheduledIntentExecutions = new Set<string>();
 	private readonly procedureSeeds = new LocalProcedureSeedStore();
@@ -303,6 +306,27 @@ export class NousDaemon {
 				outputs.push(output);
 				this.intentOutputsById.set(intentId, outputs);
 			}
+		}
+		if (
+			event.type === "task.completed" ||
+			event.type === "task.failed" ||
+			event.type === "task.cancelled"
+		) {
+			this.mergeTrackedList(
+				this.intentTaskSummariesById,
+				intentId,
+				readNonEmptyString(event.data.taskDescription),
+			);
+			this.mergeTrackedList(
+				this.intentToolNamesById,
+				intentId,
+				...readStringArray(event.data.usedToolNames),
+			);
+			this.mergeTrackedList(
+				this.intentRiskyToolNamesById,
+				intentId,
+				...readStringArray(event.data.riskyToolNames),
+			);
 		}
 		if (event.type === "intent.achieved" || event.type === "escalation") {
 			this.storeIntentOutcomeMemory(intentId, event.type);
@@ -2381,6 +2405,9 @@ export class NousDaemon {
 		this.intentTextById.delete(intentId);
 		this.intentScopeById.delete(intentId);
 		this.intentOutputsById.delete(intentId);
+		this.intentTaskSummariesById.delete(intentId);
+		this.intentToolNamesById.delete(intentId);
+		this.intentRiskyToolNamesById.delete(intentId);
 		this.threadByIntentId.delete(intentId);
 		this.turnStateByIntentId.delete(intentId);
 	}
@@ -2416,6 +2443,15 @@ export class NousDaemon {
 		if (!this.intentOutputsById.has(intentId)) {
 			this.intentOutputsById.set(intentId, []);
 		}
+		if (!this.intentTaskSummariesById.has(intentId)) {
+			this.intentTaskSummariesById.set(intentId, []);
+		}
+		if (!this.intentToolNamesById.has(intentId)) {
+			this.intentToolNamesById.set(intentId, []);
+		}
+		if (!this.intentRiskyToolNamesById.has(intentId)) {
+			this.intentRiskyToolNamesById.set(intentId, []);
+		}
 	}
 
 	private refreshTrackedIntentContext(
@@ -2432,6 +2468,15 @@ export class NousDaemon {
 		this.intentScopeById.set(intentId, scope);
 		if (!this.intentOutputsById.has(intentId)) {
 			this.intentOutputsById.set(intentId, []);
+		}
+		if (!this.intentTaskSummariesById.has(intentId)) {
+			this.intentTaskSummariesById.set(intentId, []);
+		}
+		if (!this.intentToolNamesById.has(intentId)) {
+			this.intentToolNamesById.set(intentId, []);
+		}
+		if (!this.intentRiskyToolNamesById.has(intentId)) {
+			this.intentRiskyToolNamesById.set(intentId, []);
 		}
 	}
 
@@ -2476,6 +2521,9 @@ export class NousDaemon {
 		const scope = this.intentScopeById.get(intentId);
 		const threadId = this.threadByIntentId.get(intentId);
 		const outputs = this.intentOutputsById.get(intentId) ?? [];
+		const taskSummaries = this.intentTaskSummariesById.get(intentId) ?? [];
+		const usedToolNames = this.intentToolNamesById.get(intentId) ?? [];
+		const riskyToolNames = this.intentRiskyToolNamesById.get(intentId) ?? [];
 		this.memory.ingestIntentOutcome({
 			intentId,
 			intentText: text,
@@ -2493,10 +2541,26 @@ export class NousDaemon {
 			projectRoot: scope?.projectRoot,
 			focusedFile: scope?.focusedFile,
 			outputs,
+			taskSummaries,
+			usedToolNames,
+			riskyToolNames,
 			createdAt: now(),
 		});
 
 		this.cleanupTrackedIntentState(intentId);
+	}
+
+	private mergeTrackedList(
+		store: Map<string, string[]>,
+		intentId: string,
+		...values: Array<string | undefined>
+	): void {
+		const existing = store.get(intentId) ?? [];
+		const next = dedupeStrings([
+			...existing,
+			...values.filter((value): value is string => Boolean(value?.trim())),
+		]);
+		store.set(intentId, next);
 	}
 
 	private updateSessionState(
@@ -2927,4 +2991,25 @@ function getAttachedThreadId(
 	if (message.type !== "attach") return response.threadId;
 	const payload = message.payload as { threadId?: string };
 	return response.threadId ?? payload.threadId;
+}
+
+function readStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value
+		.map((item) => String(item).trim())
+		.filter((item) => item.length > 0);
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function dedupeStrings(values: string[]): string[] {
+	return [...new Set(values)];
 }

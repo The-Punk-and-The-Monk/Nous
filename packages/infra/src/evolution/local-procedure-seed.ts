@@ -37,11 +37,24 @@ export class LocalProcedureSeedStore {
 		const candidate: ProcedureCandidate = existing
 			? {
 					...existing,
+					attemptCount: (existing.attemptCount ?? existing.traceIds.length) + 1,
 					successCount:
 						trace.status === "achieved"
 							? existing.successCount + 1
 							: existing.successCount,
 					traceIds: dedupe([...existing.traceIds, trace.id]),
+					taskSummaries: dedupe([
+						...(existing.taskSummaries ?? []),
+						...(trace.taskSummaries ?? []),
+					]),
+					toolNames: dedupe([
+						...(existing.toolNames ?? []),
+						...(trace.usedToolNames ?? []),
+					]),
+					riskyToolNames: dedupe([
+						...(existing.riskyToolNames ?? []),
+						...(trace.riskyToolNames ?? []),
+					]),
 					validationState:
 						trace.status === "achieved" && existing.successCount + 1 >= 2
 							? "validated"
@@ -53,8 +66,12 @@ export class LocalProcedureSeedStore {
 					fingerprint,
 					title: deriveTitle(trace.intentText),
 					sampleIntent: trace.intentText,
+					attemptCount: 1,
 					successCount: trace.status === "achieved" ? 1 : 0,
 					traceIds: [trace.id],
+					taskSummaries: trace.taskSummaries ?? [],
+					toolNames: trace.usedToolNames ?? [],
+					riskyToolNames: trace.riskyToolNames ?? [],
 					validationState: "proposed",
 					lastUpdatedAt: now(),
 				};
@@ -68,9 +85,13 @@ export class LocalProcedureSeedStore {
 				fingerprint,
 				title: candidate.title,
 				sampleIntent: candidate.sampleIntent,
+				attemptCount: candidate.attemptCount,
 				validationState: candidate.validationState,
 				traceIds: candidate.traceIds,
 				successCount: candidate.successCount,
+				taskSummaries: candidate.taskSummaries,
+				toolNames: candidate.toolNames,
+				riskyToolNames: candidate.riskyToolNames,
 				lastUpdatedAt: candidate.lastUpdatedAt,
 			});
 		}

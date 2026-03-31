@@ -39,6 +39,9 @@ describe("InterNousSeedExchange", () => {
 			intentText: "Refactor auth token refresh flow",
 			status: "achieved",
 			outputs: ["identified the token refresh boundary"],
+			taskSummaries: ["Inspect auth refresh logic"],
+			usedToolNames: ["git_diff", "memory_search"],
+			riskyToolNames: [],
 			createdAt: new Date().toISOString(),
 		});
 		seeds.recordTrace({
@@ -47,6 +50,9 @@ describe("InterNousSeedExchange", () => {
 			intentText: "Refactor auth token refresh flow",
 			status: "achieved",
 			outputs: ["normalized the retry path"],
+			taskSummaries: ["Inspect auth refresh logic", "Summarize retry path"],
+			usedToolNames: ["git_diff"],
+			riskyToolNames: [],
 			createdAt: new Date().toISOString(),
 		});
 
@@ -89,6 +95,7 @@ describe("InterNousSeedExchange", () => {
 		).toMatchObject({
 			fingerprint: bundle.procedure.fingerprint,
 			fromInstanceId: bundle.from.instanceId,
+			toolNames: ["git_diff", "memory_search"],
 		});
 		expect(
 			importerDb.events

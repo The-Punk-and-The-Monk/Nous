@@ -11,6 +11,9 @@ export interface ExecutionTrace {
 	projectRoot?: string;
 	focusedFile?: string;
 	outputs: string[];
+	taskSummaries?: string[];
+	usedToolNames?: string[];
+	riskyToolNames?: string[];
 	createdAt: ISOTimestamp;
 }
 
@@ -19,8 +22,12 @@ export interface ProcedureCandidate {
 	fingerprint: string;
 	title: string;
 	sampleIntent: string;
+	attemptCount?: number;
 	successCount: number;
 	traceIds: string[];
+	taskSummaries?: string[];
+	toolNames?: string[];
+	riskyToolNames?: string[];
 	validationState: ValidationState;
 	lastUpdatedAt: ISOTimestamp;
 }

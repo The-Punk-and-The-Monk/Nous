@@ -949,7 +949,11 @@ export class Orchestrator {
 				type: "task.completed",
 				data: {
 					taskId: task.id,
+					taskDescription: task.description,
 					output: result.output,
+					usedToolNames: result.usedToolNames,
+					riskyToolNames: result.riskyToolNames,
+					iterations: result.iterations,
 					intentId: task.intentId,
 				},
 			});
@@ -958,7 +962,11 @@ export class Orchestrator {
 				type: "task.cancelled",
 				data: {
 					taskId: task.id,
+					taskDescription: task.description,
 					reason: result.output,
+					usedToolNames: result.usedToolNames,
+					riskyToolNames: result.riskyToolNames,
+					iterations: result.iterations,
 					intentId: task.intentId,
 				},
 			});
@@ -967,7 +975,11 @@ export class Orchestrator {
 				type: "task.failed",
 				data: {
 					taskId: task.id,
+					taskDescription: task.description,
 					error: result.output,
+					usedToolNames: result.usedToolNames,
+					riskyToolNames: result.riskyToolNames,
+					iterations: result.iterations,
 					intentId: task.intentId,
 				},
 			});

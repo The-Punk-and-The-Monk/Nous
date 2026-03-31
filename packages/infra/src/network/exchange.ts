@@ -34,8 +34,12 @@ export interface ProcedureSummaryBundle {
 		fingerprint: string;
 		title: string;
 		sampleIntent: string;
+		attemptCount?: number;
 		successCount: number;
 		traceIds: string[];
+		taskSummaries?: string[];
+		toolNames?: string[];
+		riskyToolNames?: string[];
 		validationState: ValidationState;
 		lastUpdatedAt: string;
 	};
@@ -162,8 +166,12 @@ export class InterNousSeedExchange {
 				fingerprint: procedure.fingerprint,
 				title: procedure.title,
 				sampleIntent: procedure.sampleIntent,
+				attemptCount: procedure.attemptCount,
 				successCount: procedure.successCount,
 				traceIds: procedure.traceIds,
+				taskSummaries: procedure.taskSummaries,
+				toolNames: procedure.toolNames,
+				riskyToolNames: procedure.riskyToolNames,
 				validationState: procedure.validationState,
 				lastUpdatedAt: procedure.lastUpdatedAt,
 			},
