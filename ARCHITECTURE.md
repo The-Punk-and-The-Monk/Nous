@@ -1277,6 +1277,12 @@ What exists today is best described as:
   - daemon already auto-ingests:
     - incoming human intents
     - intent outcomes
+    - promoted perception signals
+    - selected in-thread conversation turns
+  - runtime boundary now has producer hooks for:
+    - conversation turns
+    - perception signals
+    - prospective commitments
 
 What does **not** exist yet:
 
@@ -1345,10 +1351,12 @@ Minimal contract:
 interface MemoryService {
   ingestHumanIntent(...): MemoryEntry;
   ingestIntentOutcome(...): MemoryEntry;
+  ingestConversationTurn(...): MemoryEntry;
+  ingestPerceptionSignal(...): MemoryEntry;
   retrieveForContext(...): string[];
   recordAccess(memoryId: string): void;
 
-  // future
+  // next / future
   ingestDecision(...): MemoryEntry;
   ingestProspectiveCommitment(...): MemoryEntry;
   runMetabolismPass(...): Promise<void>;
@@ -2865,6 +2873,12 @@ Each Sensor still has an `emitRateLimit`. If raw signals arrive faster than Stag
 - redundant `git.status_changed` notices can be suppressed after a stronger file-change promotion
 - ambient notices are threaded by workspace instead of one undifferentiated global stream
 - file-type-specific safe follow-up suggestions exist for tests / deps / config / docs / sensitive config
+- a first **reflection-stage seed** now exists:
+  - promoted signals can trigger a lower-frequency reflective synthesis step
+  - the reflective step can retrieve memory before deciding whether to emit:
+    - silence
+    - a proactive message
+    - an ambient intent candidate
 
 The full target architecture still adds the agenda-driven reflective layer and richer proactive candidate family described above.
 

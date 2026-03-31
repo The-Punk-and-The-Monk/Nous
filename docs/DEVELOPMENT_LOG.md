@@ -2966,3 +2966,134 @@ For significant sessions, capture:
   - Product readiness
     - the next biggest user-perceived gap is still **tool breadth**
     - after that, prospective/procedural memory and reflective proactive behavior become the main differentiators
+
+### Session: Continue Sprint 6 and Sprint 8 with first reflection-stage runtime and richer memory producers
+- Context / Trigger:
+  - After the previous round was committed, the user explicitly asked to:
+    1. commit that round
+    2. keep going on **Sprint 6** and **Sprint 8**
+  - That changed the question from “close the first useful slice” to:
+    - what is the next layer that materially increases intelligence and assistant quality
+    - without pretending the final destination is already built
+- Problem:
+  - **Sprint 6**
+    - retrieval quality had improved, but the memory substrate was still underfed:
+      - perception signals were not canonical memory producers
+      - clarification / decision-carrying conversation turns were not canonical memory producers
+      - prospective memory had a type shape, but no real runtime boundary method
+    - this meant retrieval was improving faster than memory production richness
+  - **Sprint 8**
+    - perception had a better Stage A triage loop, but Stage B was still mostly absent in code
+    - the architecture already had:
+      - `ReflectionAgendaItem`
+      - `Memory Rover`
+      - `ProactiveCandidate`
+    - but the runtime still lacked a concrete “promoted signal → reflect with memory → candidate or silence” path
+- Options considered:
+  - Option A: keep pushing only heuristic perception logic.
+    - Rejected because that would improve noise control but still leave Nous without a true reflection-stage seed.
+  - Option B: jump directly to persistent agenda storage and full reflective runtime orchestration.
+    - Rejected for this round because it would create too much surface area before first validating the core reflection boundary.
+  - Option C: add a **first reflection-stage runtime service** now:
+    - promoted signal in
+    - retrieve memory
+    - run structured synthesis
+    - emit `ProactiveCandidate` or silence
+    - and simultaneously enrich MemoryService producers
+    - Chosen because it advances Sprint 6 and Sprint 8 together along the same architectural seam.
+- Decision:
+  - Extend `MemoryService` from “intent request/outcome only” toward a broader runtime boundary by adding:
+    - `ingestConversationTurn`
+    - `ingestPerceptionSignal`
+    - `ingestProspectiveCommitment`
+  - Add a first code-level proactive runtime boundary:
+    - `ReflectionService`
+    - default `RelationshipBoundary`
+    - signal → reflection agenda item → memory retrieval → proactive candidate / silence
+  - Integrate that reflection seed into the daemon’s ambient promotion flow instead of treating promoted perception as only a direct heuristic message path.
+- Changes made:
+  - Core object model
+    - Added `packages/core/src/types/proactive.ts`
+      - `ProactiveCandidate`
+      - `ReflectionAgendaItem`
+      - `ReflectionRun`
+      - `RelationshipBoundary`
+      - related enums/status types
+    - Updated `packages/core/src/index.ts`
+  - Sprint 6 / memory boundary
+    - Updated `packages/runtime/src/memory/service.ts`
+      - added canonical producer methods for:
+        - conversation turns
+        - perception signals
+        - prospective commitments
+      - preserved canonical metadata / provenance framing
+    - Updated exports in `packages/runtime/src/index.ts`
+    - Updated tests:
+      - `packages/runtime/tests/memory-service.test.ts`
+  - Sprint 8 / reflection-stage runtime seed
+    - Added `packages/runtime/src/proactive/reflection.ts`
+      - `ReflectionService`
+      - structured candidate synthesis using the LLM layer
+      - agenda-item creation
+      - default relationship-boundary policy
+      - candidate gating / approval / delivery-mode normalization
+    - Added `packages/runtime/tests/reflection-service.test.ts`
+  - Daemon integration
+    - Updated `packages/infra/src/daemon/server.ts`
+      - ambient promoted signals are now ingested into memory
+      - promoted signals go through reflection before delivery / ambient-intent routing
+      - reflection can choose:
+        - silence
+        - proactive message
+        - ambient intent candidate
+      - selected user in-thread replies used for clarification / decision / scope handling are now also written into memory via canonical conversation-turn ingestion
+  - Documentation
+    - Updated `ARCHITECTURE.md`
+      - reflected richer MemoryService producer reality
+      - reflected the new reflection-stage implementation seed
+    - Updated `docs/PROGRESS_MATRIX.md`
+      - advanced the `2026-03-31` reading for memory + proactive cognition
+    - Updated `docs/DEVELOPMENT_LOG.md`
+- Analysis / trade-offs:
+  - This is still **not** the full `Memory Rover` system.
+    - there is no persisted agenda queue yet
+    - no long-running reflection scheduler yet
+    - no mature relationship-learning loop yet
+  - But it is no longer fair to say Sprint 8 code only has “heuristic promote → message/intent.”
+    - there is now a real reflective boundary object in code
+  - On the memory side, the biggest gain is not just another retrieval tweak:
+    - it is that more runtime events now have a canonical path into memory with provenance
+  - The prospective-memory method exists now at the runtime boundary even though first durable producer usage is still intentionally conservative.
+    - that is a boundary-first move: create the right seam before scattering ad hoc future reminders elsewhere
+- Impact / Result:
+  - **Sprint 6** advanced from “better retrieval only” toward “better retrieval + richer canonical producers”
+  - **Sprint 8** advanced from “better triage” toward “first reflection-stage runtime seed”
+  - This materially improves the architectural honesty of Nous:
+    - memory is less underfed
+    - proactive behavior is less purely heuristic
+    - silence is now a valid reflection outcome in code, not just prose
+- Validation:
+  - Ran targeted validation during implementation:
+    - `bun x tsc --noEmit`
+    - focused `bun test` for:
+      - memory service
+      - reflection service
+      - perception
+      - clarification flow
+      - decision queue flow
+  - Result:
+    - typecheck passed
+    - targeted tests passed
+- Open questions / next steps:
+  - Whether the next Sprint 8 step should be:
+    - persisted `ReflectionAgenda`
+    - background reflection scheduler
+    - governed delivery budget / daily proactive quota
+  - Whether the next Sprint 6 step should be:
+    - durable prospective-memory lifecycle
+    - retrieval feedback signals
+    - vector backend abstraction / sqlite-vec path
+  - How to connect proactive candidates to:
+    - DecisionQueue
+    - outbox digesting
+    - future relationship-bound personalization

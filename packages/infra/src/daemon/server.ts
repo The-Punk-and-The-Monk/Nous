@@ -6,6 +6,7 @@ import type {
 	DaemonEnvelope,
 	Decision,
 	LLMProvider,
+	RelationshipBoundary,
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
@@ -14,6 +15,8 @@ import { createPersistenceBackend } from "@nous/persistence";
 import {
 	ContextAssembler,
 	MemoryService,
+	ReflectionService,
+	createDefaultRelationshipBoundary,
 	renderContextForSystemPrompt,
 } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
@@ -59,6 +62,7 @@ export class NousDaemon {
 		store: this.backend.memory,
 		agentId: "nous",
 	});
+	private readonly reflection: ReflectionService;
 	private readonly perception: PerceptionService;
 	private readonly threadInputRouter: ThreadInputRouter;
 	private readonly threadScopeRouter: ThreadScopeRouter;
@@ -74,6 +78,10 @@ export class NousDaemon {
 	private isShuttingDown = false;
 
 	constructor(private readonly options: NousDaemonOptions) {
+		this.reflection = new ReflectionService({
+			llm: options.llm,
+			memory: this.memory,
+		});
 		this.orchestrator = new Orchestrator({
 			llm: options.llm,
 			eventStore: this.backend.events,
@@ -117,40 +125,82 @@ export class NousDaemon {
 					title: this.getAmbientThreadTitle(rootDir),
 					channelId: "daemon",
 				});
+				const scope = {
+					workingDirectory: rootDir,
+					projectRoot: rootDir,
+				};
+				const signalMemory = this.memory.ingestPerceptionSignal({
+					signalId: promotion.signal.id,
+					signalType: promotion.signal.signalType,
+					message: promotion.message,
+					confidence: promotion.confidence,
+					scope,
+					threadId: thread.id,
+				});
+				const reflection = await this.reflection.reflectSignal({
+					signalId: promotion.signal.id,
+					signalType: promotion.signal.signalType,
+					summary: promotion.message,
+					confidence: promotion.confidence,
+					scope,
+					threadId: thread.id,
+					suggestedIntentText: promotion.suggestedIntentText,
+					sourceMemoryIds: [signalMemory.id],
+					relationshipBoundary: this.buildAmbientRelationshipBoundary(),
+				});
+				const candidate = reflection.candidate;
+				if (!candidate) {
+					await this.flushPendingDeliveriesForThread(thread.id);
+					return;
+				}
+				if (candidate.recommendedMode === "silent") {
+					await this.flushPendingDeliveriesForThread(thread.id);
+					return;
+				}
 				this.dialogue.enqueueAssistantMessage({
 					threadId: thread.id,
-					content: promotion.message,
+					content: candidate.messageDraft,
 					kind: "notification",
 					metadata: {
-						source: "perception",
-						confidence: promotion.confidence,
-						autoSubmit: promotion.autoSubmit,
+						source: "proactive_reflection",
+						confidence: candidate.confidence,
+						kind: candidate.kind,
+						recommendedMode: candidate.recommendedMode,
+						agendaItemId: reflection.agendaItem.id,
+						reflectionRunId: reflection.run.id,
 					},
 				});
 				if (this.nousConfig.ambient.enabled && promotion.suggestedIntentText) {
-					const scope = {
-						workingDirectory: rootDir,
-						projectRoot: rootDir,
-					};
-					if (this.nousConfig.ambient.autoSubmit && promotion.autoSubmit) {
+					const ambientIntentText =
+						candidate.kind === "ambient_intent"
+							? candidate.proposedIntentText
+							: undefined;
+					if (!ambientIntentText) {
+						await this.flushPendingDeliveriesForThread(thread.id);
+						return;
+					}
+					const allowAutoExecute =
+						this.nousConfig.ambient.autoSubmit &&
+						candidate.recommendedMode === "auto_execute" &&
+						candidate.requiresApproval === false;
+					if (allowAutoExecute) {
 						this.dialogue.enqueueAssistantMessage({
 							threadId: thread.id,
-							content: `Auto-submitting ambient intent: ${promotion.suggestedIntentText}`,
+							content: `Auto-submitting ambient intent: ${ambientIntentText}`,
 							kind: "notification",
-							metadata: { source: "ambient_intent_strategy" },
+							metadata: {
+								source: "ambient_intent_strategy",
+								candidateId: candidate.id,
+							},
 						});
-						await this.submitAmbientIntent(
-							thread.id,
-							promotion.suggestedIntentText,
-							scope,
-						);
-					} else {
+						await this.submitAmbientIntent(thread.id, ambientIntentText, scope);
+					} else if (candidate.kind === "ambient_intent") {
 						await this.queueAmbientIntentForApproval(
 							thread.id,
-							promotion.suggestedIntentText,
+							ambientIntentText,
 							scope,
-							promotion.message,
-							promotion.confidence,
+							candidate.messageDraft,
+							candidate.confidence,
 						);
 					}
 				}
@@ -312,6 +362,16 @@ export class NousDaemon {
 			return;
 		}
 
+		if (payload.note?.trim() && payload.threadId) {
+			this.storeConversationTurnMemory({
+				threadId: payload.threadId,
+				messageId: payload.messageId,
+				text: payload.note,
+				channel: payload.channel,
+				intentId: decision.intentId,
+			});
+		}
+
 		switch (decision.kind) {
 			case "clarification":
 				throw new Error(
@@ -466,11 +526,14 @@ export class NousDaemon {
 		const pending = this.backend.decisions.getPendingByThread(payload.threadId);
 		if (pending.length === 0) {
 			if (await this.tryHandleScopeSensitiveThreadMessage(payload)) {
+				this.storeConversationTurnMemory(payload);
 				return;
 			}
 			await this.startIntentExecution(payload);
 			return;
 		}
+
+		this.storeConversationTurnMemory(payload);
 
 		if (pending.length > 1) {
 			this.dialogue.enqueueAssistantMessage({
@@ -2163,6 +2226,23 @@ export class NousDaemon {
 		});
 	}
 
+	private storeConversationTurnMemory(payload: {
+		threadId: string;
+		text: string;
+		channel: Channel;
+		messageId?: string;
+		intentId?: string;
+	}): void {
+		this.memory.ingestConversationTurn({
+			threadId: payload.threadId,
+			role: "user",
+			content: payload.text,
+			scope: payload.channel.scope,
+			messageId: payload.messageId,
+			intentId: payload.intentId,
+		});
+	}
+
 	private storeIntentOutcomeMemory(
 		intentId: string,
 		outcome: "intent.achieved" | "escalation",
@@ -2352,6 +2432,34 @@ export class NousDaemon {
 		const segments = rootDir.replace(/\\/g, "/").split("/").filter(Boolean);
 		const label = segments.at(-1) ?? rootDir;
 		return `Ambient notices — ${label}`;
+	}
+
+	private buildAmbientRelationshipBoundary(): RelationshipBoundary {
+		return createDefaultRelationshipBoundary({
+			proactivityPolicy: {
+				initiativeLevel: this.nousConfig.ambient.enabled
+					? "balanced"
+					: "minimal",
+				allowedKinds: [
+					"suggestion",
+					"offer",
+					"reminder",
+					"ambient_intent",
+					"silent_watchpoint",
+					"protective_intervention",
+				],
+				blockedKinds: [],
+				requireApprovalForKinds: ["ambient_intent", "protective_intervention"],
+			},
+			interruptionPolicy: {
+				maxUnpromptedMessagesPerDay: 6,
+				preferredDelivery: "thread",
+			},
+			autonomyPolicy: {
+				allowOffersWithoutPrompt: true,
+				allowAmbientAutoExecution: this.nousConfig.ambient.autoSubmit,
+			},
+		});
 	}
 }
 

@@ -43,6 +43,37 @@ export interface IngestIntentOutcomeInput {
 	outputs?: string[];
 }
 
+export interface IngestConversationTurnInput {
+	threadId: string;
+	role: "user" | "assistant";
+	content: string;
+	scope?: ChannelScope;
+	messageId?: string;
+	intentId?: string;
+}
+
+export interface IngestPerceptionSignalInput {
+	signalId: string;
+	signalType: string;
+	message: string;
+	confidence: number;
+	scope?: ChannelScope;
+	threadId?: string;
+	eventId?: string;
+}
+
+export interface IngestProspectiveCommitmentInput {
+	title: string;
+	detail?: string;
+	threadId?: string;
+	intentId?: string;
+	scope?: ChannelScope;
+	dueAt?: string;
+	remindAt?: string;
+	blocking?: boolean;
+	sourceRefs?: MemorySourceRef[];
+}
+
 export interface MemoryContextQuery
 	extends Omit<MemoryRetrievalInput, "agentId"> {
 	recordAccess?: boolean;
@@ -159,6 +190,126 @@ export class MemoryService {
 			lastAccessedAt: createdAt,
 			accessCount: 0,
 			retentionScore: isAchieved ? 1.2 : 0.8,
+		});
+	}
+
+	ingestConversationTurn(input: IngestConversationTurnInput): MemoryEntry {
+		const createdAt = now();
+		const metadata: EpisodicMemoryMetadata = {
+			schemaVersion: "memory.v1",
+			sourceKind: "conversation_turn",
+			threadId: input.threadId,
+			intentId: input.intentId,
+			projectRoot: input.scope?.projectRoot,
+			focusedFile: input.scope?.focusedFile,
+			labels: input.scope?.labels ?? [],
+			tags: ["conversation", input.role],
+			provenance: this.buildProvenance({
+				source: "conversation_turn",
+				observedAt: createdAt,
+				sourceRefs: compactRefs([
+					{ kind: "thread", id: input.threadId },
+					input.messageId
+						? { kind: "message", id: input.messageId }
+						: undefined,
+					input.intentId ? { kind: "intent", id: input.intentId } : undefined,
+				]),
+				confidence: 0.75,
+			}),
+		};
+
+		return this.store({
+			id: prefixedId("mem"),
+			tier: "episodic",
+			agentId: this.agentId,
+			content: `${input.role === "user" ? "User" : "Assistant"} said: ${input.content}`,
+			metadata,
+			createdAt,
+			lastAccessedAt: createdAt,
+			accessCount: 0,
+			retentionScore: input.role === "user" ? 0.9 : 0.7,
+		});
+	}
+
+	ingestPerceptionSignal(input: IngestPerceptionSignalInput): MemoryEntry {
+		const createdAt = now();
+		const metadata: EpisodicMemoryMetadata = {
+			schemaVersion: "memory.v1",
+			sourceKind: "perception_signal",
+			threadId: input.threadId,
+			projectRoot: input.scope?.projectRoot,
+			focusedFile: input.scope?.focusedFile,
+			labels: input.scope?.labels ?? [],
+			tags: ["perception", input.signalType],
+			provenance: this.buildProvenance({
+				source: "perception_signal",
+				observedAt: createdAt,
+				confidence: input.confidence,
+				sourceRefs: compactRefs([
+					{ kind: "sensor_signal", id: input.signalId },
+					input.eventId ? { kind: "event", id: input.eventId } : undefined,
+					input.threadId ? { kind: "thread", id: input.threadId } : undefined,
+				]),
+			}),
+		};
+
+		return this.store({
+			id: prefixedId("mem"),
+			tier: "episodic",
+			agentId: this.agentId,
+			content: `Perception signal (${input.signalType}): ${input.message}`,
+			metadata,
+			createdAt,
+			lastAccessedAt: createdAt,
+			accessCount: 0,
+			retentionScore: 0.85,
+		});
+	}
+
+	ingestProspectiveCommitment(
+		input: IngestProspectiveCommitmentInput,
+	): MemoryEntry {
+		const createdAt = now();
+		const metadata = {
+			schemaVersion: "memory.v1" as const,
+			sourceKind: "prospective_commitment" as const,
+			threadId: input.threadId,
+			intentId: input.intentId,
+			projectRoot: input.scope?.projectRoot,
+			focusedFile: input.scope?.focusedFile,
+			labels: input.scope?.labels ?? [],
+			tags: ["prospective", input.blocking ? "blocking" : "non_blocking"],
+			dueAt: input.dueAt,
+			remindAt: input.remindAt,
+			fulfillmentStatus: "pending" as const,
+			blocking: input.blocking,
+			provenance: this.buildProvenance({
+				source: "prospective_commitment",
+				observedAt: createdAt,
+				confidence: 0.85,
+				sourceRefs: compactRefs([
+					input.threadId ? { kind: "thread", id: input.threadId } : undefined,
+					input.intentId ? { kind: "intent", id: input.intentId } : undefined,
+					...(input.sourceRefs ?? []),
+				]),
+			}),
+		};
+
+		return this.store({
+			id: prefixedId("mem"),
+			tier: "prospective",
+			agentId: this.agentId,
+			content: [
+				`Prospective commitment: ${input.title}`,
+				input.detail ? `Detail: ${input.detail}` : undefined,
+			]
+				.filter(Boolean)
+				.join("\n"),
+			metadata,
+			createdAt,
+			lastAccessedAt: createdAt,
+			accessCount: 0,
+			retentionScore: input.blocking ? 1.3 : 1.1,
 		});
 	}
 

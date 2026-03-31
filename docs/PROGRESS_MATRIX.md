@@ -41,17 +41,17 @@ This file answers a different question:
 
 | Area | Yesterday | Today | What changed |
 |---|---|---|---|
-| Sprint 6 / Memory retrieval | first retrieval loop only | stronger first retrieval loop | added lexical FTS candidate expansion, chunk-aware selection, provenance/thread/scope-biased ranking, better packed context hints |
+| Sprint 6 / Memory retrieval | first retrieval loop only | stronger first retrieval loop + richer producers | added lexical FTS candidate expansion, chunk-aware selection, provenance/thread/scope-biased ranking, better packed context hints, and canonical producers for perception / conversation / prospective memory |
 | Sprint 7 / Context | basic rich context | context boundary much more explicit | context now includes git status detail, local `.nous` config files, scope labels, and a human-readable permission boundary summary |
-| Sprint 8 / Perception | heuristic skeleton | first low-noise usable slice | idle-first attention, redundant git-status suppression, workspace-scoped ambient notice threads, path-specific safe follow-up suggestions |
+| Sprint 8 / Perception | heuristic skeleton | first low-noise usable slice + reflection seed | idle-first attention, redundant git-status suppression, workspace-scoped ambient notice threads, path-specific safe follow-up suggestions, and a first reflection-stage candidate synthesis path |
 
 #### B. Module maturity deltas
 
 | Module | New reading | Why |
 |---|---|---|
 | Context Assembly | **Medium-High → stronger Medium-High (~70%)** | It now carries richer project state plus explicit “why can/can’t I act here?” boundary context, which materially improves explainability and scope-awareness |
-| Memory | **Medium (~35%) → stronger Medium (~45%)** | Still not true vector/graph RAG, but no longer just whole-entry heuristic recall; retrieval now has a more honest packing/ranking policy |
-| Perception / Proactive Cognition | **Early (~30%) → early but more usable (~40%)** | Still far from Memory Rover / reflective proactive cognition, but the shipped slice is less noisy and more assistant-like |
+| Memory | **Medium (~35%) → stronger Medium (~50%)** | Still not true vector/graph RAG, but no longer just whole-entry heuristic recall; retrieval now has a more honest packing/ranking policy and more real producers feeding the substrate |
+| Perception / Proactive Cognition | **Early (~30%) → early but more usable (~45%)** | Still far from full Memory Rover / reflective proactive cognition, but a real reflection-stage seed now exists instead of only raw heuristic promotion |
 
 #### C. Sprint / phase read after today's work
 

@@ -103,6 +103,20 @@ export type {
 	ValidationState,
 } from "./types/evolution.ts";
 export type {
+	ProactiveCandidateKind,
+	ProactiveCandidateUrgency,
+	ProactiveDeliveryMode,
+	ProactiveCandidateStatus,
+	ProactiveCandidate,
+	ReflectionAgendaCategory,
+	ReflectionBudgetClass,
+	ReflectionAgendaStatus,
+	ReflectionAgendaItem,
+	ReflectionRunOutcome,
+	ReflectionRun,
+	RelationshipBoundary,
+} from "./types/proactive.ts";
+export type {
 	PlanningDepth,
 	TimeDepth,
 	OrganizationDepth,

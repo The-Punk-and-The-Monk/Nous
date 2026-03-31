@@ -100,4 +100,79 @@ describe("MemoryService", () => {
 		expect(stored?.retentionScore).toBe(0.8);
 		expect(metadata.outcomeStatus).toBe("escalated");
 	});
+
+	test("ingests perception signals and conversation turns with canonical provenance", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const service = new MemoryService({ store, agentId: "nous" });
+
+		const perception = service.ingestPerceptionSignal({
+			signalId: "sig_1",
+			signalType: "fs.file_changed",
+			message: "package.json changed in /repo/app",
+			confidence: 0.82,
+			threadId: "thread_ambient",
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+				focusedFile: "package.json",
+			},
+			eventId: "evt_1",
+		});
+		const conversation = service.ingestConversationTurn({
+			threadId: "thread_ambient",
+			role: "user",
+			content: "Please keep this read-only.",
+			messageId: "msg_1",
+			intentId: "int_1",
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+			},
+		});
+
+		const perceptionStored = store.getById(perception.id);
+		const conversationStored = store.getById(conversation.id);
+		const perceptionMeta = perceptionStored?.metadata as EpisodicMemoryMetadata;
+		const conversationMeta =
+			conversationStored?.metadata as EpisodicMemoryMetadata;
+
+		expect(perceptionMeta.sourceKind).toBe("perception_signal");
+		expect(perceptionMeta.provenance.sourceRefs).toEqual([
+			{ kind: "sensor_signal", id: "sig_1" },
+			{ kind: "event", id: "evt_1" },
+			{ kind: "thread", id: "thread_ambient" },
+		]);
+		expect(conversationMeta.sourceKind).toBe("conversation_turn");
+		expect(conversationMeta.provenance.sourceRefs).toEqual([
+			{ kind: "thread", id: "thread_ambient" },
+			{ kind: "message", id: "msg_1" },
+			{ kind: "intent", id: "int_1" },
+		]);
+	});
+
+	test("ingests prospective commitments into the prospective tier", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const service = new MemoryService({ store, agentId: "nous" });
+
+		const entry = service.ingestProspectiveCommitment({
+			title: "Follow up on auth migration",
+			detail: "Revisit the auth migration once the dependency update lands.",
+			threadId: "thread_1",
+			intentId: "int_1",
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+			},
+			dueAt: "2026-04-01T09:00:00.000Z",
+			remindAt: "2026-04-01T08:00:00.000Z",
+			blocking: true,
+		});
+
+		const stored = store.getById(entry.id);
+		expect(stored?.tier).toBe("prospective");
+		expect(stored?.content).toContain("Follow up on auth migration");
+		expect((stored?.metadata as Record<string, unknown>).sourceKind).toBe(
+			"prospective_commitment",
+		);
+	});
 });

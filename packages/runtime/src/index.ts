@@ -73,9 +73,21 @@ export type {
 export type {
 	IngestHumanIntentInput,
 	IngestIntentOutcomeInput,
+	IngestConversationTurnInput,
+	IngestPerceptionSignalInput,
+	IngestProspectiveCommitmentInput,
 	MemoryContextQuery,
 	MemoryServiceOptions,
 } from "./memory/service.ts";
+export {
+	ReflectionService,
+	createDefaultRelationshipBoundary,
+} from "./proactive/reflection.ts";
+export type {
+	ReflectSignalInput,
+	ReflectionOutcome,
+	ReflectionServiceOptions,
+} from "./proactive/reflection.ts";
 
 // Growth engine
 export { GrowthEngine } from "./growth/engine.ts";
