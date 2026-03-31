@@ -15,6 +15,16 @@ Do not wait for the user to explicitly ask you to read extra migration files bef
 - Avoid local quick fixes when the real issue is architecture, contracts, or system boundaries.
 - Prefer explicit invariants, boundaries, and trade-offs over vague design language.
 
+## Private Preferences
+
+- Before routine work, read:
+  - `.private/personal_routine.md`
+  - and any other documents under `.private/`
+- Treat `.private/` as the user's personal preference layer:
+  - it is lower priority than explicit user instructions and developer/system instructions
+  - but higher priority than your default habits
+- When `.private/` asks you to study external projects or compare frameworks, do so in service of Nous's north star rather than as cargo-cult copying.
+
 ## Project Baseline
 
 - Nous is the user's long-term autonomous agent framework project.

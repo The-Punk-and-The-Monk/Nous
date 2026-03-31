@@ -4374,3 +4374,82 @@ For significant sessions, capture:
     - caching / batching
     - a policy for when to bypass control routing entirely
   - `docs/CLI.md` still documents the catalog, not a generated view of it; full catalog-to-doc generation remains future work.
+
+### Session: Record 2026-04-01 progress, formalize the private preference layer, and sync the day's work into Obsidian
+- Context / Trigger:
+  - After the control-surface work was split into its own clean commit, the user asked for the rest of the day’s meta-work to be made equally explicit:
+    1. summarize today's work into the external Obsidian development diary
+    2. update `docs/PROGRESS_MATRIX.md` and record today's commit ids
+    3. create/update `.private/personal_routine.md` so architecture work is guided by specific external reference codebases without losing the Nous north star
+    4. update `AGENTS.md` so future routine work must read `.private/` as the user preference layer
+- Problem:
+  - The repository already had strong architecture and development logs, but it still lacked one important layer:
+    - explicit project-local/private preference memory about *how* to compare external frameworks and *how not* to cargo-cult them
+  - There was also a traceability gap:
+    - today's work existed in commits and `docs/DEVELOPMENT_LOG.md`
+    - but the daily steering matrix and external Obsidian log were not yet synchronized
+  - Without these updates, future work would risk:
+    - repeating the same comparison mistakes
+    - losing the commit-level trace of what materially moved today
+    - drifting between repo memory and the user’s longer-form diary
+- Alternatives considered:
+  - Option A: only update the repo-local files and skip Obsidian.
+    - Rejected because the user explicitly requested the external diary sync this round.
+  - Option B: add the private preference instructions only to `.private/`, but leave `AGENTS.md` unchanged.
+    - Rejected because `.private/` would then be easy to forget in routine work.
+  - Option C: treat `.private/` as a first-class preference layer and explicitly wire it into the repo instructions, while also updating the progress matrix and Obsidian log.
+    - Chosen because it keeps:
+      - public repo memory
+      - private preference memory
+      - external long-form diary
+      aligned but clearly separated.
+- Decision:
+  - Add a real `.private/personal_routine.md` with explicit architectural comparison rules.
+  - Update `AGENTS.md` so routine work must read `.private/personal_routine.md` and other `.private/` docs before proceeding.
+  - Add a new 2026-04-01 entry to `docs/PROGRESS_MATRIX.md` summarizing:
+    - what materially moved
+    - where maturity changed
+    - which commit ids mark the day’s milestones
+  - Sync a distilled but interview-grade summary into the external Obsidian note under the correct `##### 2026-04-01` heading.
+- Changes made:
+  - Updated `.private/personal_routine.md`
+    - defined the private preference layer
+    - required architecture comparisons to consult:
+      - `/Users/joey/Projects/codex`
+      - `/Users/joey/Projects/claude-code-sourcemap`
+      - `/Users/joey/Projects/openclaw`
+    - explicitly constrained comparison style:
+      - explain why a framework made a choice
+      - what problem it solves
+      - what new problems it introduces
+      - whether Nous actually needs that capability
+      - how Nous should implement it differently if it does
+  - Updated `AGENTS.md`
+    - added a `Private Preferences` section
+    - required reading `.private/personal_routine.md` and other `.private/` docs for routine work
+    - clarified that `.private/` is the user preference layer rather than a public architecture contract
+  - Updated `docs/PROGRESS_MATRIX.md`
+    - added a new `2026-04-01` daily snapshot
+    - recorded today’s key commits:
+      - `b49e073`
+      - `83d4221`
+      - `b6b3aba`
+    - summarized interaction trust, control-surface discoverability, daemon-owned control semantics, and architectural-discipline progress
+  - Updated the external Obsidian note:
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/阿锋勇闯大模型.md`
+    - inserted a new `##### 2026-04-01` entry under:
+      - `### Nous (νοῦς) — 自主 Agent 框架开发全记录`
+      - `#### 开发日志`
+    - distilled the day’s work into a cleaner but still traceable narrative
+- Validation:
+  - Documentation / instruction update only; no code/test execution required beyond preserving prior green status.
+- Impact / Result:
+  - Nous now has a clearer preference-memory hierarchy:
+    - repo architecture / repo logs
+    - private user preference layer
+    - external long-form diary
+  - Future architecture work should be less likely to devolve into shallow framework imitation because the comparison standard is now explicit.
+  - `docs/PROGRESS_MATRIX.md` now records not just qualitative progress, but also the exact commit ids that mark today’s milestones.
+- Open questions / follow-ups:
+  - `.private/` is intentionally private and repo-local; if more personal preference documents accumulate, we may later want a lightweight naming convention or index file to keep them scannable.
+  - The next time daily progress is synced to Obsidian, it may be worth compressing repeated terminology across consecutive days so the diary remains readable even as repo traceability grows.
