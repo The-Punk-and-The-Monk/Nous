@@ -4406,11 +4406,11 @@ For significant sessions, capture:
 - Decision:
   - Add a real `.private/personal_routine.md` with explicit architectural comparison rules.
   - Update `AGENTS.md` so routine work must read `.private/personal_routine.md` and other `.private/` docs before proceeding.
-  - Add a new 2026-04-01 entry to `docs/PROGRESS_MATRIX.md` summarizing:
+  - Add a new 2026-03-31 late-night supplement to `docs/PROGRESS_MATRIX.md` summarizing:
     - what materially moved
     - where maturity changed
     - which commit ids mark the day’s milestones
-  - Sync a distilled but interview-grade summary into the external Obsidian note under the correct `##### 2026-04-01` heading.
+  - Sync a distilled but interview-grade summary into the external Obsidian note under the correct `##### 2026-03-31` heading.
 - Changes made:
   - Updated `.private/personal_routine.md`
     - defined the private preference layer
@@ -4429,7 +4429,7 @@ For significant sessions, capture:
     - required reading `.private/personal_routine.md` and other `.private/` docs for routine work
     - clarified that `.private/` is the user preference layer rather than a public architecture contract
   - Updated `docs/PROGRESS_MATRIX.md`
-    - added a new `2026-04-01` daily snapshot
+    - added a new late-night supplement under `2026-03-31`
     - recorded today’s key commits:
       - `b49e073`
       - `83d4221`
@@ -4437,7 +4437,7 @@ For significant sessions, capture:
     - summarized interaction trust, control-surface discoverability, daemon-owned control semantics, and architectural-discipline progress
   - Updated the external Obsidian note:
     - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/阿锋勇闯大模型.md`
-    - inserted a new `##### 2026-04-01` entry under:
+    - inserted a new `##### 2026-03-31` entry under:
       - `### Nous (νοῦς) — 自主 Agent 框架开发全记录`
       - `#### 开发日志`
     - distilled the day’s work into a cleaner but still traceable narrative
@@ -4453,3 +4453,79 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - `.private/` is intentionally private and repo-local; if more personal preference documents accumulate, we may later want a lightweight naming convention or index file to keep them scannable.
   - The next time daily progress is synced to Obsidian, it may be worth compressing repeated terminology across consecutive days so the diary remains readable even as repo traceability grows.
+
+## 2026-04-01
+
+### Session: Correct the late-night date bucket for 2026-03-31 summaries and add a practical Codex overnight runner
+- Context / Trigger:
+  - Shortly after midnight on April 1, 2026 at approximately 00:27 Asia/Shanghai, the user clarified that the "today" they had referred to in the previous request was semantically still the **night of March 31, 2026**.
+  - That created a documentation mismatch:
+    - `docs/DEVELOPMENT_LOG.md` already had the March 31 engineering sessions
+    - but `docs/PROGRESS_MATRIX.md` and the external Obsidian diary had been updated under April 1
+  - The user also asked for a practical helper script to run Codex overnight in a safer, more repeatable way.
+- Problem:
+  - Leaving the date mismatch in place would make the daily steering history misleading:
+    - March 31 engineering work would be split across two dates for accidental clock reasons
+    - the external diary and repo-local progress matrix would disagree with the actual engineering narrative in `docs/DEVELOPMENT_LOG.md`
+  - There was also no ready-to-run repo-local automation wrapper for the overnight Codex workflow:
+    - branch setup
+    - detached `tmux` execution
+    - repeated `codex exec` / `codex exec resume --last`
+    - log capture
+- Alternatives considered:
+  - Option A: leave the April 1 diary/progress entries as-is and merely explain the discrepancy in chat.
+    - Rejected because the records themselves would remain misleading.
+  - Option B: move the repo engineering sessions themselves into an April 1 bucket.
+    - Rejected because the engineering intent and the user's clarified framing were both that this work belonged to the March 31 night.
+  - Option C: treat the late-night summary as part of the March 31 bucket in the daily summary artifacts, while keeping this corrective/documentation session itself under the real current date of April 1.
+    - Chosen because it preserves both:
+      - accurate engineering chronology
+      - accurate diary/progress grouping
+- Decision:
+  - Move the daily-summary material in:
+    - `docs/PROGRESS_MATRIX.md`
+    - external Obsidian log
+    from `2026-04-01` into the March 31 bucket.
+  - Keep this correction itself logged under the real current date `2026-04-01` in `docs/DEVELOPMENT_LOG.md`.
+  - Add `scripts/codex_overnight.sh` as a practical overnight Codex runner with:
+    - detached `tmux` mode by default
+    - optional foreground mode for debugging
+    - branch creation
+    - initial prompt + resume prompt files
+    - repeated `codex exec` / `codex exec resume --last`
+    - JSONL/stdderr/last-message log capture
+- Changes made:
+  - Updated `docs/PROGRESS_MATRIX.md`
+    - removed the standalone `2026-04-01` block
+    - merged its content into a `2026-03-31` late-night supplement
+  - Updated the external Obsidian note:
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/阿锋勇闯大模型.md`
+    - changed the misdated `##### 2026-04-01` heading to `##### 2026-03-31`
+  - Updated `docs/DEVELOPMENT_LOG.md`
+    - corrected prior references that had described the progress/Obsidian sync as a `2026-04-01` bucket
+    - added this new corrective session
+  - Added `scripts/codex_overnight.sh`
+    - supports:
+      - `--workdir`
+      - `--session`
+      - `--branch`
+      - `--max-runs`
+      - `--model`
+      - `--prompt-file` / `--prompt`
+      - `--resume-prompt`
+      - `--search`
+      - `--dangerous`
+      - `--foreground`
+      - `--no-branch`
+    - defaults to a Nous-oriented overnight prompt
+    - defaults to `codex exec --full-auto`
+    - uses `codex exec resume --last` for subsequent rounds
+    - writes run artifacts under `${TMPDIR:-/tmp}/codex-overnight/<session>`
+- Validation:
+  - `scripts/codex_overnight.sh --help` ✅
+- Impact / Result:
+  - Daily-summary artifacts now align better with the actual March 31 engineering narrative.
+  - The repo now contains a practical, reusable overnight Codex wrapper instead of relying on one-off shell snippets.
+- Open questions / follow-ups:
+  - The script currently relies on `codex exec resume --last`, which is convenient but assumes there is no competing Codex session in the same working context.
+  - If the overnight workflow becomes routine, a future improvement could capture an explicit Codex session id and resume that exact session rather than depending on `--last`.

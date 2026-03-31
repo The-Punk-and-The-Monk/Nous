@@ -33,69 +33,6 @@ This file answers a different question:
 
 ---
 
-## 2026-04-01
-
-### Daily snapshot
-
-#### 今日关键提交
-
-| Commit | 主题 | 意义 |
-|---|---|---|
-| `b49e073` | structured process surface + interrupt contract | 把 thread trust receipt、process lane / answer lane、以及 interrupt 的“边界控制而非语义回滚”正式收进架构与实现 |
-| `83d4221` | catalog-driven CLI discovery + REPL control routing | 让 CLI help、REPL `/commands`、capability discovery 共用一份显式控制面目录 |
-| `b6b3aba` | daemon-side control routing + shared `ControlSurfaceCatalog` | 把 REPL 自然语言控制从本地规则升级成 daemon-side LLM 结构化解析，并把 CLI-local catalog 泛化为跨 CLI / IDE / Web 的控制面基座 |
-
-#### 观察点
-
-| 观察点 | 当前判断 | 说明 |
-|---|---|---|
-| 交互可信度 | 明显增强 | thread trust receipt、process lane、final answer lane、worked-for summary 让长任务过程更可解释 |
-| 控制面可发现性 | 从“记命令”转向“可查询能力面” | `nous help [query]`、REPL `/commands [query]`、capability discovery 已不再依赖手写帮助文本 |
-| REPL 自然语言控制 | 已从伪自然语言进入真实语义控制阶段 | 现在不是本地规则匹配，而是 daemon-side LLM 结构化控制解析，再编译到显式 control handler |
-| 多通道控制面方向 | 形成了正确抽象 | `OperationCatalog` 已升级为 shared `ControlSurfaceCatalog`，开始具备 CLI / IDE / Web 共用潜力 |
-| 架构纪律 | 进一步收紧 | interrupt、control plane、用户偏好层、外部项目比较方法都开始被明确写成合同，而不再停留在口头协作 |
-
-#### A. What moved materially today
-
-| Area | Yesterday | Today | What changed |
-|---|---|---|---|
-| Process visibility | 有基础可视过程面，但还缺完整解释图与 interrupt 合同 | 交互合同更完整 | 把 execution flow / state machine 写进架构，正式锁定 interrupt = boundary control，不再允许“语义回滚幻想” |
-| CLI control surface | CLI / REPL help 已改善，但自然语言控制仍偏本地规则 | daemon-owned semantic control surface | control semantics 移到 daemon 侧，REPL 只保留 deterministic slash syntax + renderer |
-| Command discoverability | catalog-driven，但仍偏 CLI-local | shared control-surface substrate | `OperationCatalog` 升级为 `ControlSurfaceCatalog`，开始成为跨 channel 控制面对象 |
-| Repo operating memory | 以仓库规范为主，缺一个显式私人偏好层 | 偏好层显式化 | `.private/personal_routine.md` 与 `AGENTS.md` 现在明确把用户偏好、外部项目对比方法、Nous 北极星约束收进执行习惯 |
-
-#### B. Module maturity deltas
-
-| Module | New reading | Why |
-|---|---|---|
-| Dialogue / Daemon / Unified Presence | **High → stronger High (~89%)** | 不只是线程连续性更强，连控制面解析都开始回到 daemon 本体，说明“Nous 作为持续存在个体”又往前走了一步 |
-| Human Interface / Control Surface | **Medium → strong Medium-High (~72%)** | 现在已经不是零散命令集，而是有共享 catalog、discovery、semantic routing、context-aware availability 的控制面雏形 |
-| Governance / Execution Contract | **High → stronger High (~84%)** | interrupt contract 被正式写死为 boundary control；这使长期的 pause/cancel/rollback 语义更稳 |
-| Architecture Traceability | **Medium-High → stronger High (~82%)** | `ARCHITECTURE.md`、`docs/DEVELOPMENT_LOG.md`、Obsidian、私人偏好层之间的职责边界更明确，便于长期 interview-grade 追踪 |
-
-#### C. Sprint / phase read after today's work
-
-| Sprint / Phase | Current status | Notes |
-|---|---|---|
-| Sprint 4 (CLI + Interface) | **从“可用 CLI”进入“可发现的控制面”阶段** | 重点不再只是命令可执行，而是控制能力是否可被查询、理解、路由 |
-| Sprint 5 (Daemon + Dialogue) | **继续加强** | daemon 不再只承载任务执行，也开始承载 control-plane semantics |
-| Phase 0: MVP | **~78%** | “像一个持续助手”这条线明显更可信，但 tool breadth、memory intelligence、relationship-aware proactive 仍是主要缺口 |
-
-#### D. Steering implication
-
-今天之后，Nous 的下一个高杠杆问题不再是“怎么再堆几个控制命令”，而是：
-
-1. **把 shared control surface 真正扩展到未来 IDE / Web client**
-2. **继续补 tool breadth，让 process/control surface 驱动的不是空壳，而是更强真实能力**
-3. **把 personal-assistant intelligence 补上去**
-   - relationship-aware memory
-   - proactive cognition
-   - procedural / prospective memory
-
-换句话说：
-
-> **控制面合同已经明显强于几天前，接下来更大的价值增长会重新回到 intelligence layer，而不是继续只做 shell 层便利性。**
-
 ## 2026-03-31
 
 ### Daily snapshot
@@ -153,6 +90,57 @@ After this round, the next highest-leverage gaps are no longer “basic context 
 1. **more real tool breadth**
 2. **relationship-aware Memory Rover / reflective proactive runtime**
 3. **procedural memory + richer prospective producer families**
+
+#### 夜间补记（按 2026-03-31 归档）
+
+##### 今日关键提交
+
+| Commit | 主题 | 意义 |
+|---|---|---|
+| `b49e073` | structured process surface + interrupt contract | 把 thread trust receipt、process lane / answer lane、以及 interrupt 的“边界控制而非语义回滚”正式收进架构与实现 |
+| `83d4221` | catalog-driven CLI discovery + REPL control routing | 让 CLI help、REPL `/commands`、capability discovery 共用一份显式控制面目录 |
+| `b6b3aba` | daemon-side control routing + shared `ControlSurfaceCatalog` | 把 REPL 自然语言控制从本地规则升级成 daemon-side LLM 结构化解析，并把 CLI-local catalog 泛化为跨 CLI / IDE / Web 的控制面基座 |
+
+##### 额外观察点
+
+| 观察点 | 当前判断 | 说明 |
+|---|---|---|
+| 交互可信度 | 明显增强 | thread trust receipt、process lane、final answer lane、worked-for summary 让长任务过程更可解释 |
+| 控制面可发现性 | 从“记命令”转向“可查询能力面” | `nous help [query]`、REPL `/commands [query]`、capability discovery 已不再依赖手写帮助文本 |
+| REPL 自然语言控制 | 已从伪自然语言进入真实语义控制阶段 | 现在不是本地规则匹配，而是 daemon-side LLM 结构化控制解析，再编译到显式 control handler |
+| 多通道控制面方向 | 形成了正确抽象 | `OperationCatalog` 已升级为 shared `ControlSurfaceCatalog`，开始具备 CLI / IDE / Web 共用潜力 |
+| 架构纪律 | 进一步收紧 | interrupt、control plane、用户偏好层、外部项目比较方法都开始被明确写成合同，而不再停留在口头协作 |
+
+##### 当晚新增的实质推进
+
+| Area | What changed |
+|---|---|
+| Process visibility | 把 execution flow / state machine 写进架构，正式锁定 interrupt = boundary control，不再允许“语义回滚幻想” |
+| CLI control surface | control semantics 移到 daemon 侧，REPL 只保留 deterministic slash syntax + renderer |
+| Command discoverability | `OperationCatalog` 升级为 `ControlSurfaceCatalog`，开始成为跨 channel 控制面对象 |
+| Repo operating memory | `.private/personal_routine.md` 与 `AGENTS.md` 现在明确把用户偏好、外部项目比较方法、Nous 北极星约束收进执行习惯 |
+
+##### 模块成熟度补充判断
+
+| Module | New reading | Why |
+|---|---|---|
+| Dialogue / Daemon / Unified Presence | **High → stronger High (~89%)** | 不只是线程连续性更强，连控制面解析都开始回到 daemon 本体，说明“Nous 作为持续存在个体”又往前走了一步 |
+| Human Interface / Control Surface | **Medium → strong Medium-High (~72%)** | 现在已经不是零散命令集，而是有共享 catalog、discovery、semantic routing、context-aware availability 的控制面雏形 |
+| Governance / Execution Contract | **High → stronger High (~84%)** | interrupt contract 被正式写死为 boundary control；这使长期的 pause/cancel/rollback 语义更稳 |
+| Architecture Traceability | **Medium-High → stronger High (~82%)** | `ARCHITECTURE.md`、`docs/DEVELOPMENT_LOG.md`、Obsidian、私人偏好层之间的职责边界更明确，便于长期 interview-grade 追踪 |
+
+##### 对路线的补充判断
+
+- Sprint 4（CLI + Interface）已经从“可用 CLI”进入“可发现的控制面”阶段。
+- Sprint 5（Daemon + Dialogue）继续加强，因为 daemon 不再只承载任务执行，也开始承载 control-plane semantics。
+- Phase 0 MVP 大概可上调到 **~78%**，但主要缺口仍然是：
+  - tool breadth
+  - memory intelligence
+  - relationship-aware proactive runtime
+
+换句话说：
+
+> **3 月 31 日这轮夜间推进说明，控制面合同已经明显强于几天前，接下来更大的价值增长会重新回到 intelligence layer，而不是继续只做 shell 层便利性。**
 
 ## 2026-03-30
 
