@@ -16,7 +16,6 @@ Options:
   --prompt-file <file>    File containing the initial prompt.
   --prompt <text>         Inline initial prompt. If omitted, a Nous-specific default is used.
   --resume-prompt <text>  Prompt used for subsequent resume rounds.
-  --search                Enable Codex web search.
   --safe-workspace        Use Codex workspace-write sandbox with --full-auto (default).
   --dangerous             Use --dangerously-bypass-approvals-and-sandbox instead of --full-auto.
   --foreground            Run in the current shell instead of a detached tmux session.
@@ -45,7 +44,6 @@ max_runs="999"
 model=""
 prompt_file=""
 resume_prompt=""
-enable_search="1"
 safe_workspace="1"
 dangerous="0"
 foreground="0"
@@ -85,10 +83,6 @@ while [[ $# -gt 0 ]]; do
 		--resume-prompt)
 			resume_prompt="$2"
 			shift 2
-			;;
-		--search)
-			enable_search="1"
-			shift
 			;;
 		--safe-workspace)
 			safe_workspace="1"
@@ -226,10 +220,6 @@ if [[ -n "$MODEL" ]]; then
 	mode_flags+=(--model "$MODEL")
 fi
 
-if [[ "$ENABLE_SEARCH" == "1" ]]; then
-	mode_flags+=(--search)
-fi
-
 for run in $(seq 1 "$MAX_RUNS"); do
 	echo ""
 	echo "== run $run / $MAX_RUNS at $(date '+%Y-%m-%d %H:%M:%S') =="
@@ -270,7 +260,6 @@ export RUN_DIR="$run_dir"
 export BRANCH_NAME="$branch_name"
 export MAX_RUNS="$max_runs"
 export MODEL="$model"
-export ENABLE_SEARCH="$enable_search"
 export SAFE_WORKSPACE="$safe_workspace"
 export DANGEROUS="$dangerous"
 export PROMPT_PATH="$prompt_path"
@@ -294,7 +283,7 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
 	exit 1
 fi
 
-tmux new-session -d -s "$session_name" "WORKDIR='$WORKDIR' RUN_DIR='$RUN_DIR' BRANCH_NAME='$BRANCH_NAME' MAX_RUNS='$MAX_RUNS' MODEL='$MODEL' ENABLE_SEARCH='$ENABLE_SEARCH' DANGEROUS='$DANGEROUS' PROMPT_PATH='$PROMPT_PATH' RESUME_PROMPT_PATH='$RESUME_PROMPT_PATH' bash '$runner_path'"
+tmux new-session -d -s "$session_name" "WORKDIR='$WORKDIR' RUN_DIR='$RUN_DIR' BRANCH_NAME='$BRANCH_NAME' MAX_RUNS='$MAX_RUNS' MODEL='$MODEL' DANGEROUS='$DANGEROUS' PROMPT_PATH='$PROMPT_PATH' RESUME_PROMPT_PATH='$RESUME_PROMPT_PATH' bash '$runner_path'"
 
 echo ""
 echo "Detached tmux session started."
