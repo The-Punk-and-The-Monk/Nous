@@ -39,6 +39,7 @@ import {
 	ThreadInputRouter,
 } from "../intake/thread-input-router.ts";
 import { ThreadScopeRouter } from "../intake/thread-scope-router.ts";
+import { ControlIntentRouter } from "../control/control-intent-router.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
 import {
 	buildTrustReceiptDelivery,
@@ -78,6 +79,7 @@ export class NousDaemon {
 	private readonly threadInputRouter: ThreadInputRouter;
 	private readonly threadScopeRouter: ThreadScopeRouter;
 	private readonly decisionResponseInterpreter: DecisionResponseInterpreter;
+	private readonly controlIntentRouter: ControlIntentRouter;
 	private readonly threadByIntentId = new Map<string, string>();
 	private readonly intentTextById = new Map<string, string>();
 	private readonly intentScopeById = new Map<string, Channel["scope"]>();
@@ -114,6 +116,7 @@ export class NousDaemon {
 		this.decisionResponseInterpreter = new DecisionResponseInterpreter(
 			options.llm,
 		);
+		this.controlIntentRouter = new ControlIntentRouter(options.llm);
 
 		this.dialogue = new DialogueService({
 			messageStore: this.backend.messages,
@@ -124,7 +127,11 @@ export class NousDaemon {
 			onApproveDecision: (payload) => this.handleApproveDecision(payload),
 			onCancelIntent: (payload) => this.handleCancelIntent(payload),
 		});
-		this.controller = new DaemonController(this.dialogue);
+		this.controller = new DaemonController({
+			dialogue: this.dialogue,
+			onResolveControlInput: (_channel, payload) =>
+				this.resolveControlInput(payload),
+		});
 		this.supervisor = new ProcessSupervisor({
 			taskStore: this.backend.tasks,
 			eventStore: this.backend.events,
@@ -345,6 +352,29 @@ export class NousDaemon {
 		channel: Channel;
 	}): Promise<void> {
 		await this.startIntentExecution(payload);
+	}
+
+	private async resolveControlInput(payload: {
+		text: string;
+		surface: "cli" | "repl" | "ide" | "web";
+		currentThreadId?: string;
+	}) {
+		return {
+			resolution: await this.controlIntentRouter.route({
+				text: payload.text,
+				context: {
+					surface: payload.surface,
+					channelType:
+						payload.surface === "ide"
+							? "ide"
+							: payload.surface === "web"
+								? "web"
+								: "cli",
+					daemonRunning: true,
+					currentThreadId: payload.currentThreadId,
+				},
+			}),
+		};
 	}
 
 	private async handleApproveDecision(payload: {

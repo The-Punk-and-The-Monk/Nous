@@ -5148,7 +5148,7 @@ $ nous
   [1] T3: modify manifest.json? (waiting 12m) [a]pprove [d]eny [v]iew
 ```
 
-#### Self-describing CLI control surface
+#### Self-describing control surface catalog
 
 As the CLI grows, a familiar failure mode appears:
 
@@ -5180,10 +5180,10 @@ The control plane should not be encoded only in:
 - a giant slash-command list
 - an LLM prompt that "knows" the commands informally
 
-Instead, Nous should expose a first-class **OperationCatalog**.
+Instead, Nous should expose a first-class **ControlSurfaceCatalog** that is broader than the CLI alone.
 
 ```typescript
-interface OperationCatalogEntry {
+interface ControlSurfaceEntry {
   id: string;                          // "daemon.start", "thread.attach", ...
   title: string;
   summary: string;
@@ -5196,10 +5196,11 @@ interface OperationCatalogEntry {
     | "network"
     | "discovery"
     | "session";
-  surfaces: Array<"cli" | "repl">;
+  surfaces: Array<"cli" | "repl" | "ide" | "web">;
   syntax: string[];                    // e.g. ["nous daemon start", "/attach <threadId>"]
   examples?: string[];
   tags?: string[];                     // search / discovery keywords
+  channels?: Array<"cli" | "ide" | "web">;
   requiresDaemon?: boolean;
   requiresThread?: boolean;
   foregroundOnly?: boolean;
@@ -5214,33 +5215,58 @@ This catalog becomes the single source of truth for:
 - REPL `/help`
 - REPL `/commands [query]`
 - future IDE/Web command palettes
-- natural-language control routing
+- daemon-side natural-language control routing
 - "what can you do here?" capability discovery
 - CLI documentation
 
-#### Control-intent router
+This is an architectural upgrade from a CLI-local command list:
 
-Inside the REPL, not every line should go straight into the task plane.
+- CLI becomes one renderer
+- REPL becomes one renderer
+- IDE/Web can later become additional renderers
+- the runtime can also query the same catalog when interpreting natural-language control
 
-The system should first run a lightweight **control-intent router**:
+#### Daemon-side control-intent router
+
+Inside an interactive client surface, not every line should go straight into the task plane.
+
+The system should first run a lightweight **control-intent router** backed by structured generation:
 
 ```text
-raw REPL input
+raw client input
    │
-   ├─ slash command? ─────────────► resolve deterministically from OperationCatalog
+   ├─ slash command?
+   │    └─► resolve deterministically on the client
    │
-   ├─ high-confidence control intent?
-   │    e.g. "show daemon status", "attach to thread_123", "what can you do here?"
-   │    └─► map to catalog operation
+   ├─ otherwise send to daemon-side control router
    │
-   ├─ medium-confidence control intent?
-   │    └─► ask for clarification
+   ├─ semantic resolution against ControlSurfaceCatalog
+   │    ├─ invoke_operation
+   │    ├─ task_plane
+   │    └─ clarify
    │
-   └─ otherwise
-        └─► treat as normal thread message / task-plane input
+   ├─ invoke_operation
+   │    └─► client executes the explicit control handler
+   │
+   ├─ clarify
+   │    └─► client asks the human to clarify
+   │
+   └─ task_plane
+        └─► send into normal thread / intent pipeline
 ```
 
 This means natural-language control should map to **structured operations**, not directly to arbitrary shell commands and not directly to free-form prompt behavior.
+
+Crucially, this routing should happen daemon-side rather than as a private REPL heuristic when possible:
+
+- the daemon already owns the main LLM provider contract
+- the daemon already owns long-lived runtime state
+- future IDE/Web clients should not each invent their own semantic control parser
+
+So the right split is:
+
+- client: deterministic slash syntax + rendering
+- daemon: semantic control resolution against the shared control catalog
 
 #### Key invariants
 
@@ -5262,6 +5288,9 @@ This means natural-language control should map to **structured operations**, not
      - whether the current client surface is CLI or REPL
 5. **Docs/help/menu/discovery must share the same source**
    - otherwise the control plane fragments immediately
+6. **Control semantics should not be client-private**
+   - CLI, REPL, IDE, and Web should not each own a different natural-language control parser
+   - the semantic layer should compile onto the same catalog-backed control model
 
 #### Why this is better than a bigger slash menu
 
@@ -5277,13 +5306,14 @@ If the catalog exists, then:
 
 Without the catalog, every surface grows its own shadow protocol.
 
-#### Recommended v1 rollout
+#### Recommended rollout
 
-1. Create an initial `OperationCatalog` for the current CLI / REPL control surface
+1. Create an initial shared `ControlSurfaceCatalog`
 2. Render CLI help and REPL help from it
 3. Add `/commands [query]` as a richer discovery surface
-4. Add lightweight natural-language control routing in the REPL
+4. Add daemon-side structured natural-language control routing
 5. Keep execution grounded in explicit handlers rather than free-form LLM action generation
+6. Reuse the same catalog/resolution contract for future IDE/Web clients
 
 This keeps the command surface learnable without regressing Nous back into a command-only tool. Users can still speak naturally, but the runtime remains architecturally explicit about what control operations exist.
 

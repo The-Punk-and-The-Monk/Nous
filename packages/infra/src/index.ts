@@ -81,6 +81,16 @@ export type { SupervisorConfig } from "./supervisor/supervisor.ts";
 export { colors } from "./cli/ui/colors.ts";
 export { Spinner } from "./cli/ui/spinner.ts";
 export { renderTaskTree, renderTaskList } from "./cli/ui/tree.ts";
+export {
+	getControlSurfaceCatalog,
+	getControlSurfaceEntry,
+	listControlSurfaceEntries,
+	searchControlSurfaceEntries,
+	controlSurfaceAvailabilityNote,
+	primaryControlSurfaceSyntax,
+	controlSurfaceCategoryLabel,
+} from "./control/catalog.ts";
+export { ControlIntentRouter } from "./control/control-intent-router.ts";
 
 // Network
 export { RelayClient } from "./network/relay-client.ts";

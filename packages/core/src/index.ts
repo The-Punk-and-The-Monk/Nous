@@ -214,6 +214,18 @@ export type {
 	ChannelScope,
 } from "./types/channel.ts";
 export type {
+	ControlSurfaceChannel,
+	ControlSurfaceKind,
+	ControlSurfaceCategory,
+	ControlSurfaceSyntax,
+	ControlSurfaceEntry,
+	ControlSurfaceContext,
+	ControlIntentResolutionKind,
+	ControlIntentResolution,
+	ResolveControlInputPayload,
+	ResolveControlInputResult,
+} from "./types/control-surface.ts";
+export type {
 	ClientMessageType,
 	DaemonMessageType,
 	ClientEnvelope,

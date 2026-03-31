@@ -1,12 +1,11 @@
 import {
-	categoryLabel,
-	listCatalogOperations,
-	operationAvailabilityNote,
-	primarySyntaxForSurface,
-	searchCatalogOperations,
-	type OperationAvailabilityContext,
-	type OperationCatalogEntry,
-} from "./catalog.ts";
+	controlSurfaceAvailabilityNote,
+	controlSurfaceCategoryLabel,
+	listControlSurfaceEntries,
+	primaryControlSurfaceSyntax,
+	searchControlSurfaceEntries,
+} from "../control/catalog.ts";
+import type { ControlSurfaceContext, ControlSurfaceEntry } from "@nous/core";
 import { colors } from "./ui/colors.ts";
 
 export function printCliHelp(options?: {
@@ -22,15 +21,16 @@ export function formatCliHelpLines(options?: {
 	query?: string;
 	daemonRunning?: boolean;
 }): string[] {
-	const context: OperationAvailabilityContext = {
+	const context: ControlSurfaceContext & { includeUnavailable?: boolean } = {
 		surface: "cli",
+		channelType: "cli",
 		daemonRunning: options?.daemonRunning ?? false,
 		includeUnavailable: true,
 	};
 	const query = options?.query?.trim();
 	const entries = query
-		? searchCatalogOperations(query, context)
-		: listCatalogOperations(context);
+		? searchControlSurfaceEntries(query, context)
+		: listControlSurfaceEntries(context);
 	const lines = [
 		`  ${colors.bold("νοῦς — Autonomous Agent Framework")}`,
 		"",
@@ -149,30 +149,32 @@ export function formatReplCommandsLines(options: {
 	query?: string;
 }): string[] {
 	const query = options.query?.trim();
-	const replContext: OperationAvailabilityContext = {
+	const replContext: ControlSurfaceContext & { includeUnavailable?: boolean } = {
 		surface: "repl",
+		channelType: "cli",
 		daemonRunning: options.daemonRunning,
 		currentThreadId: options.currentThreadId,
 		includeUnavailable: true,
 	};
-	const cliContext: OperationAvailabilityContext = {
+	const cliContext: ControlSurfaceContext & { includeUnavailable?: boolean } = {
 		surface: "cli",
+		channelType: "cli",
 		daemonRunning: options.daemonRunning,
 		currentThreadId: options.currentThreadId,
 		includeUnavailable: true,
 	};
 	const replEntries = query
-		? searchCatalogOperations(query, replContext).filter((entry) =>
+		? searchControlSurfaceEntries(query, replContext).filter((entry) =>
 				entry.syntaxes.some((syntax) => syntax.surface === "repl"),
 			)
-		: listCatalogOperations(replContext).filter((entry) =>
+		: listControlSurfaceEntries(replContext).filter((entry) =>
 				entry.syntaxes.some((syntax) => syntax.surface === "repl"),
 			);
 	const cliEntries = query
-		? searchCatalogOperations(query, cliContext).filter((entry) =>
+		? searchControlSurfaceEntries(query, cliContext).filter((entry) =>
 				entry.syntaxes.some((syntax) => syntax.surface === "cli"),
 			)
-		: listCatalogOperations(cliContext).filter((entry) =>
+		: listControlSurfaceEntries(cliContext).filter((entry) =>
 				entry.syntaxes.some((syntax) => syntax.surface === "cli"),
 			);
 	const lines = [`  ${colors.bold("νοῦς — REPL Commands")}`, ""];
@@ -183,7 +185,7 @@ export function formatReplCommandsLines(options: {
 		`  ${colors.dim("Current thread:")} ${options.currentThreadId ?? "(none attached; the next message can create or discover a thread)"}`,
 	);
 	lines.push(
-		`  ${colors.dim("Natural-language control:")} try ${colors.dim('"show daemon status"')}, ${colors.dim('"attach to thread_123"')}, or ${colors.dim('"what can you do here?"')}.`,
+		`  ${colors.dim("Natural-language control:")} ordinary REPL text is first resolved semantically against the control surface; try ${colors.dim('"show daemon status"')}, ${colors.dim('"attach to thread_123"')}, or ${colors.dim('"what can you do here?"')}.`,
 	);
 	lines.push("");
 	if (replEntries.length === 0 && cliEntries.length === 0) {
@@ -219,19 +221,19 @@ export function formatReplCommandsLines(options: {
 
 function pushGroupedOperationLines(
 	lines: string[],
-	entries: OperationCatalogEntry[],
-	context: OperationAvailabilityContext,
+	entries: ControlSurfaceEntry[],
+	context: ControlSurfaceContext,
 	options: { indent: string; showAvailabilityNotes: boolean },
 ): void {
 	let currentCategory: string | undefined;
 	for (const entry of entries) {
-		const category = categoryLabel(entry.category);
+		const category = controlSurfaceCategoryLabel(entry.category);
 		if (category !== currentCategory) {
 			lines.push(`${options.indent}${colors.cyan(category)}`);
 			currentCategory = category;
 		}
 		const availabilityNote = options.showAvailabilityNotes
-			? operationAvailabilityNote(entry, context)
+			? controlSurfaceAvailabilityNote(entry, context)
 			: undefined;
 		lines.push(
 			formatOperationLine(
@@ -245,12 +247,12 @@ function pushGroupedOperationLines(
 }
 
 function formatOperationLine(
-	entry: OperationCatalogEntry,
-	context: OperationAvailabilityContext,
+	entry: ControlSurfaceEntry,
+	context: ControlSurfaceContext,
 	indent: string,
 	availabilityNote?: string,
 ): string {
-	const usage = primarySyntaxForSurface(entry, context.surface);
+	const usage = primaryControlSurfaceSyntax(entry, context.surface);
 	const suffix = availabilityNote ? ` ${colors.dim(`[${availabilityNote}]`)}` : "";
 	return `${indent}  ${padUsage(usage, 36)}${entry.summary}${suffix}`;
 }

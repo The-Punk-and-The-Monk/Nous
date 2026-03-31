@@ -1,9 +1,20 @@
-export interface ReplControlContext {
-	daemonRunning: boolean;
-	currentThreadId?: string;
+import type { ControlIntentResolution, ResolveControlInputResult } from "@nous/core";
+
+export interface ReplSlashResolution {
+	kind: "execute" | "clarify";
+	action?:
+		| "show_commands"
+		| "show_status"
+		| "attach_thread"
+		| "detach_thread"
+		| "exit_repl";
+	query?: string;
+	threadId?: string;
+	message?: string;
+	interpretedAs?: string;
 }
 
-export type ReplControlResolution =
+export type ReplResolvedAction =
 	| {
 			kind: "submit";
 			text: string;
@@ -16,127 +27,30 @@ export type ReplControlResolution =
 				| "attach_thread"
 				| "detach_thread"
 				| "exit_repl";
-			operationId: string;
-			source: "slash" | "natural_language";
-			confidence: "explicit" | "high";
 			query?: string;
 			threadId?: string;
 			interpretedAs: string;
+			source: "slash" | "model";
 	  }
 	| {
 			kind: "clarify";
 			message: string;
-			operationId?: string;
-			source: "slash" | "natural_language";
-			confidence: "medium";
+			source: "slash" | "model";
 	  };
 
-const DISCOVERY_HINTS = [
-	"what can you do",
-	"what can nous do",
-	"show commands",
-	"available commands",
-	"available features",
-	"help me discover",
-	"what commands",
-	"commands are available",
-	"你能做什么",
-	"你现在能做什么",
-	"有什么功能",
-	"有哪些功能",
-	"有哪些命令",
-	"看看命令",
-	"显示命令",
-	"命令列表",
-];
-
-const STATUS_HIGH_HINTS = [
-	"daemon status",
-	"nous status",
-	"show daemon status",
-	"show running tasks",
-	"show active intents",
-	"running tasks",
-	"active intents",
-	"查看 daemon 状态",
-	"查看运行状态",
-	"当前有哪些任务",
-	"当前有哪些 intent",
-];
-
-const STATUS_MEDIUM_HINTS = [
-	"show status",
-	"status",
-	"状态",
-	"看一下状态",
-	"看看状态",
-];
-
-const ATTACH_VERBS = [
-	"attach",
-	"switch to",
-	"switch thread",
-	"open thread",
-	"connect to",
-	"join thread",
-	"切到",
-	"连接到",
-	"附加到",
-	"打开 thread",
-	"切换到 thread",
-];
-
-const DETACH_HINTS = [
-	"detach",
-	"leave current thread",
-	"return to global mode",
-	"return to inbox",
-	"退出当前线程",
-	"回到全局",
-];
-
-const EXIT_HINTS = [
-	"exit",
-	"quit",
-	"exit repl",
-	"quit repl",
-	"close repl",
-	"退出 repl",
-	"离开 repl",
-];
-
-export function resolveReplControlInput(
-	input: string,
-	context: ReplControlContext,
-): ReplControlResolution {
-	if (input.startsWith("/")) {
-		return resolveSlashControl(input, context);
+export function resolveSlashCommand(input: string): ReplSlashResolution | undefined {
+	if (!input.startsWith("/")) {
+		return undefined;
 	}
 
-	const naturalLanguage = resolveNaturalLanguageControl(input, context);
-	if (naturalLanguage) {
-		return naturalLanguage;
-	}
-
-	return {
-		kind: "submit",
-		text: input,
-	};
-}
-
-function resolveSlashControl(
-	input: string,
-	context: ReplControlContext,
-): ReplControlResolution {
 	const raw = input.slice(1).trim();
 	if (!raw) {
 		return {
 			kind: "clarify",
 			message: "Use /commands to inspect the REPL control surface.",
-			source: "slash",
-			confidence: "medium",
 		};
 	}
+
 	const [command, ...rest] = raw.split(/\s+/);
 	const query = rest.join(" ").trim();
 	switch (command.toLowerCase()) {
@@ -145,9 +59,6 @@ function resolveSlashControl(
 			return {
 				kind: "execute",
 				action: "show_commands",
-				operationId: "control.discover",
-				source: "slash",
-				confidence: "explicit",
 				query: query || undefined,
 				interpretedAs: query ? `/commands ${query}` : "/commands",
 			};
@@ -155,9 +66,6 @@ function resolveSlashControl(
 			return {
 				kind: "execute",
 				action: "show_status",
-				operationId: "status.overview",
-				source: "slash",
-				confidence: "explicit",
 				interpretedAs: "/status",
 			};
 		case "attach":
@@ -166,17 +74,11 @@ function resolveSlashControl(
 					kind: "clarify",
 					message:
 						"Provide a thread ID like /attach thread_abc123, or use /detach to leave the current thread.",
-					operationId: "thread.attach",
-					source: "slash",
-					confidence: "medium",
 				};
 			}
 			return {
 				kind: "execute",
 				action: "attach_thread",
-				operationId: "thread.attach",
-				source: "slash",
-				confidence: "explicit",
 				threadId: query,
 				interpretedAs: `/attach ${query}`,
 			};
@@ -184,9 +86,6 @@ function resolveSlashControl(
 			return {
 				kind: "execute",
 				action: "detach_thread",
-				operationId: "thread.detach",
-				source: "slash",
-				confidence: "explicit",
 				interpretedAs: "/detach",
 			};
 		case "exit":
@@ -194,168 +93,96 @@ function resolveSlashControl(
 			return {
 				kind: "execute",
 				action: "exit_repl",
-				operationId: "session.exit",
-				source: "slash",
-				confidence: "explicit",
 				interpretedAs: "/exit",
 			};
 		default:
 			return {
 				kind: "clarify",
 				message: `Unknown command: /${command}. Use /commands to inspect the available control operations.`,
-				source: "slash",
-				confidence: "medium",
 			};
 	}
 }
 
-function resolveNaturalLanguageControl(
-	input: string,
-	context: ReplControlContext,
-): ReplControlResolution | undefined {
-	const normalized = normalizeInput(input);
-	const threadId = extractThreadId(input);
-
-	if (matchesAny(normalized, DISCOVERY_HINTS)) {
-		const query = extractDiscoveryQuery(input);
-		return {
-			kind: "execute",
-			action: "show_commands",
-			operationId: "control.discover",
-			source: "natural_language",
-			confidence: "high",
-			query,
-			interpretedAs: query ? `/commands ${query}` : "/commands",
-		};
-	}
-
-	if (matchesAny(normalized, STATUS_HIGH_HINTS)) {
-		return {
-			kind: "execute",
-			action: "show_status",
-			operationId: "status.overview",
-			source: "natural_language",
-			confidence: "high",
-			interpretedAs: "/status",
-		};
-	}
-
-	if (matchesAny(normalized, STATUS_MEDIUM_HINTS)) {
-		return {
-			kind: "clarify",
-			message:
-				'I can interpret that as REPL control and show daemon status with /status, or I can send it to the current thread as a normal message. Which did you mean?',
-			operationId: "status.overview",
-			source: "natural_language",
-			confidence: "medium",
-		};
-	}
-
-	if (threadId && matchesAny(normalized, ATTACH_VERBS)) {
-		return {
-			kind: "execute",
-			action: "attach_thread",
-			operationId: "thread.attach",
-			source: "natural_language",
-			confidence: "high",
-			threadId,
-			interpretedAs: `/attach ${threadId}`,
-		};
-	}
-
-	if (!threadId && matchesAny(normalized, ATTACH_VERBS)) {
-		return {
-			kind: "clarify",
-			message:
-				"I can attach to another thread if you provide a thread ID like thread_abc123.",
-			operationId: "thread.attach",
-			source: "natural_language",
-			confidence: "medium",
-		};
-	}
-
-	if (matchesAny(normalized, DETACH_HINTS)) {
-		return {
-			kind: "execute",
-			action: "detach_thread",
-			operationId: "thread.detach",
-			source: "natural_language",
-			confidence: "high",
-			interpretedAs: "/detach",
-		};
-	}
-
-	if (matchesAny(normalized, EXIT_HINTS)) {
-		return {
-			kind: "execute",
-			action: "exit_repl",
-			operationId: "session.exit",
-			source: "natural_language",
-			confidence: "high",
-			interpretedAs: "/exit",
-		};
-	}
-
-	if (context.currentThreadId && normalized === "detach") {
-		return {
-			kind: "execute",
-			action: "detach_thread",
-			operationId: "thread.detach",
-			source: "natural_language",
-			confidence: "high",
-			interpretedAs: "/detach",
-		};
-	}
-
-	return undefined;
+export function translateControlResolution(
+	text: string,
+	result: ResolveControlInputResult,
+): ReplResolvedAction {
+	return toResolvedAction(text, result.resolution);
 }
 
-function normalizeInput(value: string): string {
-	return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function matchesAny(value: string, patterns: string[]): boolean {
-	return patterns.some((pattern) => value.includes(pattern));
-}
-
-function extractThreadId(value: string): string | undefined {
-	return value.match(/\bthread_[A-Za-z0-9]+\b/)?.[0];
-}
-
-function extractDiscoveryQuery(value: string): string | undefined {
-	let query = value.trim();
-	const wrappers = [
-		/\bwhat can you do here\b/gi,
-		/\bwhat can you do\b/gi,
-		/\bwhat commands are available\b/gi,
-		/\bshow commands\b/gi,
-		/\bavailable commands\b/gi,
-		/\bavailable features\b/gi,
-		/\bhelp\b/gi,
-		/\bcommands\b/gi,
-		/\bfeatures\b/gi,
-		/\bcan you show\b/gi,
-		/你现在能做什么/gu,
-		/你能做什么/gu,
-		/有哪些命令/gu,
-		/有什么功能/gu,
-		/有哪些功能/gu,
-		/命令列表/gu,
-		/显示命令/gu,
-		/看看命令/gu,
-	];
-	for (const pattern of wrappers) {
-		query = query.replace(pattern, " ");
+function toResolvedAction(
+	text: string,
+	resolution: ControlIntentResolution,
+): ReplResolvedAction {
+	switch (resolution.kind) {
+		case "task_plane":
+			return { kind: "submit", text };
+		case "clarify":
+			return {
+				kind: "clarify",
+				source: "model",
+				message:
+					resolution.rationale.trim() ||
+					"I’m not confident enough to treat that as a control operation. Say /commands if you want the control surface, otherwise restate the task.",
+			};
+		case "invoke_operation":
+			switch (resolution.operationId) {
+				case "control.discover":
+					return {
+						kind: "execute",
+						action: "show_commands",
+						query: resolution.query,
+						interpretedAs: resolution.query
+							? `/commands ${resolution.query}`
+							: "/commands",
+						source: "model",
+					};
+				case "status.overview":
+					return {
+						kind: "execute",
+						action: "show_status",
+						interpretedAs: "/status",
+						source: "model",
+					};
+				case "thread.attach":
+					if (!resolution.threadId) {
+						return {
+							kind: "clarify",
+							source: "model",
+							message:
+								resolution.rationale ||
+								"I can attach to another thread if you provide a concrete thread id like thread_abc123.",
+						};
+					}
+					return {
+						kind: "execute",
+						action: "attach_thread",
+						threadId: resolution.threadId,
+						interpretedAs: `/attach ${resolution.threadId}`,
+						source: "model",
+					};
+				case "thread.detach":
+					return {
+						kind: "execute",
+						action: "detach_thread",
+						interpretedAs: "/detach",
+						source: "model",
+					};
+				case "session.exit":
+					return {
+						kind: "execute",
+						action: "exit_repl",
+						interpretedAs: "/exit",
+						source: "model",
+					};
+				default:
+					return {
+						kind: "clarify",
+						source: "model",
+						message:
+							resolution.rationale ||
+							`The control interpretation resolved to ${resolution.operationId ?? "an unknown operation"}, but this client does not execute it directly in the REPL yet.`,
+					};
+			}
 	}
-	query = query
-		.replace(/[?？]/g, " ")
-		.replace(/\bhere\b/gi, " ")
-		.replace(/\bavailable\b/gi, " ")
-		.replace(/\bplease\b/gi, " ")
-		.replace(/这里/gu, " ")
-		.replace(/现在/gu, " ")
-		.replace(/一下/gu, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-	return query.length > 0 ? query : undefined;
 }

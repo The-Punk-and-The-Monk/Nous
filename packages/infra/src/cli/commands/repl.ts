@@ -1,14 +1,17 @@
 import readline from "node:readline";
 import type {
-	DaemonEnvelope,
 	DialogueMessage,
+	ResolveControlInputResult,
 	StatusSnapshot,
 	ThreadSnapshot,
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
 import { DaemonClientSession } from "../../daemon/client.ts";
 import { printReplCommands } from "../help.ts";
-import { resolveReplControlInput } from "../repl-control.ts";
+import {
+	resolveSlashCommand,
+	translateControlResolution,
+} from "../repl-control.ts";
 import { colors } from "../ui/colors.ts";
 import { attachCommand, renderDialogueMessage } from "./attach.ts";
 
@@ -73,29 +76,55 @@ export async function openDaemonRepl(options?: {
 				return;
 			}
 
-			const resolution = resolveReplControlInput(input, {
-				daemonRunning: true,
-				currentThreadId,
-			});
+			const slashResolution = resolveSlashCommand(input);
+			const resolved =
+				slashResolution !== undefined
+					? slashResolution.kind === "clarify"
+						? {
+								kind: "clarify" as const,
+								source: "slash" as const,
+								message: slashResolution.message ?? "Unknown REPL command.",
+							}
+						: {
+								kind: "execute" as const,
+								source: "slash" as const,
+								action: slashResolution.action!,
+								query: slashResolution.query,
+								threadId: slashResolution.threadId,
+								interpretedAs: slashResolution.interpretedAs ?? input,
+							}
+					: translateControlResolution(input, {
+							resolution: (
+								(
+									await session.request({
+										type: "resolve_control_input",
+										channel,
+										payload: {
+											text: input,
+											surface: "repl",
+											currentThreadId,
+										},
+									})
+								).payload as ResolveControlInputResult
+							).resolution,
+						});
 
-			if (resolution.kind === "clarify") {
-				console.log(`  ${colors.yellow(resolution.message)}`);
+			if (resolved.kind === "clarify") {
+				console.log(`  ${colors.yellow(resolved.message)}`);
 				rl.prompt();
 				return;
 			}
 
-			if (resolution.kind === "execute") {
-				if (resolution.source === "natural_language") {
-					console.log(
-						`  ${colors.dim(`control → ${resolution.interpretedAs}`)}`,
-					);
+			if (resolved.kind === "execute") {
+				if (resolved.source === "model") {
+					console.log(`  ${colors.dim(`control → ${resolved.interpretedAs}`)}`);
 				}
-				switch (resolution.action) {
+				switch (resolved.action) {
 					case "show_commands":
 						printReplCommands({
 							daemonRunning: true,
 							currentThreadId,
-							query: resolution.query,
+							query: resolved.query,
 						});
 						rl.prompt();
 						return;
@@ -104,7 +133,7 @@ export async function openDaemonRepl(options?: {
 						rl.prompt();
 						return;
 					case "attach_thread":
-						currentThreadId = resolution.threadId;
+						currentThreadId = resolved.threadId;
 						if (currentThreadId) {
 							await printThreadSnapshot(session, channel, currentThreadId);
 							await attachToThread(session, channel, currentThreadId, false);
@@ -138,7 +167,7 @@ export async function openDaemonRepl(options?: {
 				type: currentThreadId ? "send_message" : "submit_intent",
 				channel,
 				payload: {
-					text: resolution.text,
+					text: resolved.text,
 					threadId: currentThreadId,
 					scope: channel.scope,
 				},

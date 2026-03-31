@@ -6,11 +6,21 @@
 
 - 任务面：自然语言任务、线程回复、普通对话
 - 控制面：状态、attach、debug、permissions、network、命令发现
-- CLI 帮助、REPL `/commands`、自然语言控制映射，应该共享同一份操作目录
+- CLI 帮助、REPL `/commands`、自然语言控制映射，应该共享同一份控制面目录
 
-当前操作目录草案位于：
+当前共享控制目录位于：
 
-- [packages/infra/src/cli/catalog.ts](/Users/joey/Projects/Nous/packages/infra/src/cli/catalog.ts)
+- [catalog.ts](/Users/joey/Projects/Nous/packages/infra/src/control/catalog.ts)
+
+当前 REPL 的自然语言控制解析位于：
+
+- [control-intent-router.ts](/Users/joey/Projects/Nous/packages/infra/src/control/control-intent-router.ts)
+
+它的关键边界是：
+
+- slash 命令：本地确定性解析
+- 普通自然语言：发给 daemon，由大模型基于 `ControlSurfaceCatalog` 做结构化控制解析
+- 非控制输入：回落到正常 task plane
 
 ## 默认交互
 
@@ -150,7 +160,7 @@ nous network log [N]
 
 ## REPL 自然语言控制
 
-REPL 现在支持一小部分“高置信自然语言控制映射”。
+REPL 的自然语言控制现在不是规则表匹配，而是 daemon-side 的大模型结构化解析。
 
 例如：
 
@@ -167,7 +177,7 @@ REPL 现在支持一小部分“高置信自然语言控制映射”。
 - 中等置信：先让用户澄清
 - 低置信：继续当普通对话，发给当前 thread / daemon
 
-这意味着自然语言控制不是一套新的执行引擎，而只是控制面的输入路由层。
+这意味着自然语言控制不是一套新的执行引擎，而只是控制面的输入路由层；真正的执行仍然落在显式 control handler 上。
 
 ## 可用性边界
 
@@ -184,6 +194,7 @@ REPL 现在支持一小部分“高置信自然语言控制映射”。
 
 - 操作目录
 - 当前 surface（CLI / REPL）
+- 当前 channel（CLI / IDE / Web）
 - 当前 daemon 状态
 - 当前 thread 绑定状态
 

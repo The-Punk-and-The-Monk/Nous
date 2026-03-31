@@ -5,6 +5,8 @@ import type {
 	ClientEnvelope,
 	DaemonEnvelope,
 	GetThreadPayload,
+	ResolveControlInputPayload,
+	ResolveControlInputResult,
 	SendMessagePayload,
 	StatusSnapshot,
 	SubmitIntentPayload,
@@ -13,8 +15,26 @@ import type {
 import { now } from "@nous/core";
 import type { DialogueService } from "./dialogue-service.ts";
 
+interface DaemonControllerConfig {
+	dialogue: DialogueService;
+	onResolveControlInput?: (
+		channel: ClientEnvelope["channel"],
+		payload: ResolveControlInputPayload,
+	) => Promise<ResolveControlInputResult> | ResolveControlInputResult;
+}
+
 export class DaemonController {
-	constructor(private readonly dialogue: DialogueService) {}
+	private readonly dialogue: DialogueService;
+	private readonly onResolveControlInput?: DaemonControllerConfig["onResolveControlInput"];
+
+	constructor(config: DialogueService | DaemonControllerConfig) {
+		if ("attach" in config) {
+			this.dialogue = config;
+			return;
+		}
+		this.dialogue = config.dialogue;
+		this.onResolveControlInput = config.onResolveControlInput;
+	}
 
 	async handle(message: ClientEnvelope): Promise<DaemonEnvelope | undefined> {
 		switch (message.type) {
@@ -70,6 +90,27 @@ export class DaemonController {
 						timestamp: now(),
 						payload: this.dialogue.getStatusSnapshot(),
 					} as DaemonEnvelope<StatusSnapshot>,
+					message.id,
+				);
+			case "resolve_control_input":
+				return withRequestId(
+					{
+						type: "response",
+						timestamp: now(),
+						payload: this.onResolveControlInput
+							? await this.onResolveControlInput(
+									message.channel,
+									message.payload as ResolveControlInputPayload,
+								)
+							: {
+									resolution: {
+										kind: "task_plane",
+										confidence: "low",
+										rationale:
+											"Control-input resolution is not configured.",
+									},
+								},
+					} as DaemonEnvelope<ResolveControlInputResult>,
 					message.id,
 				);
 			case "approve_decision":

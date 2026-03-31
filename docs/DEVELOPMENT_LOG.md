@@ -4252,3 +4252,125 @@ For significant sessions, capture:
   - The current natural-language control routing is deliberately heuristic and local-first; we may later want a richer semantic control resolver, but only if it still compiles onto explicit catalog operations.
   - `docs/CLI.md` is now aligned with the catalog conceptually, but not yet generated from it; if drift becomes a problem, the next step should be a catalog-to-doc renderer.
   - The catalog is currently CLI-local. A later architecture step should consider whether Nous needs a broader cross-channel `ControlSurfaceCatalog` that can also serve future IDE/Web clients.
+
+### Session: Replace rule-based REPL natural-language control with daemon-side structured control routing and generalize OperationCatalog into ControlSurfaceCatalog
+- Context / Trigger:
+  - After the first CLI control-surface loop landed, the user explicitly pushed back on one architectural weakness:
+    - the REPL's so-called "natural-language control" was still implemented as local rules
+    - that is not a real natural-language control contract
+  - The user also immediately tied this to the next architectural step:
+    - the catalog should not stay CLI-local
+    - it should evolve into a more general cross-channel `ControlSurfaceCatalog` for CLI / IDE / Web
+- Problem:
+  - The previous implementation improved discoverability, but its control-routing layer still had a real architectural gap:
+    - semantic control interpretation lived in a client-local heuristic parser
+    - the daemon did not participate in control-intent interpretation
+    - the shared catalog model still described only the CLI world conceptually, not a broader multi-channel control surface
+  - That meant Nous still risked drifting into exactly the fragmentation we had identified:
+    - CLI-local control semantics
+    - future IDE/Web clients inventing separate natural-language control logic
+    - a control router that was explicit in docs but not truly semantic in implementation
+- Alternatives considered:
+  - Option A: keep the heuristic local REPL router and simply expand its rule set.
+    - Rejected because it would only deepen the mismatch between the architectural promise and the runtime reality.
+  - Option B: let each client instantiate its own provider and run local LLM control parsing.
+    - Rejected because control semantics would still remain client-private rather than daemon-owned.
+  - Option C: move control semantics onto a daemon-side structured router backed by the shared catalog, while leaving slash-command syntax deterministic on the client.
+    - Chosen because it preserves explicit control handlers while making natural-language control genuinely semantic and cross-channel ready.
+- Decision:
+  - Generalize `OperationCatalog` into a broader `ControlSurfaceCatalog`.
+  - Move the concrete catalog implementation from CLI-local code into shared `infra/control` modules.
+  - Add a daemon protocol request:
+    - `resolve_control_input`
+  - Interpret ordinary REPL text by:
+    1. local slash-command resolution first
+    2. otherwise daemon-side structured control resolution via LLM
+    3. then compile the result to:
+       - explicit local control execution
+       - clarification
+       - or normal task-plane submission
+- What changed before vs after:
+  - Before:
+    - natural-language control = local heuristic rules in the REPL client
+    - catalog = CLI-local implementation detail
+  - After:
+    - natural-language control = daemon-side structured semantic routing
+    - catalog = shared control-surface substrate with CLI / REPL / IDE / Web vocabulary
+    - REPL = deterministic slash syntax + renderer for daemon-resolved control results
+- Changes made:
+  - Core types:
+    - Added `packages/core/src/types/control-surface.ts`
+      - `ControlSurfaceEntry`
+      - `ControlSurfaceContext`
+      - `ControlIntentResolution`
+      - `ResolveControlInputPayload`
+      - `ResolveControlInputResult`
+    - Updated `packages/core/src/types/protocol.ts`
+      - added `resolve_control_input` to the client protocol
+    - Updated `packages/core/src/index.ts`
+      - re-exported control-surface types
+  - Shared control layer:
+    - Added `packages/infra/src/control/catalog.ts`
+      - generalized catalog implementation to a cross-channel `ControlSurfaceCatalog`
+      - added channel-aware availability logic
+      - extended catalog vocabulary toward CLI / IDE / Web surfaces
+    - Added `packages/infra/src/control/control-intent-router.ts`
+      - daemon-side structured natural-language control router
+      - uses `StructuredGenerationEngine`
+      - resolves into:
+        - `invoke_operation`
+        - `task_plane`
+        - `clarify`
+      - normalizes unsafe/incomplete results back into clarification when needed
+    - Updated `packages/infra/src/index.ts`
+      - exported the new shared control modules
+  - CLI / REPL integration:
+    - Updated `packages/infra/src/cli/help.ts`
+      - now reads from the shared control catalog instead of a CLI-private one
+    - Replaced `packages/infra/src/cli/repl-control.ts`
+      - now keeps only:
+        - deterministic slash-command parsing
+        - translation of daemon-resolved structured control results into local actions
+      - removed the old rule-based natural-language parser
+    - Updated `packages/infra/src/cli/commands/repl.ts`
+      - non-slash input now first calls `resolve_control_input` on the daemon
+      - control receipts still render as `control -> /...`
+      - ordinary task input still falls through to the task plane when the daemon router says so
+  - Daemon integration:
+    - Updated `packages/infra/src/daemon/controller.ts`
+      - added `resolve_control_input` handling
+    - Updated `packages/infra/src/daemon/server.ts`
+      - instantiated the shared `ControlIntentRouter`
+      - built daemon-side control resolution context from the request surface + channel type
+  - Documentation:
+    - Updated `ARCHITECTURE.md`
+      - renamed the concept from CLI-local `OperationCatalog` framing to shared `ControlSurfaceCatalog`
+      - documented daemon-side semantic control routing
+      - clarified client vs daemon responsibilities
+    - Updated `docs/CLI.md`
+      - updated the control-catalog reference path
+      - clarified that REPL natural-language control is now daemon-side LLM structured resolution
+  - Tests:
+    - Added `packages/infra/tests/control-intent-router.test.ts`
+    - Updated `packages/infra/tests/repl-control.test.ts`
+      - now tests deterministic slash parsing + translation of daemon-resolved control results
+    - Updated `packages/infra/tests/daemon-controller.test.ts`
+      - added protocol coverage for `resolve_control_input`
+- Validation:
+  - `bun test packages/infra/tests/control-intent-router.test.ts packages/infra/tests/repl-control.test.ts packages/infra/tests/cli-help.test.ts packages/infra/tests/daemon-controller.test.ts` ✅
+  - `bun x tsc --noEmit` ✅
+- Impact / Result:
+  - Nous now has a materially stronger control-plane architecture:
+    - semantic control routing is no longer fake-natural-language local rules
+    - the daemon now owns control-intent interpretation
+    - the shared catalog is no longer framed as CLI-only
+  - This gives a much better base for future IDE/Web clients:
+    - they can reuse the same control catalog
+    - they can reuse the same daemon-side structured control router
+    - they only need their own rendering / handler wiring
+- Open questions / follow-ups:
+  - The current daemon-side control router uses the main provider and runs before task-plane submission in the REPL; we may later want:
+    - a cheaper dedicated routing model
+    - caching / batching
+    - a policy for when to bypass control routing entirely
+  - `docs/CLI.md` still documents the catalog, not a generated view of it; full catalog-to-doc generation remains future work.

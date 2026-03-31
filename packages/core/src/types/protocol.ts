@@ -1,6 +1,10 @@
 import type { ISOTimestamp } from "../utils/timestamp.ts";
 import type { Channel, ChannelScope } from "./channel.ts";
 import type {
+	ResolveControlInputPayload,
+	ResolveControlInputResult,
+} from "./control-surface.ts";
+import type {
 	DialogueMessage,
 	DialogueThread,
 	OutboxEntry,
@@ -15,6 +19,7 @@ export type ClientMessageType =
 	| "send_message"
 	| "get_status"
 	| "get_thread"
+	| "resolve_control_input"
 	| "approve_decision"
 	| "cancel_intent"
 	| "subscribe"
@@ -129,3 +134,5 @@ export interface StatusSnapshot {
 	pendingOutboxCount: number;
 	connectedChannels: Channel[];
 }
+
+export type { ResolveControlInputPayload, ResolveControlInputResult };

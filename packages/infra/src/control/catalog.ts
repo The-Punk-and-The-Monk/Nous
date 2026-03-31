@@ -1,42 +1,11 @@
-export type OperationSurface = "cli" | "repl";
+import type {
+	ControlSurfaceCategory,
+	ControlSurfaceContext,
+	ControlSurfaceEntry,
+	ControlSurfaceKind,
+} from "@nous/core";
 
-export type OperationCategory =
-	| "core"
-	| "daemon"
-	| "thread"
-	| "inspect"
-	| "permissions"
-	| "network"
-	| "discovery"
-	| "session";
-
-export interface OperationSyntax {
-	surface: OperationSurface;
-	usage: string;
-}
-
-export interface OperationCatalogEntry {
-	id: string;
-	title: string;
-	summary: string;
-	category: OperationCategory;
-	syntaxes: OperationSyntax[];
-	examples?: string[];
-	tags?: string[];
-	requiresDaemon?: boolean;
-	requiresThread?: boolean;
-	foregroundOnly?: boolean;
-	sideEffectClass?: "read_only" | "state_change";
-}
-
-export interface OperationAvailabilityContext {
-	surface: OperationSurface;
-	daemonRunning: boolean;
-	currentThreadId?: string;
-	includeUnavailable?: boolean;
-}
-
-const CATEGORY_ORDER: OperationCategory[] = [
+const CATEGORY_ORDER: ControlSurfaceCategory[] = [
 	"core",
 	"discovery",
 	"session",
@@ -47,7 +16,7 @@ const CATEGORY_ORDER: OperationCategory[] = [
 	"network",
 ];
 
-const OPERATION_CATALOG: OperationCatalogEntry[] = [
+const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 	{
 		id: "control.discover",
 		title: "Discover commands and capabilities",
@@ -59,6 +28,8 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 			{ surface: "cli", usage: "nous commands [query]" },
 			{ surface: "repl", usage: "/commands [query]" },
 			{ surface: "repl", usage: "/help [query]" },
+			{ surface: "ide", usage: "Command Palette → Search Nous operations" },
+			{ surface: "web", usage: "Search control operations" },
 		],
 		examples: [
 			"nous help network",
@@ -79,6 +50,7 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 			"有什么功能",
 			"有哪些命令",
 		],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -90,6 +62,8 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		syntaxes: [
 			{ surface: "cli", usage: "nous status" },
 			{ surface: "repl", usage: "/status" },
+			{ surface: "ide", usage: "Show Nous status" },
+			{ surface: "web", usage: "Open status dashboard" },
 		],
 		tags: [
 			"status",
@@ -100,6 +74,7 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 			"daemon status",
 			"运行状态",
 		],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -111,15 +86,19 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		syntaxes: [
 			{ surface: "cli", usage: "nous attach <threadId> [--once]" },
 			{ surface: "repl", usage: "/attach <threadId>" },
+			{ surface: "ide", usage: "Attach to thread <threadId>" },
+			{ surface: "web", usage: "Open thread <threadId>" },
 		],
 		tags: [
 			"attach",
 			"thread",
-			"switch thread",
+			"switch to thread",
 			"open thread",
-			"connect thread",
-			"切到线程",
+			"connect to thread",
+			"join thread",
+			"切到 thread",
 		],
+		channels: ["cli", "ide", "web"],
 		requiresDaemon: true,
 		sideEffectClass: "read_only",
 	},
@@ -127,9 +106,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		id: "thread.detach",
 		title: "Leave the current thread",
 		summary:
-			"Return the REPL to global mode so the next message starts or discovers a different thread.",
+			"Return the current client surface to global mode so the next message can target a different thread.",
 		category: "thread",
-		syntaxes: [{ surface: "repl", usage: "/detach" }],
+		syntaxes: [
+			{ surface: "repl", usage: "/detach" },
+			{ surface: "ide", usage: "Detach from current thread" },
+			{ surface: "web", usage: "Back to inbox/global view" },
+		],
 		tags: [
 			"detach",
 			"leave thread",
@@ -137,6 +120,7 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 			"return to inbox",
 			"退出当前线程",
 		],
+		channels: ["cli", "ide", "web"],
 		requiresThread: true,
 		sideEffectClass: "read_only",
 	},
@@ -145,8 +129,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Start the daemon",
 		summary: "Launch the background Nous daemon process.",
 		category: "daemon",
-		syntaxes: [{ surface: "cli", usage: "nous daemon start" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous daemon start" },
+			{ surface: "ide", usage: "Start daemon" },
+			{ surface: "web", usage: "Start daemon" },
+		],
 		tags: ["daemon", "start", "boot", "launch", "后台启动"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -154,8 +143,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Stop the daemon",
 		summary: "Gracefully stop the background Nous daemon process.",
 		category: "daemon",
-		syntaxes: [{ surface: "cli", usage: "nous daemon stop" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous daemon stop" },
+			{ surface: "ide", usage: "Stop daemon" },
+			{ surface: "web", usage: "Stop daemon" },
+		],
 		tags: ["daemon", "stop", "shutdown", "kill", "关闭后台"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -163,8 +157,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Show daemon transport status",
 		summary: "Inspect whether the daemon is running and how clients connect to it.",
 		category: "daemon",
-		syntaxes: [{ surface: "cli", usage: "nous daemon status" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous daemon status" },
+			{ surface: "ide", usage: "Show daemon transport status" },
+			{ surface: "web", usage: "Show daemon transport status" },
+		],
 		tags: ["daemon", "status", "socket", "transport", "pid"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -173,8 +172,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		summary:
 			"Inspect recent threads, task queues, pending decisions, and runtime health.",
 		category: "inspect",
-		syntaxes: [{ surface: "cli", usage: "nous debug daemon" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous debug daemon" },
+			{ surface: "ide", usage: "Debug daemon state" },
+			{ surface: "web", usage: "Open daemon debug view" },
+		],
 		tags: ["debug", "daemon", "inspect", "tasks", "decisions", "outbox"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -183,8 +187,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		summary:
 			"Inspect recent turns, trust receipts, process-surface items, and linked intent state for a thread.",
 		category: "inspect",
-		syntaxes: [{ surface: "cli", usage: "nous debug thread <threadId>" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous debug thread <threadId>" },
+			{ surface: "ide", usage: "Debug thread <threadId>" },
+			{ surface: "web", usage: "Open thread debug view" },
+		],
 		tags: ["debug", "thread", "inspect", "trust receipt", "turn surface"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -192,8 +201,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Inspect recent events",
 		summary: "View recent persisted events for runtime debugging and audit trails.",
 		category: "inspect",
-		syntaxes: [{ surface: "cli", usage: "nous events [N]" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous events [N]" },
+			{ surface: "ide", usage: "Show recent events" },
+			{ surface: "web", usage: "Open event timeline" },
+		],
 		tags: ["events", "log", "audit", "recent events", "timeline"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -201,8 +215,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Inspect stored memory",
 		summary: "Browse or search persisted memories across tiers.",
 		category: "inspect",
-		syntaxes: [{ surface: "cli", usage: "nous memory [search]" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous memory [search]" },
+			{ surface: "ide", usage: "Inspect memory" },
+			{ surface: "web", usage: "Browse memory" },
+		],
 		tags: ["memory", "search memory", "episodic", "semantic", "prospective"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -210,8 +229,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Show permission policy",
 		summary: "Inspect the current permission rules and grant-all flag.",
 		category: "permissions",
-		syntaxes: [{ surface: "cli", usage: "nous permissions" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous permissions" },
+			{ surface: "ide", usage: "Inspect permissions" },
+			{ surface: "web", usage: "Inspect permissions" },
+		],
 		tags: ["permissions", "policy", "show", "rules"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -220,8 +244,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		summary:
 			"Enable the power-user override that bypasses normal permission prompts.",
 		category: "permissions",
-		syntaxes: [{ surface: "cli", usage: "nous permissions grant-all" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous permissions grant-all" },
+			{ surface: "ide", usage: "Enable grant-all permissions" },
+			{ surface: "web", usage: "Enable grant-all permissions" },
+		],
 		tags: ["permissions", "grant all", "allow everything", "power user"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -229,8 +258,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Reset permission policy",
 		summary: "Reset the permission policy back to the repository defaults.",
 		category: "permissions",
-		syntaxes: [{ surface: "cli", usage: "nous permissions reset" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous permissions reset" },
+			{ surface: "ide", usage: "Reset permission policy" },
+			{ surface: "web", usage: "Reset permission policy" },
+		],
 		tags: ["permissions", "reset", "defaults"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -238,8 +272,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Allow a permission action",
 		summary: "Set matching permission rules to auto-allow for an action.",
 		category: "permissions",
-		syntaxes: [{ surface: "cli", usage: "nous permissions allow <action>" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous permissions allow <action>" },
+			{ surface: "ide", usage: "Allow permission action <action>" },
+			{ surface: "web", usage: "Allow permission action <action>" },
+		],
 		tags: ["permissions", "allow", "auto allow", "fs.read", "shell.exec"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -247,8 +286,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Revoke a permission action",
 		summary: "Set matching permission rules to deny for an action.",
 		category: "permissions",
-		syntaxes: [{ surface: "cli", usage: "nous permissions revoke <action>" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous permissions revoke <action>" },
+			{ surface: "ide", usage: "Revoke permission action <action>" },
+			{ surface: "web", usage: "Revoke permission action <action>" },
+		],
 		tags: ["permissions", "revoke", "deny", "fs.write", "network.http"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -257,8 +301,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		summary:
 			"Inspect Inter-Nous seed-exchange status, counters, and local identity.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network status" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network status" },
+			{ surface: "ide", usage: "Show network status" },
+			{ surface: "web", usage: "Show network status" },
+		],
 		tags: ["network", "status", "inter-nous", "exchange", "seed"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -266,8 +315,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Enable Inter-Nous exchange",
 		summary: "Enable local Inter-Nous seed exchange.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network enable" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network enable" },
+			{ surface: "ide", usage: "Enable Inter-Nous exchange" },
+			{ surface: "web", usage: "Enable Inter-Nous exchange" },
+		],
 		tags: ["network", "enable", "inter-nous", "sharing on"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -275,8 +329,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Pause Inter-Nous exchange",
 		summary: "Pause local Inter-Nous seed exchange without deleting stored data.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network pause" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network pause" },
+			{ surface: "ide", usage: "Pause Inter-Nous exchange" },
+			{ surface: "web", usage: "Pause Inter-Nous exchange" },
+		],
 		tags: ["network", "pause", "disable", "inter-nous", "sharing off"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -284,8 +343,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Show network policy",
 		summary: "Inspect the structured Inter-Nous communication policy.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network policy" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network policy" },
+			{ surface: "ide", usage: "Inspect network policy" },
+			{ surface: "web", usage: "Inspect network policy" },
+		],
 		tags: ["network", "policy", "sharing", "communication"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -293,8 +357,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "List exportable procedures",
 		summary: "List validated local procedures that can be exported.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network procedures" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network procedures" },
+			{ surface: "ide", usage: "List exportable procedures" },
+			{ surface: "web", usage: "List exportable procedures" },
+		],
 		tags: ["network", "procedures", "export", "validated"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -308,8 +377,17 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 				surface: "cli",
 				usage: "nous network export <fingerprint> [--out <path>]",
 			},
+			{
+				surface: "ide",
+				usage: "Export procedure summary <fingerprint>",
+			},
+			{
+				surface: "web",
+				usage: "Export procedure summary <fingerprint>",
+			},
 		],
 		tags: ["network", "export", "bundle", "fingerprint", "procedure"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -317,8 +395,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Import a procedure bundle",
 		summary: "Import a portable procedure-summary bundle into local storage.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network import <bundlePath>" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network import <bundlePath>" },
+			{ surface: "ide", usage: "Import procedure bundle <bundlePath>" },
+			{ surface: "web", usage: "Import procedure bundle <bundlePath>" },
+		],
 		tags: ["network", "import", "bundle", "procedure"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 	{
@@ -326,8 +409,13 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		title: "Inspect network exchange log",
 		summary: "View recent Inter-Nous communication events.",
 		category: "network",
-		syntaxes: [{ surface: "cli", usage: "nous network log [N]" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous network log [N]" },
+			{ surface: "ide", usage: "Inspect network exchange log" },
+			{ surface: "web", usage: "Inspect network exchange log" },
+		],
 		tags: ["network", "log", "events", "communication"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "read_only",
 	},
 	{
@@ -336,72 +424,86 @@ const OPERATION_CATALOG: OperationCatalogEntry[] = [
 		summary:
 			"List built-in registered agents in foreground mode. Daemon-backed listing is not wired yet.",
 		category: "inspect",
-		syntaxes: [{ surface: "cli", usage: "nous agents" }],
+		syntaxes: [
+			{ surface: "cli", usage: "nous agents" },
+			{ surface: "ide", usage: "List registered agents" },
+			{ surface: "web", usage: "List registered agents" },
+		],
 		tags: ["agents", "router", "list agents"],
+		channels: ["cli", "ide", "web"],
 		foregroundOnly: true,
 		sideEffectClass: "read_only",
 	},
 	{
 		id: "session.exit",
-		title: "Exit the REPL",
-		summary: "Detach the current client session and quit the REPL.",
+		title: "Exit the current client session",
+		summary: "Detach the current client session and close the interactive surface.",
 		category: "session",
 		syntaxes: [
 			{ surface: "repl", usage: "/exit" },
 			{ surface: "repl", usage: "/quit" },
+			{ surface: "ide", usage: "Close Nous session" },
+			{ surface: "web", usage: "Close session" },
 		],
 		tags: ["exit", "quit", "leave repl", "close repl"],
+		channels: ["cli", "ide", "web"],
 		sideEffectClass: "state_change",
 	},
 ];
 
-export function getOperationCatalog(): readonly OperationCatalogEntry[] {
-	return OPERATION_CATALOG;
+export function getControlSurfaceCatalog(): readonly ControlSurfaceEntry[] {
+	return CONTROL_SURFACE_CATALOG;
 }
 
-export function getOperationCatalogEntry(
+export function getControlSurfaceEntry(
 	id: string,
-): OperationCatalogEntry | undefined {
-	return OPERATION_CATALOG.find((entry) => entry.id === id);
+): ControlSurfaceEntry | undefined {
+	return CONTROL_SURFACE_CATALOG.find((entry) => entry.id === id);
 }
 
-export function listCatalogOperations(
-	context: OperationAvailabilityContext,
-): OperationCatalogEntry[] {
-	return OPERATION_CATALOG.filter((entry) => {
+export function listControlSurfaceEntries(
+	context: ControlSurfaceContext & { includeUnavailable?: boolean },
+): ControlSurfaceEntry[] {
+	return CONTROL_SURFACE_CATALOG.filter((entry) => {
+		if (!entry.channels?.includes(context.channelType)) {
+			return false;
+		}
 		if (!entry.syntaxes.some((syntax) => syntax.surface === context.surface)) {
 			return false;
 		}
-		return context.includeUnavailable || isOperationAvailable(entry, context);
-	}).sort(compareOperationEntries);
+		return (
+			context.includeUnavailable || controlSurfaceAvailabilityNote(entry, context) === undefined
+		);
+	}).sort(compareEntries);
 }
 
-export function searchCatalogOperations(
+export function searchControlSurfaceEntries(
 	query: string,
-	context: OperationAvailabilityContext,
-): OperationCatalogEntry[] {
+	context: ControlSurfaceContext & { includeUnavailable?: boolean },
+): ControlSurfaceEntry[] {
 	const normalizedQuery = query.trim().toLowerCase();
 	if (!normalizedQuery) {
-		return listCatalogOperations(context);
+		return listControlSurfaceEntries(context);
 	}
 	const tokens = tokenize(normalizedQuery);
-	return OPERATION_CATALOG.map((entry) => ({
+	return CONTROL_SURFACE_CATALOG.map((entry) => ({
 		entry,
-		score: scoreOperationEntry(entry, tokens, normalizedQuery, context),
+		score: scoreControlSurfaceEntry(entry, tokens, normalizedQuery, context),
 	}))
 		.filter(({ score }) => score > 0)
-		.sort((a, b) => b.score - a.score || compareOperationEntries(a.entry, b.entry))
+		.sort((a, b) => b.score - a.score || compareEntries(a.entry, b.entry))
 		.map(({ entry }) => entry);
 }
 
-export function operationAvailabilityNote(
-	entry: OperationCatalogEntry,
-	context: OperationAvailabilityContext,
+export function controlSurfaceAvailabilityNote(
+	entry: ControlSurfaceEntry,
+	context: ControlSurfaceContext,
 ): string | undefined {
+	if (!entry.channels?.includes(context.channelType)) {
+		return `not available on ${context.channelType}`;
+	}
 	if (!entry.syntaxes.some((syntax) => syntax.surface === context.surface)) {
-		return context.surface === "repl"
-			? "not available in the REPL"
-			: "not available as a top-level CLI command";
+		return `not available on ${context.surface}`;
 	}
 	if (entry.requiresDaemon && !context.daemonRunning) {
 		return "requires a running daemon";
@@ -415,9 +517,9 @@ export function operationAvailabilityNote(
 	return undefined;
 }
 
-export function primarySyntaxForSurface(
-	entry: OperationCatalogEntry,
-	surface: OperationSurface,
+export function primaryControlSurfaceSyntax(
+	entry: ControlSurfaceEntry,
+	surface: ControlSurfaceKind,
 ): string {
 	return (
 		entry.syntaxes.find((syntax) => syntax.surface === surface)?.usage ??
@@ -426,7 +528,9 @@ export function primarySyntaxForSurface(
 	);
 }
 
-export function categoryLabel(category: OperationCategory): string {
+export function controlSurfaceCategoryLabel(
+	category: ControlSurfaceCategory,
+): string {
 	switch (category) {
 		case "core":
 			return "Core";
@@ -447,16 +551,9 @@ export function categoryLabel(category: OperationCategory): string {
 	}
 }
 
-function isOperationAvailable(
-	entry: OperationCatalogEntry,
-	context: OperationAvailabilityContext,
-): boolean {
-	return operationAvailabilityNote(entry, context) === undefined;
-}
-
-function compareOperationEntries(
-	left: OperationCatalogEntry,
-	right: OperationCatalogEntry,
+function compareEntries(
+	left: ControlSurfaceEntry,
+	right: ControlSurfaceEntry,
 ): number {
 	return (
 		CATEGORY_ORDER.indexOf(left.category) - CATEGORY_ORDER.indexOf(right.category) ||
@@ -471,14 +568,15 @@ function tokenize(value: string): string[] {
 		.filter(Boolean);
 }
 
-function scoreOperationEntry(
-	entry: OperationCatalogEntry,
+function scoreControlSurfaceEntry(
+	entry: ControlSurfaceEntry,
 	tokens: string[],
 	normalizedQuery: string,
-	context: OperationAvailabilityContext,
+	context: ControlSurfaceContext & { includeUnavailable?: boolean },
 ): number {
 	let score = 0;
-	const availabilityPenalty = isOperationAvailable(entry, context) ? 0 : -4;
+	const availabilityPenalty =
+		controlSurfaceAvailabilityNote(entry, context) === undefined ? 0 : -4;
 	const haystacks = {
 		id: entry.id.toLowerCase(),
 		title: entry.title.toLowerCase(),

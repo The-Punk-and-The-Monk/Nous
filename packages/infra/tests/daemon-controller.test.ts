@@ -12,7 +12,7 @@ function createController(
 		messageStore: new SQLiteMessageStore(db),
 		...overrides,
 	});
-	return new DaemonController(dialogue);
+	return new DaemonController({ dialogue });
 }
 
 function makeEnvelope(overrides: Partial<ClientEnvelope> = {}): ClientEnvelope {
@@ -157,5 +157,34 @@ describe("DaemonController", () => {
 				reason: "Stop this task",
 			},
 		]);
+	});
+
+	test("handles resolve_control_input and returns structured response", async () => {
+		const controller = new DaemonController({
+			dialogue: new DialogueService({
+				messageStore: new SQLiteMessageStore(initDatabase()),
+			}),
+			onResolveControlInput: async (_channel, payload) => ({
+				resolution: {
+					kind: "invoke_operation",
+					operationId: "control.discover",
+					confidence: "high",
+					rationale: `Resolved ${payload.text}`,
+				},
+			}),
+		});
+		const response = await controller.handle(
+			makeEnvelope({
+				type: "resolve_control_input",
+				payload: { text: "what can you do here?", surface: "repl" },
+			}),
+		);
+
+		expect(response?.type).toBe("response");
+		expect(response?.id).toBe("req_1");
+		expect(
+			(response?.payload as { resolution: { operationId: string } }).resolution
+				.operationId,
+		).toBe("control.discover");
 	});
 });
