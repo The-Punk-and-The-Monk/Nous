@@ -40,12 +40,12 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 workdir="$(pwd)"
 session_name="codex-night-${timestamp}"
 branch_name="codex-overnight-${timestamp}"
-max_runs="6"
+max_runs="999"
 model=""
 prompt_file=""
 resume_prompt=""
-enable_search="0"
-dangerous="0"
+enable_search="1"
+dangerous="1"
 foreground="0"
 create_branch="1"
 
@@ -146,8 +146,14 @@ else
 Continue advancing Nous overnight.
 
 Rules:
+- Before making changes, first read:
+  - ARCHITECTURE.md
+  - docs/DEVELOPMENT_LOG.md
+  - docs/PROGRESS_MATRIX.md
 - Stay aligned with the Nous north star.
 - Prefer architecture-first reasoning before implementation.
+- Mandatory write boundary: do not perform any write operation outside the workdir `${WORKDIR}`. Do not create, modify, delete, move, or overwrite files anywhere else.
+- Ignore any write to the external Obsidian note or any other non-repo diary/log target. Do not update Obsidian.
 - Keep commits focused and coherent.
 - After every code or repo-instruction update, update docs/DEVELOPMENT_LOG.md in the same work session.
 - If one planned milestone finishes, pick the next highest-leverage continuation only if it is a natural continuation and does not require unresolved product judgment.
@@ -163,6 +169,12 @@ else
 Continue from the current repository state.
 
 Rules:
+- Before making further changes, first re-read:
+  - ARCHITECTURE.md
+  - docs/DEVELOPMENT_LOG.md
+  - docs/PROGRESS_MATRIX.md
+- Mandatory write boundary: do not perform any write operation outside the workdir `${WORKDIR}`. Do not create, modify, delete, move, or overwrite files anywhere else.
+- Ignore any write to the external Obsidian note or any other non-repo diary/log target. Do not update Obsidian.
 - Finish the current highest-leverage milestone if it is still in progress.
 - If it is complete, choose the next natural continuation that still aligns with the Nous north star.
 - Do not branch into speculative side quests that need product judgment.

@@ -4521,6 +4521,11 @@ For significant sessions, capture:
     - defaults to `codex exec --full-auto`
     - uses `codex exec resume --last` for subsequent rounds
     - writes run artifacts under `${TMPDIR:-/tmp}/codex-overnight/<session>`
+    - now also hard-codes a prompt-level write boundary:
+      - even when `--dangerous` is enabled, the agent is instructed not to create, modify, delete, move, or overwrite files outside the chosen workdir
+    - now also hard-codes preflight context rules:
+      - re-read `ARCHITECTURE.md`, `docs/DEVELOPMENT_LOG.md`, and `docs/PROGRESS_MATRIX.md` before continuing
+      - explicitly ignore writes to the external Obsidian note and any other non-repo diary target
 - Validation:
   - `scripts/codex_overnight.sh --help` ✅
 - Impact / Result:
