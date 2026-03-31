@@ -1,5 +1,14 @@
 import type { PersistenceBackend } from "@nous/persistence";
-import type { DecisionStatus, DialogueThread, Event, Intent, Task } from "@nous/core";
+import type {
+	DecisionStatus,
+	DialogueMessage,
+	DialogueThread,
+	Event,
+	Intent,
+	ProcessItem,
+	Task,
+	TurnResolutionSnapshot,
+} from "@nous/core";
 import { CAPABILITY_NAMES, isCapabilityName } from "@nous/core";
 import { colors } from "../ui/colors.ts";
 
@@ -63,6 +72,7 @@ function debugThread(threadId: string, backend: PersistenceBackend): void {
 	printIntentSummary(intents);
 	printTaskSummary(tasks);
 	printDecisionSummary(decisions);
+	printTurnSurface(messages);
 	printDispatchWarnings(tasks);
 	printRecentMessages(messages);
 	printRecentEvents(recentEvents);
@@ -167,6 +177,35 @@ function printDecisionSummary(
 	}
 }
 
+function printTurnSurface(messages: DialogueMessage[]): void {
+	const turns = collectRecentTurns(messages).slice(-5);
+	console.log(`\n  ${colors.cyan("Recent turns")} ${colors.dim(`(${turns.length})`)}`);
+	if (turns.length === 0) {
+		console.log(`    ${colors.dim("No structured turn surface recorded yet.")}`);
+		return;
+	}
+	for (const turn of turns) {
+		console.log(
+			`    ${turn.turnId.slice(0, 18)}  ${colors.dim(turn.route ?? "route=unknown")}  ${singleLine(turn.humanPrompt ?? "(no human prompt)", 90)}`,
+		);
+		if (turn.trustReceipt) {
+			console.log(
+				`      ${colors.dim("trust")} thread=${turn.trustReceipt.threadResolution} memory=${turn.trustReceipt.memoryHintCount} activeIntents=${turn.trustReceipt.activeIntentCount} approvals=${turn.trustReceipt.approvalBoundaryCount}`,
+			);
+		}
+		if (turn.processTitles.length > 0) {
+			console.log(
+				`      ${colors.dim("surface")} ${turn.processTitles.join(" → ")}`,
+			);
+		}
+		if (turn.finalSummary) {
+			console.log(
+				`      ${colors.dim("answer")} ${singleLine(turn.finalSummary, 110)}`,
+			);
+		}
+	}
+}
+
 function printDispatchWarnings(tasks: Task[]): void {
 	const blocked = tasks
 		.filter((task) => task.status === "queued")
@@ -197,11 +236,7 @@ function printDispatchWarnings(tasks: Task[]): void {
 }
 
 function printRecentMessages(
-	messages: Array<{
-		role: string;
-		content: string;
-		createdAt: string;
-	}>,
+	messages: DialogueMessage[],
 ): void {
 	const recent = messages.slice(-8);
 	console.log(`\n  ${colors.cyan("Recent messages")} ${colors.dim(`(${recent.length})`)}`);
@@ -253,6 +288,80 @@ function readIntentIds(thread: DialogueThread): string[] {
 	return values.filter((value): value is string => typeof value === "string");
 }
 
+function collectRecentTurns(messages: DialogueMessage[]): TurnDebugView[] {
+	const turns = new Map<string, TurnDebugView>();
+	for (const message of messages) {
+		const turnId = readTurnId(message);
+		if (!turnId) {
+			continue;
+		}
+		const existing =
+			turns.get(turnId) ??
+			{
+				turnId,
+				humanPrompt: undefined,
+				processTitles: [],
+				finalSummary: undefined,
+				route: undefined,
+				trustReceipt: undefined,
+				createdAt: message.createdAt,
+			};
+		if (!turns.has(turnId)) {
+			turns.set(turnId, existing);
+		}
+		if (message.role === "human" && !existing.humanPrompt) {
+			existing.humanPrompt = message.content;
+		}
+		const trustReceipt = readTrustReceipt(message);
+		if (trustReceipt) {
+			existing.trustReceipt = trustReceipt;
+			existing.route = trustReceipt.route;
+		}
+		const processItem = readProcessItem(message);
+		if (processItem?.title) {
+			existing.processTitles.push(processItem.title);
+		}
+		if (
+			String(message.metadata?.presentation ?? "") === "answer" &&
+			!existing.finalSummary
+		) {
+			existing.finalSummary =
+				readAnswerSummary(message) ?? message.content.split("\n")[0];
+		}
+	}
+	return [...turns.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function readTurnId(message: DialogueMessage): string | undefined {
+	const value = message.metadata?.turnId;
+	return typeof value === "string" ? value : undefined;
+}
+
+function readProcessItem(message: DialogueMessage): ProcessItem | undefined {
+	const value = message.metadata?.processItem;
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as ProcessItem)
+		: undefined;
+}
+
+function readTrustReceipt(
+	message: DialogueMessage,
+): TurnResolutionSnapshot | undefined {
+	const value = message.metadata?.trustReceipt;
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as TurnResolutionSnapshot)
+		: undefined;
+}
+
+function readAnswerSummary(message: DialogueMessage): string | undefined {
+	const value = message.metadata?.answerArtifact;
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return undefined;
+	}
+	const summary = (value as { summary?: unknown }).summary;
+	return typeof summary === "string" ? summary : undefined;
+}
+
 function renderStatus(status: string): string {
 	const color =
 		status === "active" || status === "running" || status === "assigned"
@@ -281,4 +390,14 @@ function printDebugUsage(): void {
     nous debug thread <threadId>
     nous debug daemon
 `);
+}
+
+interface TurnDebugView {
+	turnId: string;
+	humanPrompt?: string;
+	processTitles: string[];
+	finalSummary?: string;
+	route?: string;
+	trustReceipt?: TurnResolutionSnapshot;
+	createdAt: string;
 }

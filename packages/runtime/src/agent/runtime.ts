@@ -31,6 +31,7 @@ export interface AgentRuntimeConfig {
 	maxTokens?: number;
 	systemPrompt?: string;
 	onPermissionNeeded?: PermissionCallback;
+	onRuntimeEvent?: (event: Event) => void;
 }
 
 export interface AgentResult {
@@ -81,6 +82,7 @@ export class AgentRuntime {
 	private activeToolExecution?: ActiveToolExecution;
 	private currentTaskId?: string;
 	private onPermissionNeeded?: PermissionCallback;
+	private onRuntimeEvent?: (event: Event) => void;
 
 	private log: Logger;
 
@@ -96,6 +98,7 @@ export class AgentRuntime {
 		this.maxTokens = config.maxTokens ?? 4096;
 		this.context = new ContextManager();
 		this.onPermissionNeeded = config.onPermissionNeeded;
+		this.onRuntimeEvent = config.onRuntimeEvent;
 		this.systemPrompt =
 			config.systemPrompt ??
 			"You are a capable agent. Complete the assigned task using the available tools. When done, provide your final answer as text (without tool calls).";
@@ -319,6 +322,8 @@ export class AgentRuntime {
 								toolName: toolUse.name,
 								durationMs: result.durationMs,
 								rollbackHint: result.rollbackHint,
+								sideEffectClass: result.sideEffectClass,
+								outputPreview: truncateForEvent(result.output),
 							});
 							if (interruptReason && interruptMode) {
 								heartbeat.stop();
@@ -337,6 +342,8 @@ export class AgentRuntime {
 								toolName: toolUse.name,
 								success: result.success,
 								durationMs: result.durationMs,
+								sideEffectClass: result.sideEffectClass,
+								outputPreview: truncateForEvent(result.output),
 							});
 						}
 
@@ -491,6 +498,7 @@ export class AgentRuntime {
 			agentId: this.agentId,
 		};
 		this.eventStore.append(event);
+		this.onRuntimeEvent?.(event);
 	}
 }
 
@@ -545,4 +553,12 @@ function buildAgentResult(params: {
 
 function dedupeStrings(values: string[]): string[] {
 	return [...new Set(values)];
+}
+
+function truncateForEvent(value: string, maxLength = 200): string {
+	const compact = value.replace(/\s+/g, " ").trim();
+	if (compact.length <= maxLength) {
+		return compact;
+	}
+	return `${compact.slice(0, maxLength - 3)}...`;
 }

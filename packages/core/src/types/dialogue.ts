@@ -1,4 +1,5 @@
 import type { ISOTimestamp } from "../utils/timestamp.ts";
+import type { DialogueMessageMetadata } from "./interaction.ts";
 
 export type DialogueThreadStatus = "active" | "archived";
 export type DialogueRole = "human" | "assistant" | "system";
@@ -22,7 +23,7 @@ export interface DialogueMessage {
 	direction: DialogueDirection;
 	content: string;
 	createdAt: ISOTimestamp;
-	metadata?: Record<string, unknown>;
+	metadata?: DialogueMessageMetadata;
 }
 
 export interface OutboxEntry {

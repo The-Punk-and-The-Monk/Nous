@@ -196,6 +196,18 @@ export type {
 	OutboxStatus,
 } from "./types/dialogue.ts";
 export type {
+	InteractionPresentation,
+	InteractionPhase,
+	TurnRouteKind,
+	ThreadResolutionKind,
+	TurnResolutionSnapshot,
+	ProcessItemKind,
+	ProcessItemStatus,
+	ProcessItem,
+	AnswerArtifact,
+	DialogueMessageMetadata,
+} from "./types/interaction.ts";
+export type {
 	Channel,
 	ChannelType,
 	ChannelStatus,

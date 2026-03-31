@@ -37,6 +37,27 @@ This file answers a different question:
 
 ### Daily snapshot
 
+#### 观察点
+
+| 观察点 | 当前判断 | 说明 |
+|---|---|---|
+| 持续运行体验 | 已形成可验证主链路 | daemon / attach / thread / outbox / reconnect 已具备连续助手的基本形态 |
+| 任务闭环能力 | 已进入可用但仍偏工程向阶段 | intake、clarification、decision、pause/resume、structured delivery 已连通，但仍更擅长受限任务而非广泛日常事务 |
+| 记忆系统成熟度 | 已脱离“只有存储”阶段 | 现在是“memory substrate + first retrieval loop + richer producers + first prospective lifecycle”，但还不是完整 RAG / metabolism |
+| 主动性质量 | 从启发式迈向受治理后台认知 | 已有 agenda / reflection / candidate / cooldown / quota，但 relationship-aware personalization 仍早期 |
+| 可观测性 | 明显增强 | `nous debug`、Process Surface、结构化 turn / process / answer lane 已让“卡住在哪里”更容易定位 |
+| 架构重心 | 明确偏向个人助手优先 | 当前最强的是持续运行与治理骨架，下一步价值增量更多来自 memory / proactive / tool breadth |
+
+#### 执行说明
+
+- 日常验证顺序建议：先跑 `bun x tsc --noEmit`，再跑 `bun test`，最后按需做真实 daemon / proxy 验证。
+- 本地直接运行：使用 `bun bin/nous.ts "<你的任务>"` 走前台单次执行路径，适合验证 provider、intake、planner、delivery。
+- daemon 路径验证：先执行 `bun bin/nous.ts daemon start`，再用 `bun bin/nous.ts attach <threadId>` 或直接进入 `bun bin/nous.ts` 的 REPL 交互。
+- 线程/卡点排查：优先使用 `bun bin/nous.ts debug daemon` 与 `bun bin/nous.ts debug thread <threadId>`，先确认是 decision 阻塞、task 未派发，还是 delivery / outbox 问题。
+- 真实 socket 场景：受限沙箱外可用 `python3 scripts/e2e_daemon.py demo` 或 `python3 scripts/e2e_daemon.py live` 验证 attach、push、thread replay。
+- OpenAI / 代理验证：若走 direct OpenAI 或兼容代理，优先检查 `~/.nous/config/config.json`、`~/.nous/secrets/providers.json` 与 `OPENAI_*` 相关环境变量是否一致。
+- 当前重点实现顺序建议：先补 tool breadth，再推进 relationship-aware proactive runtime，随后再继续 procedural / prospective memory 与更强 RAG。
+
 #### A. What moved materially today
 
 | Area | Yesterday | Today | What changed |

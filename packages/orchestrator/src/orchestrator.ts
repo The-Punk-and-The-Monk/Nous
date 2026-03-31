@@ -68,6 +68,9 @@ export interface ProgressEvent {
 		| "task.completed"
 		| "task.cancelled"
 		| "task.failed"
+		| "tool.called"
+		| "tool.executed"
+		| "tool.cancelled"
 		| "intent.achieved"
 		| "escalation";
 	data: Record<string, unknown>;
@@ -914,6 +917,7 @@ export class Orchestrator {
 			),
 			onPermissionNeeded: this.intentExecutionOptions.get(task.intentId)
 				?.onPermissionNeeded,
+			onRuntimeEvent: (event) => this.handleRuntimeEvent(task, event),
 		});
 		this.runningRuntimes.set(task.id, runtime);
 
@@ -1411,6 +1415,41 @@ export class Orchestrator {
 	private emitProgress(event: ProgressEvent): void {
 		for (const listener of this.progressListeners) {
 			listener(event);
+		}
+	}
+
+	private handleRuntimeEvent(task: Task, event: Event): void {
+		switch (event.type) {
+			case "tool.called":
+				this.emitProgress({
+					type: "tool.called",
+					data: {
+						intentId: task.intentId,
+						taskId: task.id,
+						...(event.payload as Record<string, unknown>),
+					},
+				});
+				return;
+			case "tool.executed":
+				this.emitProgress({
+					type: "tool.executed",
+					data: {
+						intentId: task.intentId,
+						taskId: task.id,
+						...(event.payload as Record<string, unknown>),
+					},
+				});
+				return;
+			case "tool.cancelled":
+				this.emitProgress({
+					type: "tool.cancelled",
+					data: {
+						intentId: task.intentId,
+						taskId: task.id,
+						...(event.payload as Record<string, unknown>),
+					},
+				});
+				return;
 		}
 	}
 

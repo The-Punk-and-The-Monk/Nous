@@ -1,6 +1,7 @@
 import { rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { type Socket, createServer } from "node:net";
 import type {
+	AssembledContext,
 	Channel,
 	ClientEnvelope,
 	DaemonEnvelope,
@@ -8,6 +9,8 @@ import type {
 	LLMProvider,
 	ProactiveCandidate,
 	RelationshipBoundary,
+	TurnResolutionSnapshot,
+	TurnRouteKind,
 } from "@nous/core";
 import { createLogger, now, prefixedId } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
@@ -37,6 +40,10 @@ import {
 } from "../intake/thread-input-router.ts";
 import { ThreadScopeRouter } from "../intake/thread-scope-router.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
+import {
+	buildTrustReceiptDelivery,
+	projectProgressEvent,
+} from "./process-surface.ts";
 import {
 	type ConflictDecision,
 	StaticIntentConflictManager,
@@ -75,6 +82,7 @@ export class NousDaemon {
 	private readonly intentTextById = new Map<string, string>();
 	private readonly intentScopeById = new Map<string, Channel["scope"]>();
 	private readonly intentOutputsById = new Map<string, string[]>();
+	private readonly turnStateByIntentId = new Map<string, TurnState>();
 	private readonly scheduledIntentExecutions = new Set<string>();
 	private readonly procedureSeeds = new LocalProcedureSeedStore();
 	private readonly sessions = new Map<Socket, ConnectionState>();
@@ -274,13 +282,12 @@ export class NousDaemon {
 		if (!intentId) return;
 		const threadId = this.threadByIntentId.get(intentId);
 		if (!threadId) return;
+		const turnState = this.turnStateByIntentId.get(intentId);
 		if (event.type === "intent.approval_requested") {
 			void this.handleRiskBoundaryApprovalRequested(event, threadId);
 			return;
 		}
 
-		const delivery = progressEventToDelivery(event);
-		if (!delivery) return;
 		if (event.type === "task.completed") {
 			const outputs = this.intentOutputsById.get(intentId) ?? [];
 			const output = String(event.data.output ?? "").trim();
@@ -292,12 +299,42 @@ export class NousDaemon {
 		if (event.type === "intent.achieved" || event.type === "escalation") {
 			this.storeIntentOutcomeMemory(intentId, event.type);
 		}
-		this.dialogue.enqueueAssistantMessage({
-			threadId,
-			content: delivery.content,
-			kind: delivery.kind,
-			metadata: { eventType: event.type, intentId },
+		const taskId = String(event.data.taskId ?? "");
+		const taskDescription = taskId
+			? this.backend.tasks.getById(taskId)?.description
+			: undefined;
+		const workedMs =
+			event.type === "intent.achieved" || event.type === "escalation"
+				? this.computeWorkedMs(turnState)
+				: undefined;
+		const deliveries = projectProgressEvent(event, {
+			turnId: turnState?.turnId,
+			intentId,
+			taskDescription,
+			workedMs,
 		});
+		if (deliveries.length === 0) {
+			if (event.type === "intent.achieved" || event.type === "escalation") {
+				this.turnStateByIntentId.delete(intentId);
+			}
+			return;
+		}
+		for (const delivery of deliveries) {
+			this.dialogue.enqueueAssistantMessage({
+				threadId,
+				content: delivery.content,
+				kind: delivery.kind,
+				metadata: {
+					eventType: event.type,
+					intentId,
+					turnId: turnState?.turnId,
+					...delivery.metadata,
+				},
+			});
+		}
+		if (event.type === "intent.achieved" || event.type === "escalation") {
+			this.turnStateByIntentId.delete(intentId);
+		}
 		void this.flushPendingDeliveriesForThread(threadId);
 	}
 
@@ -685,15 +722,17 @@ export class NousDaemon {
 		channel: Channel;
 	}): Promise<void> {
 		const executionContext = this.buildExecutionContext(payload);
-		this.dialogue.enqueueAssistantMessage({
-			threadId: payload.threadId,
-			content: `Context assembled for ${executionContext.assembledContext.project.rootDir} (${executionContext.assembledContext.project.type}, git: ${executionContext.assembledContext.project.gitStatus ?? "unknown"}).`,
-			kind: "notification",
-			metadata: {
-				source: "context_assembly",
-				projectRoot: executionContext.assembledContext.project.rootDir,
-			},
-		});
+		const turnRoute = this.inferTurnRouteForExecution(payload.threadId);
+		const turnStartedAt = now();
+		this.announceTurnTrustReceipt(
+			this.buildTurnResolutionSnapshot({
+				threadId: payload.threadId,
+				turnId: payload.messageId,
+				route: turnRoute,
+				executionContext,
+				createdAt: turnStartedAt,
+			}),
+		);
 		await this.flushPendingDeliveriesForThread(payload.threadId);
 
 		const intent = await this.orchestrator.submitIntentBackground(
@@ -703,13 +742,20 @@ export class NousDaemon {
 				capabilities: executionContext.permissionCapabilities,
 				grounding: executionContext.grounding,
 				deferExecution: true,
-				onIntentCreated: (intent) =>
+				onIntentCreated: (intent) => {
 					this.trackIntentForThread(
 						intent.id,
 						payload.threadId,
 						payload.text,
 						payload.channel.scope,
-					),
+					);
+					this.recordTurnState(intent.id, {
+						turnId: payload.messageId,
+						threadId: payload.threadId,
+						startedAt: turnStartedAt,
+						route: turnRoute,
+					});
+				},
 			},
 		);
 
@@ -788,6 +834,26 @@ export class NousDaemon {
 		});
 
 		const executionContext = this.buildExecutionContext(payload);
+		const turnStartedAt = now();
+		this.announceTurnTrustReceipt(
+			this.buildTurnResolutionSnapshot({
+				threadId: payload.threadId,
+				turnId: payload.messageId,
+				intentId: decision.intentId,
+				intentSummary: this.backend.intents.getById(decision.intentId)?.goal.summary,
+				route: "clarification_resume",
+				executionContext,
+				createdAt: turnStartedAt,
+				notes: ["This reply is being used to resume the original intent after clarification."],
+			}),
+		);
+		await this.flushPendingDeliveriesForThread(payload.threadId);
+		this.recordTurnState(decision.intentId, {
+			turnId: payload.messageId,
+			threadId: payload.threadId,
+			startedAt: turnStartedAt,
+			route: "clarification_resume",
+		});
 		const intent = await this.orchestrator.respondToClarification(
 			decision.intentId,
 			payload.text,
@@ -1307,6 +1373,26 @@ export class NousDaemon {
 			text: params.text,
 			scope: params.scope,
 		});
+		const turnStartedAt = now();
+		this.announceTurnTrustReceipt(
+			this.buildTurnResolutionSnapshot({
+				threadId: params.threadId,
+				turnId: params.messageId,
+				intentId: params.intentId,
+				intentSummary: this.backend.intents.getById(params.intentId)?.goal.summary,
+				route: "scope_update",
+				executionContext,
+				createdAt: turnStartedAt,
+				notes: ["This turn is being applied as a scope update to the current intent."],
+			}),
+		);
+		await this.flushPendingDeliveriesForThread(params.threadId);
+		this.recordTurnState(params.intentId, {
+			turnId: params.messageId,
+			threadId: params.threadId,
+			startedAt: turnStartedAt,
+			route: "scope_update",
+		});
 		const result = await this.orchestrator.applyIntentScopeUpdate(
 			params.intentId,
 			params.text,
@@ -1451,7 +1537,17 @@ export class NousDaemon {
 			threadId,
 			content,
 			kind: "decision_needed",
-			metadata: { reason: "thread_input_ambiguous", disposition },
+			metadata: {
+				reason: "thread_input_ambiguous",
+				disposition,
+				presentation: "decision",
+				phase: "commentary",
+				processItem: {
+					kind: "decision",
+					title: "Need your input",
+					status: "warning",
+				},
+			},
 		});
 		await this.flushPendingDeliveriesForThread(threadId);
 	}
@@ -1466,14 +1562,34 @@ export class NousDaemon {
 			text,
 			scope,
 		});
+		const turnId = prefixedId("turn");
+		const turnStartedAt = now();
+		this.announceTurnTrustReceipt(
+			this.buildTurnResolutionSnapshot({
+				threadId,
+				turnId,
+				route: "proactive",
+				executionContext,
+				createdAt: turnStartedAt,
+				threadResolution: "ambient",
+				notes: ["This intent was initiated from the proactive reflection loop."],
+			}),
+		);
 		const intent = await this.orchestrator.submitIntentBackground(text, {
 			systemPrompt: executionContext.systemPrompt,
 			source: "ambient",
 			capabilities: executionContext.permissionCapabilities,
 			grounding: executionContext.grounding,
 			deferExecution: true,
-			onIntentCreated: (intent) =>
-				this.trackIntentForThread(intent.id, threadId, text, scope),
+			onIntentCreated: (intent) => {
+				this.trackIntentForThread(intent.id, threadId, text, scope);
+				this.recordTurnState(intent.id, {
+					turnId,
+					threadId,
+					startedAt: turnStartedAt,
+					route: "proactive",
+				});
+			},
 		});
 		if (intent.status === "awaiting_clarification") {
 			await this.createClarificationDecision(intent, threadId);
@@ -1511,14 +1627,34 @@ export class NousDaemon {
 			text,
 			scope,
 		});
+		const turnId = prefixedId("turn");
+		const turnStartedAt = now();
+		this.announceTurnTrustReceipt(
+			this.buildTurnResolutionSnapshot({
+				threadId,
+				turnId,
+				route: "proactive",
+				executionContext,
+				createdAt: turnStartedAt,
+				threadResolution: "ambient",
+				notes: ["This proactive intent is being held for approval before execution."],
+			}),
+		);
 		const intent = await this.orchestrator.submitIntentBackground(text, {
 			systemPrompt: executionContext.systemPrompt,
 			source: "ambient",
 			capabilities: executionContext.permissionCapabilities,
 			grounding: executionContext.grounding,
 			deferExecution: true,
-			onIntentCreated: (intent) =>
-				this.trackIntentForThread(intent.id, threadId, text, scope),
+			onIntentCreated: (intent) => {
+				this.trackIntentForThread(intent.id, threadId, text, scope);
+				this.recordTurnState(intent.id, {
+					turnId,
+					threadId,
+					startedAt: turnStartedAt,
+					route: "proactive",
+				});
+			},
 		});
 		if (intent.status === "awaiting_clarification") {
 			await this.createClarificationDecision(intent, threadId);
@@ -1650,6 +1786,77 @@ export class NousDaemon {
 			grounding,
 			permissionCapabilities,
 		};
+	}
+
+	private announceTurnTrustReceipt(snapshot: TurnResolutionSnapshot): void {
+		const delivery = buildTrustReceiptDelivery(snapshot);
+		this.dialogue.enqueueAssistantMessage({
+			threadId: snapshot.threadId,
+			content: delivery.content,
+			kind: delivery.kind,
+			metadata: delivery.metadata,
+		});
+	}
+
+	private buildTurnResolutionSnapshot(params: {
+		threadId: string;
+		turnId: string;
+		intentId?: string;
+		intentSummary?: string;
+		route: TurnRouteKind;
+		executionContext: { assembledContext: AssembledContext };
+		createdAt: string;
+		threadResolution?: TurnResolutionSnapshot["threadResolution"];
+		notes?: string[];
+	}): TurnResolutionSnapshot {
+		const assembledContext = params.executionContext.assembledContext;
+		return {
+			turnId: params.turnId,
+			threadId: params.threadId,
+			intentId: params.intentId,
+			intentSummary: params.intentSummary,
+			route: params.route,
+			threadResolution:
+				params.threadResolution ??
+				this.inferThreadResolutionKind(params.threadId),
+			projectRoot: assembledContext.project.rootDir,
+			projectType: assembledContext.project.type,
+			gitStatus: assembledContext.project.gitStatus,
+			focusedFile: assembledContext.project.focusedFile,
+			memoryHintCount: assembledContext.user.recentMemoryHints.length,
+			activeIntentCount: assembledContext.user.activeIntents.length,
+			scopeLabelCount: assembledContext.user.scopeLabels.length,
+			approvalBoundaryCount: assembledContext.permissions.approvalRequired.length,
+			notes: params.notes,
+			createdAt: params.createdAt,
+		};
+	}
+
+	private inferThreadResolutionKind(
+		threadId: string,
+	): TurnResolutionSnapshot["threadResolution"] {
+		const messages = this.backend.messages.getMessagesByThread(threadId);
+		return messages.length <= 1 ? "created" : "continued";
+	}
+
+	private inferTurnRouteForExecution(threadId: string): TurnRouteKind {
+		const messages = this.backend.messages.getMessagesByThread(threadId);
+		return messages.length <= 1 ? "new_intent" : "thread_reply";
+	}
+
+	private recordTurnState(intentId: string, state: TurnState): void {
+		this.turnStateByIntentId.set(intentId, state);
+	}
+
+	private computeWorkedMs(state?: TurnState): number | undefined {
+		if (!state) {
+			return undefined;
+		}
+		const startedAtMs = Date.parse(state.startedAt);
+		if (Number.isNaN(startedAtMs)) {
+			return undefined;
+		}
+		return Date.now() - startedAtMs;
 	}
 
 	private async createClarificationDecision(
@@ -1928,10 +2135,18 @@ export class NousDaemon {
 		decision: Decision,
 		queuedMessage: string,
 	): Promise<Decision> {
+		const turnId =
+			typeof decision.metadata?.turnId === "string"
+				? decision.metadata.turnId
+				: this.turnStateByIntentId.get(decision.intentId)?.turnId;
 		const hasPendingDecision =
 			this.backend.decisions.getPendingByThread(decision.threadId).length > 0;
 		const persisted = {
 			...decision,
+			metadata: {
+				...(decision.metadata ?? {}),
+				turnId,
+			},
 			status: hasPendingDecision ? "queued" : "pending",
 		} satisfies Decision;
 		this.backend.decisions.create(persisted);
@@ -2030,6 +2245,17 @@ export class NousDaemon {
 				decisionId: decision.id,
 				decisionKind: decision.kind,
 				intentId: decision.intentId,
+				turnId:
+					typeof decision.metadata?.turnId === "string"
+						? decision.metadata.turnId
+						: undefined,
+				presentation: "decision",
+				phase: "commentary",
+				processItem: {
+					kind: "decision",
+					title: "Need your input",
+					status: "warning",
+				},
 			},
 		});
 		await this.flushPendingDeliveriesForThread(decision.threadId);
@@ -2125,6 +2351,7 @@ export class NousDaemon {
 		this.intentScopeById.delete(intentId);
 		this.intentOutputsById.delete(intentId);
 		this.threadByIntentId.delete(intentId);
+		this.turnStateByIntentId.delete(intentId);
 	}
 
 	private async finalizeAbandonedIntent(
@@ -2577,6 +2804,13 @@ interface ConnectionState {
 	subscriptions?: string[];
 }
 
+interface TurnState {
+	turnId: string;
+	threadId: string;
+	startedAt: string;
+	route: TurnRouteKind;
+}
+
 function cleanupSocket(socketPath: string): void {
 	try {
 		unlinkSync(socketPath);
@@ -2653,277 +2887,6 @@ function formatPendingDecision(decision: Decision): string {
 
 	lines.push("Reply in this thread to continue.");
 	return lines.join("\n");
-}
-
-function progressEventToDelivery(event: ProgressEvent):
-	| {
-			content: string;
-			kind: "progress" | "result" | "notification" | "decision_needed";
-	  }
-	| undefined {
-	switch (event.type) {
-		case "intent.intake":
-			return {
-				content: formatIntentIntakeMessage(event),
-				kind: "notification",
-			};
-		case "intent.parsed":
-			return {
-				content: `Intent parsed: ${String((event.data.goal as { summary?: string })?.summary ?? "unknown")}`,
-				kind: "progress",
-			};
-		case "intent.resumed":
-			return {
-				content: formatIntentResumedMessage(event),
-				kind: "notification",
-			};
-		case "intent.revision_queued":
-			return {
-				content: formatIntentRevisionQueuedMessage(event),
-				kind: "notification",
-			};
-		case "intent.replanned":
-			return {
-				content: formatIntentReplannedMessage(event),
-				kind: "notification",
-			};
-		case "intent.pause_requested":
-			return {
-				content: formatIntentPauseRequestedMessage(event),
-				kind: "notification",
-			};
-		case "intent.paused":
-			return {
-				content: formatIntentPausedMessage(event),
-				kind: "notification",
-			};
-		case "intent.cancel_requested":
-			return {
-				content: formatIntentCancelRequestedMessage(event),
-				kind: "notification",
-			};
-		case "intent.approval_requested":
-			return undefined;
-		case "intent.cancelled":
-			return {
-				content: formatIntentCancelledMessage(event),
-				kind: "notification",
-			};
-		case "tasks.planned":
-			return {
-				content: `Tasks planned: ${String(event.data.taskCount ?? 0)}`,
-				kind: "progress",
-			};
-		case "task.started":
-			return {
-				content: `Task started: ${String(event.data.taskId ?? "")}`,
-				kind: "progress",
-			};
-		case "task.completed":
-			return {
-				content: formatTaskCompletedMessage(event),
-				kind: "progress",
-			};
-		case "task.cancelled":
-			return {
-				content: `Task cancelled: ${String(event.data.taskId ?? "")}\n${String(event.data.reason ?? "Cancelled by user")}`,
-				kind: "notification",
-			};
-		case "task.failed":
-			return {
-				content: `Task failed: ${String(event.data.error ?? "unknown error")}`,
-				kind: "notification",
-			};
-		case "intent.clarification_needed":
-			return {
-				content: formatClarificationNeededMessage(event),
-				kind: "decision_needed",
-			};
-		case "intent.achieved":
-			return {
-				content: formatIntentAchievedMessage(event),
-				kind: "result",
-			};
-		case "escalation":
-			return {
-				content: `Escalation: ${String(event.data.reason ?? "unknown")}`,
-				kind: "notification",
-			};
-		default:
-			return undefined;
-	}
-}
-
-function formatTaskCompletedMessage(event: ProgressEvent): string {
-	const output = String(event.data.output ?? "").trim();
-	if (!output) {
-		return `Task completed: ${String(event.data.taskId ?? "")}`;
-	}
-	const compact = truncate(output, 240);
-	return `Task completed: ${String(event.data.taskId ?? "")}\n${compact}`;
-}
-
-function formatIntentIntakeMessage(event: ProgressEvent): string {
-	const contract = event.data.contract as {
-		summary?: string;
-	} | null;
-	const executionDepth = event.data.executionDepth as {
-		planningDepth?: string;
-		timeDepth?: string;
-		organizationDepth?: string;
-	} | null;
-	const clarificationQuestions = Array.isArray(
-		event.data.clarificationQuestions,
-	)
-		? event.data.clarificationQuestions
-				.map((item) => String(item).trim())
-				.filter(Boolean)
-		: [];
-	const lines = [
-		`Task contract formed: ${String(contract?.summary ?? "unknown")}`,
-		`Depth: planning=${String(executionDepth?.planningDepth ?? "unknown")}, time=${String(executionDepth?.timeDepth ?? "unknown")}, org=${String(executionDepth?.organizationDepth ?? "unknown")}`,
-	];
-	const groundingSummary = String(event.data.groundingSummary ?? "").trim();
-	if (groundingSummary) {
-		lines.push(`Grounding: ${groundingSummary}`);
-	}
-	if (clarificationQuestions.length > 0) {
-		lines.push(`Potential clarification: ${clarificationQuestions[0]}`);
-	}
-	return lines.join("\n");
-}
-
-function formatClarificationNeededMessage(event: ProgressEvent): string {
-	const questions = Array.isArray(event.data.clarificationQuestions)
-		? event.data.clarificationQuestions
-				.map((item) => String(item).trim())
-				.filter(Boolean)
-		: [];
-	if (questions.length === 0) {
-		return "I need clarification before proceeding.";
-	}
-	return [
-		"I need clarification before proceeding:",
-		...questions.map((question, index) => `${index + 1}. ${question}`),
-	].join("\n");
-}
-
-function formatIntentResumedMessage(event: ProgressEvent): string {
-	const contract = event.data.contract as { summary?: string } | null;
-	const executionDepth = event.data.executionDepth as {
-		planningDepth?: string;
-		timeDepth?: string;
-	} | null;
-	const resumeType = String(event.data.resumeType ?? "clarification");
-	const heading =
-		resumeType === "pause_resume"
-			? "Intent resumed from pause."
-			: resumeType === "approval_boundary"
-				? "Approval received. Continuing past the risky boundary."
-				: "Clarification resolved. Resuming the original intent.";
-	return [
-		heading,
-		`Contract: ${String(contract?.summary ?? "unknown")}`,
-		`Depth: planning=${String(executionDepth?.planningDepth ?? "unknown")}, time=${String(executionDepth?.timeDepth ?? "unknown")}`,
-	].join("\n");
-}
-
-function formatIntentRevisionQueuedMessage(event: ProgressEvent): string {
-	return [
-		"Scope update accepted.",
-		`Apply policy: ${String(event.data.applyPolicy ?? "next_execution_boundary")}`,
-		"I will apply it at the next safe execution boundary before dispatching more work.",
-	].join("\n");
-}
-
-function formatIntentReplannedMessage(event: ProgressEvent): string {
-	const contract = event.data.contract as { summary?: string } | null;
-	return [
-		"Applied the latest scope update and replanned the remaining work.",
-		`Contract: ${String(contract?.summary ?? "unknown")}`,
-		`Completed work preserved: ${String(event.data.completedTaskCount ?? 0)} task(s)`,
-	].join("\n");
-}
-
-function formatIntentPauseRequestedMessage(event: ProgressEvent): string {
-	return [
-		"Pause requested.",
-		`Reason: ${String(event.data.reason ?? "Paused by user")}`,
-		"I will stop at the next safe task boundary.",
-	].join("\n");
-}
-
-function formatIntentPausedMessage(event: ProgressEvent): string {
-	return [
-		"Intent paused.",
-		`Reason: ${String(event.data.reason ?? "Paused by user")}`,
-	].join("\n");
-}
-
-function formatIntentCancelRequestedMessage(event: ProgressEvent): string {
-	return [
-		"Cancellation requested.",
-		`Reason: ${String(event.data.reason ?? "Cancelled by user")}`,
-	].join("\n");
-}
-
-function formatIntentCancelledMessage(event: ProgressEvent): string {
-	return [
-		"Intent cancelled.",
-		`Reason: ${String(event.data.reason ?? "Cancelled by user")}`,
-	].join("\n");
-}
-
-function formatIntentAchievedMessage(event: ProgressEvent): string {
-	const delivery = event.data.delivery as
-		| {
-				mode?: string;
-				summary?: string;
-				evidence?: unknown[];
-				risks?: unknown[];
-				nextSteps?: unknown[];
-		  }
-		| undefined;
-	if (!delivery) {
-		return "Intent achieved.";
-	}
-
-	const evidence = Array.isArray(delivery.evidence)
-		? delivery.evidence.map((item) => String(item).trim()).filter(Boolean)
-		: [];
-	const risks = Array.isArray(delivery.risks)
-		? delivery.risks.map((item) => String(item).trim()).filter(Boolean)
-		: [];
-	const nextSteps = Array.isArray(delivery.nextSteps)
-		? delivery.nextSteps.map((item) => String(item).trim()).filter(Boolean)
-		: [];
-
-	if (delivery.mode === "concise") {
-		return `Intent achieved.\n${String(delivery.summary ?? "").trim() || "Completed successfully."}`;
-	}
-
-	const lines = [
-		"Intent achieved.",
-		`Summary: ${String(delivery.summary ?? "").trim() || "Completed successfully."}`,
-	];
-	if (evidence.length > 0) {
-		lines.push("Evidence:");
-		lines.push(...evidence.map((item) => `- ${item}`));
-	}
-	if (risks.length > 0) {
-		lines.push("Risks / gaps:");
-		lines.push(...risks.map((item) => `- ${item}`));
-	}
-	if (nextSteps.length > 0) {
-		lines.push("Next steps:");
-		lines.push(...nextSteps.map((item) => `- ${item}`));
-	}
-	return lines.join("\n");
-}
-
-function truncate(text: string, maxLength: number): string {
-	if (text.length <= maxLength) return text;
-	return `${text.slice(0, maxLength - 3)}...`;
 }
 
 function getAttachedThreadId(

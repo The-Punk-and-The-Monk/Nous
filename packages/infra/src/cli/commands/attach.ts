@@ -1,5 +1,6 @@
-import type { DialogueMessage, ThreadSnapshot } from "@nous/core";
+import type { ThreadSnapshot } from "@nous/core";
 import { colors } from "../ui/colors.ts";
+import { renderDialogueMessage } from "../renderers/dialogue.ts";
 
 export function attachCommand(snapshot: ThreadSnapshot): void {
 	console.log(colors.bold(`\n  νοῦς — Thread ${snapshot.thread.id}\n`));
@@ -26,18 +27,4 @@ export function attachCommand(snapshot: ThreadSnapshot): void {
 	console.log();
 }
 
-export function renderDialogueMessage(
-	message: DialogueMessage,
-	options?: { prefix?: string },
-): void {
-	const role =
-		message.role === "human"
-			? colors.cyan("human")
-			: message.role === "assistant"
-				? colors.green("nous")
-				: colors.dim(message.role);
-	const prefix = options?.prefix ? `${options.prefix} ` : "  ";
-	console.log(
-		`${prefix}${role} ${colors.dim(message.createdAt)} ${message.content}`,
-	);
-}
+export { renderDialogueMessage };

@@ -61,6 +61,7 @@ describe("DialogueService", () => {
 		expect(snapshot).toBeDefined();
 		expect(snapshot?.messages).toHaveLength(1);
 		expect(snapshot?.messages[0].content).toBe("Refactor auth module");
+		expect(snapshot?.messages[0].metadata?.turnId).toBe(snapshot?.messages[0].id);
 	});
 
 	test("enqueueAssistantMessage persists outbox entry", async () => {

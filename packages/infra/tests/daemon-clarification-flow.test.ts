@@ -171,19 +171,21 @@ describe("NousDaemon clarification resume flow", () => {
 			);
 			expect(
 				assistantMessages?.some((message) =>
-					message.content.includes("I need clarification before proceeding"),
-				),
-			).toBe(true);
-			expect(
-				assistantMessages?.some((message) =>
 					message.content.includes(
-						"Clarification resolved. Resuming the original intent.",
+						"Clarification needed before continuing",
 					),
 				),
 			).toBe(true);
 			expect(
 				assistantMessages?.some((message) =>
-					message.content.includes("Intent achieved."),
+					message.content.includes(
+						"Clarification resolved. Restored the original intent.",
+					),
+				),
+			).toBe(true);
+			expect(
+				assistantMessages?.some((message) =>
+					String(message.metadata?.presentation) === "answer",
 				),
 			).toBe(true);
 			expect(snapshot?.thread.metadata?.intentIds).toEqual([intentId]);

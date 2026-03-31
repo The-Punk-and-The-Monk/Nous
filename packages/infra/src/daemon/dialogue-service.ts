@@ -8,6 +8,7 @@ import type {
 	Channel,
 	DaemonEnvelope,
 	DaemonMessageType,
+	DialogueMessageMetadata,
 	DialogueMessage,
 	DialogueThread,
 	GetThreadPayload,
@@ -281,6 +282,21 @@ export class DialogueService {
 	}): OutboundMessageRecord {
 		const thread = this.requireThread(params.threadId);
 		const createdAt = this.clock();
+		const kind = params.kind ?? "notification";
+		const presentation: DialogueMessageMetadata["presentation"] =
+			typeof params.metadata?.presentation === "string"
+				? (params.metadata.presentation as DialogueMessageMetadata["presentation"])
+				: kind === "result"
+					? "answer"
+					: kind === "decision_needed"
+						? "decision"
+						: "process";
+		const phase: DialogueMessageMetadata["phase"] =
+			typeof params.metadata?.phase === "string"
+				? (params.metadata.phase as DialogueMessageMetadata["phase"])
+				: kind === "result"
+					? "final"
+					: "commentary";
 		const message: DialogueMessage = {
 			id: this.idFactory("msg"),
 			threadId: thread.id,
@@ -290,7 +306,9 @@ export class DialogueService {
 			content: params.content,
 			createdAt,
 			metadata: {
-				kind: params.kind ?? "notification",
+				kind,
+				presentation,
+				phase,
 				...(params.metadata ?? {}),
 			},
 		};
@@ -445,9 +463,14 @@ export class DialogueService {
 			content: text,
 			createdAt: this.clock(),
 			metadata: {
+				turnId: undefined,
 				channelType: channel.type,
 				scope: channel.scope,
 			},
+		};
+		message.metadata = {
+			...message.metadata,
+			turnId: message.id,
 		};
 		this.config.messageStore.appendMessage(message);
 		this.touchThread(threadId, message.createdAt, channel.id);

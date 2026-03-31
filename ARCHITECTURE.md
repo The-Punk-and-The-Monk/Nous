@@ -3244,6 +3244,458 @@ Agent: "Done"                          │
                                        └── Nous → push: "Starting tests now."
 ```
 
+### Nous 的 Process Surface / Structured Process Visibility
+
+Unified Presence solves **who** the user is talking to. It does **not** automatically solve **how trust is maintained while work is happening**.
+
+That second problem appears the moment Nous becomes slower, deeper, and more autonomous than a simple chat completion:
+
+- the user submits one message
+- Nous does intent recovery, context assembly, memory retrieval, planning, tool execution, and decision routing
+- several seconds or minutes may pass before a final answer exists
+
+If the user cannot see what is happening, the interaction feels broken:
+
+- “Did it route my message into the right thread?”
+- “Did it recover the original intent after clarification?”
+- “Did it load the right memory or project context?”
+- “Is it stuck, or is it working?”
+
+But the opposite extreme is also wrong. We should **not** dump raw internal events like:
+
+- `Task started: task_01...`
+- `task.completed`
+- opaque internal ids
+- every low-level event tick
+
+That creates noise, not trust.
+
+So Nous needs a distinct architectural layer:
+
+> **Process Surface = the governed, user-facing projection of internal execution.**
+
+It is the translation layer between:
+
+- raw runtime/orchestrator events
+- and a human-comprehensible interaction trace
+
+This is the same product lesson visible in tools like **Codex** and **Claude Code**:
+
+- they do **not** hide planning / tool usage / progress
+- but they also do **not** expose raw event logs as-is
+- instead they render a structured process lane:
+  - `Updated Plan`
+  - `Ran ...`
+  - `Explored ...`
+  - `Worked for ...`
+  - final answer clearly separated from process commentary
+
+Nous should follow the same trust principle, but adapt it to our architecture: persistent threads, intent continuity, decision queue, and memory-aware grounding.
+
+#### Why this matters more for Nous than for terminal-only agent tools
+
+Codex / Claude Code are usually used as explicit foreground work sessions. Nous is more ambitious:
+
+- persistent daemon
+- cross-channel continuity
+- thread recovery
+- clarification → restore original intent
+- ambient/proactive initiation
+- governed decision queue
+
+This means the user must not only trust **execution**, but also trust:
+
+- thread routing
+- intent recovery
+- memory grounding
+- scope interpretation
+
+Therefore Nous needs a stronger surface than “tool call visible” alone. It must show both:
+
+1. **execution process**
+2. **resolution process** — how this turn was interpreted and attached to ongoing state
+
+#### Core objects
+
+```typescript
+interface TurnResolutionSnapshot {
+  turnId: string;
+  threadId: string;
+  intentId?: string;
+  route:
+    | "new_intent"
+    | "thread_reply"
+    | "clarification_resume"
+    | "scope_update"
+    | "decision_response"
+    | "proactive";
+  threadResolution: "created" | "continued" | "ambient";
+  projectRoot?: string;
+  projectType?: string;
+  gitStatus?: string;
+  focusedFile?: string;
+  memoryHintCount: number;
+  activeIntentCount: number;
+  approvalBoundaryCount: number;
+  notes?: string[];
+}
+
+interface ProcessItem {
+  kind:
+    | "trust_receipt"
+    | "task_contract"
+    | "plan_update"
+    | "task_start"
+    | "task_result"
+    | "tool_call"
+    | "tool_result"
+    | "decision"
+    | "worked";
+  title: string;
+  summary?: string;
+  details?: string[];
+  status?: "info" | "running" | "completed" | "warning" | "error";
+}
+
+interface AnswerArtifact {
+  summary?: string;
+  evidence?: string[];
+  risks?: string[];
+  nextSteps?: string[];
+}
+```
+
+#### Two lanes, one thread
+
+Every assistant-visible turn should be rendered through two separate lanes:
+
+1. **Process Lane** (`phase = commentary`)
+   - turn trust receipt
+   - task contract
+   - updated plan
+   - task/tool progress
+   - decision prompts
+   - worked-for summary
+2. **Answer Lane** (`phase = final`)
+   - the actual answer / delivery artifact
+   - evidence / risks / next steps when available
+
+This separation is critical. Without it, final answers get polluted by runtime chatter, and runtime chatter gets mistaken for user-facing answers.
+
+#### Channel Presentation Adapter
+
+The Process Surface should not be hard-coded to one UI. Instead:
+
+```text
+Orchestrator / Runtime / DecisionQueue
+            │
+            ▼
+      Process Surface
+  (TurnResolutionSnapshot + ProcessItem + AnswerArtifact)
+            │
+            ▼
+ Channel Presentation Adapter
+   ├─ CLI attach / REPL renderer
+   ├─ IDE renderer
+   ├─ Web timeline renderer
+   └─ debug / inspect surfaces
+```
+
+So the persistent source of truth remains message/thread state, but the **presentation contract** becomes structured instead of raw string dumping.
+
+#### Design invariants
+
+1. **Do not hide process**
+   - planning / tool usage / progress remain visible
+2. **Do not dump raw internals**
+   - internal ids and low-level event noise must be translated
+3. **Every meaningful turn starts with a trust receipt**
+   - show thread resolution, route, and grounding summary
+4. **Final answer must be visually distinct from process**
+5. **Read-only tool success can be coalesced/suppressed**
+   - not every internal success needs a transcript line
+6. **Debug surfaces can go deeper than default conversational surfaces**
+   - default lane = trust-preserving summary
+   - debug lane = inspect routing, memory hits, pending state, process lineage
+
+#### End-to-end turn execution flow
+
+The Process Surface sits in the middle of one full turn, not at the very end as a cosmetic formatter. A typical turn flows like this:
+
+```text
+Human message
+   │
+   ▼
+Daemon receives thread message
+   │
+   ├─ route turn
+   │   - new_intent
+   │   - thread_reply
+   │   - clarification_resume
+   │   - scope_update
+   │   - decision_response
+   │   - proactive
+   │
+   ├─ build execution context
+   │   - project context
+   │   - memory hints
+   │   - active intents
+   │   - permission boundary
+   │
+   ├─ build TurnResolutionSnapshot
+   ├─ emit trust receipt first
+   │
+   ▼
+Surface lane: Turn Context
+   │
+   ▼
+Daemon starts / resumes intent execution
+   │
+   ▼
+Orchestrator
+   ├─ intent.intake
+   ├─ intent.parsed
+   ├─ tasks.planned
+   ├─ task.started
+   ├─ runtime tool events
+   │   - tool.called
+   │   - tool.executed
+   │   - tool.cancelled
+   ├─ task.completed / task.failed / task.cancelled
+   └─ intent.achieved / escalation
+   │
+   ▼
+Process Surface projection
+   ├─ Task Contract
+   ├─ Updated Plan
+   ├─ Working On
+   ├─ tool process items
+   ├─ Worked for ...
+   ├─ decision prompts
+   └─ final AnswerArtifact
+   │
+   ▼
+Channel presentation adapter
+   ├─ process lane
+   ├─ answer lane
+   └─ decision lane
+```
+
+The key point is that the user should see the trust receipt before long-running work starts, and then see governed process updates rather than raw runtime events.
+
+#### Cross-object state machine
+
+The Process Surface is easier to reason about if we separate four cooperating object layers:
+
+1. `Turn`
+2. `Intent`
+3. `Decision`
+4. `Surface Message`
+
+```text
+Turn.received
+   │
+   ▼
+Turn.routed
+   │
+   ├─ new_intent
+   ├─ thread_reply
+   ├─ clarification_resume
+   ├─ scope_update
+   ├─ decision_response
+   └─ proactive
+   │
+   ▼
+Turn.trust_receipt_emitted
+   │
+   ├─ if execution path:
+   │      attach to intent execution
+   │
+   ├─ if decision path:
+   │      attach to pending decision
+   │
+   ▼
+Turn.closed
+```
+
+```text
+Intent lifecycle
+
+created
+  │
+  ├─ needs clarification ───────────────► awaiting_clarification
+  │                                        │
+  │                                        └─ clarified ► active
+  │
+  └──────────────────────────────────────► active
+                                            │
+                                            ├─ risky boundary / scope confirmation /
+                                            │  approval / conflict
+                                            │    ► awaiting_decision
+                                            │
+                                            ├─ pause ► paused
+                                            ├─ complete ► achieved
+                                            └─ cancel / abandoned path ► abandoned
+
+paused
+  └─ resume ► active | awaiting_decision | awaiting_clarification
+```
+
+```text
+Decision lifecycle
+
+queued ► pending ► answered ► resolved
+            │          │
+            │          └─► superseded
+            └────────────► cancelled
+```
+
+```text
+Surface message lifecycle inside a turn
+
+none
+  │
+  ▼
+process: trust_receipt
+  │
+  ▼
+process: contract / plan / task / tool / status ...
+  │
+  ├─► decision lane (if the turn blocks on user input)
+  ├─► process: Worked for ...
+  └─► answer: final artifact
+```
+
+One subtle but important distinction: some progress event names are user-facing event labels rather than persisted terminal entity states. For example, cancellation progress may be surfaced as `intent.cancelled`, while the persisted `Intent` terminal state may become `abandoned`. The Process Surface should faithfully explain what happened to the user without forcing the storage model and presentation labels to be identical.
+
+#### Interrupt is boundary control, not semantic rollback
+
+Foreground agent tools often expose an affordance like:
+
+- `working: 1m 52s`
+- `esc to interrupt`
+
+The timer is straightforward for Nous: a turn already has a start time, and the Process Surface can project elapsed work.  
+The harder question is the meaning of **interrupt** in a persistent assistant architecture.
+
+Nous should **not** define interrupt as:
+
+- "pretend this turn never happened"
+- "erase what the runtime already read"
+- "undo every external side effect automatically"
+- "rollback all intermediate cognition"
+
+That contract would be false.
+
+If Nous is treated more like a persistent assistant than a disposable shell session, then interrupt must respect a human-like asymmetry:
+
+- past perception cannot be un-perceived
+- completed side effects cannot be assumed reversible
+- partial work may still leave useful or risky traces
+
+So the right contract is:
+
+> **Interrupt stops future execution as quickly and safely as possible; it does not promise semantic time-reversal.**
+
+This means interrupt should be understood as **boundary control**.
+
+#### What an interrupt should actually guarantee
+
+1. **Stop new work from progressing**
+   - halt planning continuation, task dispatch, or further tool use as soon as the runtime reaches a safe interrupt boundary
+2. **Return control to the user**
+   - the system should move from autonomous forward execution back to an explicit waiting / paused / cancelled state
+3. **Emit an interruption receipt**
+   - the user must be told:
+     - interrupt requested
+     - whether it was immediate or deferred to a safe boundary
+     - what completed before the stop
+     - what was skipped / not yet started
+4. **Preserve traceability**
+   - interrupted work remains part of the execution history
+   - it may affect future reasoning, but it should be marked as partial / interrupted rather than silently treated as a normal completed run
+
+#### What an interrupt should not guarantee
+
+1. **No implicit memory erasure**
+   - information already seen by the runtime should not be modeled as forgotten
+2. **No default durable-memory promotion of partial work**
+   - interrupted observations should not automatically become high-confidence long-term memory
+3. **No universal rollback promise**
+   - rollback is tool- and artifact-specific, not a global semantic guarantee
+4. **No conflation with cancellation wording**
+   - "interrupt", "pause", and "cancel" are related but not identical user intents
+
+#### Recommended product contract for Nous
+
+The safest v1 framing is:
+
+- **surface-level `interrupt` affordance**
+  - available in REPL / TUI / future IDE surfaces as the user's quick "stop and give me control back" action
+- **runtime meaning defaults to pause-at-boundary**
+  - interrupt should usually compile to:
+    - immediate stop if the current boundary is safely interruptible
+    - otherwise "stop after current tool / task boundary"
+- **explicit `cancel` remains stronger and rarer**
+  - cancel means the user wants the current intent abandoned, not merely paused for redirection
+- **rollback remains explicit and artifact-specific**
+  - if a tool or artifact supports rollback, the system may offer it
+  - but interrupt itself does not imply rollback
+
+This is already directionally compatible with the current architecture:
+
+- runtime interrupt requests can be:
+  - immediate
+  - after current tool
+- orchestrator already models:
+  - `pause`
+  - `cancel`
+  - approval / resume boundaries
+
+So v1 should avoid inventing a magical new ontology. Instead, Nous should expose **interrupt as a governed surface verb** that compiles onto the existing boundary-aware control model.
+
+#### Process Surface implications
+
+If Nous later exposes live `working ...` timers, it should also expose interrupt receipts in the same structured surface:
+
+- `Interrupt Requested`
+- `Waiting for Safe Boundary`
+- `Paused`
+- `Cancelled`
+- `Partially Completed Before Interrupt`
+
+This keeps the user-facing story honest:
+
+- Nous can stop continuing
+- Nous can explain what happened
+- Nous cannot truthfully claim that partially completed cognition or committed side effects were never real
+
+#### Three implementation phases
+
+**Phase 1 — Turn / trust structure**
+- add `turnId`, `presentation`, `phase`, `trustReceipt`, `processItem`, `answerArtifact`
+- stop exposing raw `Task started: task_xxx`
+- emit `TurnResolutionSnapshot` at the start of meaningful work
+
+**Phase 2 — Rendered process lane**
+- render Codex-like process items:
+  - `Updated Plan`
+  - `Working On`
+  - tool calls/results
+  - `Worked for ...`
+- suppress noisy read-only success items
+- keep final answer separate
+
+**Phase 3 — Inspect / trust debugging**
+- let `nous debug thread ...` reveal:
+  - recent turns
+  - route / trust receipt
+  - process items
+  - final answer summaries
+- make it easy to verify whether Nous attached the message to the right thread/intent/memory surface
+
+This layer is not “just UI polish”. It is a core trust boundary for a persistent assistant runtime.
+
 ---
 
 ## Conflict Detection: Inter-Task Dependency and Resource Analysis

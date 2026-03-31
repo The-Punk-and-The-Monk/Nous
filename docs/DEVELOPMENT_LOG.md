@@ -3860,3 +3860,276 @@ For significant sessions, capture:
     - skill/artifact references
     rather than `capabilitiesRequired`
   - `nous debug` is intentionally a minimal operator surface, not a full TUI. If state complexity keeps growing, the next step should likely be a lightweight state browser built on the same data model rather than ad hoc logs.
+
+### Session: Add a structured Process Surface so daemon threads show trust receipts, plan/tool progress, and final answers as separate lanes
+- Context / Trigger:
+  - After real daemon/REPL testing, the user highlighted that Nous still felt wrong during multi-step work:
+    - long silence after a message
+    - raw progress like `Task started: task_xxx`
+    - difficulty telling whether thread recovery / intent recovery / memory grounding were correct
+  - The user explicitly asked to study Codex and Claude Code process exposure patterns and then implement all three planned phases rather than only discussing them.
+- Problem:
+  - Nous already had persistent threads, intent recovery, decision queue, and runtime execution, but its user-facing surface was still too primitive.
+  - The daemon was directly turning orchestrator progress events into flat assistant strings. That caused two opposite failures at once:
+    - too little trust when nothing visible happened for a while
+    - too much low-value noise when raw runtime ids leaked into the thread
+  - Architecturally, Nous was missing a true **process surface** layer between:
+    - internal execution events
+    - user-visible conversational output
+- Codex / Claude Code comparison:
+  - Codex exposes a structured process lane (`Updated Plan`, `Ran ...`, `Worked for ...`) instead of hiding work or dumping raw event logs.
+  - Claude Code similarly separates progress-like items, task/tool state, and final answer rendering, and coalesces noisy low-level updates.
+  - The key lesson adopted for Nous was:
+    - **process must remain visible**
+    - but **raw runtime events must be translated into governed human-facing artifacts**
+- Options considered:
+  - Option A: keep progress mostly hidden and rely on occasional narration.
+    - Rejected because it weakens user trust, especially for a persistent assistant that performs thread recovery and long-running work.
+  - Option B: keep exposing raw runtime events directly into the transcript.
+    - Rejected because internal ids and low-level event shapes are not a good user contract.
+  - Option C: add a structured Process Surface carried through `DialogueMessage.metadata`, then render it differently in attach/debug surfaces.
+    - Chosen because it gives immediate user trust improvements without forcing a new persistence table yet.
+- Decision:
+  - Introduce a first-class **Process Surface** model with:
+    - `TurnResolutionSnapshot`
+    - `ProcessItem`
+    - `AnswerArtifact`
+    - `presentation` / `phase` metadata on dialogue messages
+  - Implement the three planned phases in one pass:
+    1. **Phase 1** — turn/trust metadata + trust receipts
+    2. **Phase 2** — plan/task/tool/final-answer rendering lanes
+    3. **Phase 3** — thread debug surface showing recent turns, trust receipts, process items, and answer summaries
+  - Keep storage incremental by reusing `dialogue_messages.metadata` rather than adding new DB tables.
+- Changes made:
+  - Architecture:
+    - Updated `ARCHITECTURE.md`
+      - added `Nous 的 Process Surface / Structured Process Visibility`
+      - documented:
+        - why hiding process is wrong
+        - why raw event dumping is also wrong
+        - comparison with Codex / Claude Code
+        - `TurnResolutionSnapshot`, `ProcessItem`, `AnswerArtifact`
+        - process lane vs answer lane
+        - phased implementation plan
+  - Core types:
+    - Added `packages/core/src/types/interaction.ts`
+      - `InteractionPresentation`
+      - `InteractionPhase`
+      - `TurnResolutionSnapshot`
+      - `ProcessItem`
+      - `AnswerArtifact`
+      - `DialogueMessageMetadata`
+    - Updated `packages/core/src/types/dialogue.ts`
+      - `DialogueMessage.metadata` now uses the structured metadata type
+    - Updated `packages/core/src/index.ts`
+      - re-exported the new interaction/process-surface types
+  - Daemon/process projection:
+    - Added `packages/infra/src/daemon/process-surface.ts`
+      - projects orchestrator/runtime events into structured user-facing deliveries
+      - builds trust receipts
+      - separates process items from final answers
+      - suppresses noisy successful read-only tool completions
+    - Updated `packages/infra/src/daemon/server.ts`
+      - replaced raw `progressEventToDelivery()` string dumping with structured projection
+      - added turn-state tracking per intent (`turnId`, start time, route)
+      - emits turn trust receipts at the beginning of:
+        - new/thread reply execution
+        - clarification resume
+        - scope update
+        - proactive ambient execution
+      - computes `Worked for ...` on completion/escalation
+      - routes tool progress into the process lane
+      - upgrades decision prompts to use decision presentation metadata
+      - removes the old raw progress-string rendering path
+  - Dialogue metadata defaults:
+    - Updated `packages/infra/src/daemon/dialogue-service.ts`
+      - inbound human turns now persist `turnId = message.id`
+      - outbound assistant messages now default their `presentation` / `phase` based on message kind
+  - Runtime/orchestrator event flow:
+    - Updated `packages/runtime/src/agent/runtime.ts`
+      - runtime can now callback outward with emitted events
+      - tool execution/cancellation events now include richer previews (`sideEffectClass`, `outputPreview`)
+    - Updated `packages/orchestrator/src/orchestrator.ts`
+      - extended `ProgressEvent` with tool events
+      - relays runtime tool events into the progress pipeline so the daemon can surface them live
+  - CLI rendering / inspect surface:
+    - Added `packages/infra/src/cli/renderers/dialogue.ts`
+      - renders:
+        - trust receipts
+        - plan updates
+        - generic process items
+        - final answer lane
+        - decision lane
+    - Updated `packages/infra/src/cli/commands/attach.ts`
+      - now uses the structured renderer
+    - Updated `packages/infra/src/cli/commands/debug.ts`
+      - thread debug now shows recent turns with:
+        - route
+        - trust receipt summary
+        - process-surface titles
+        - final answer summary
+  - Tests:
+    - Added `packages/infra/tests/process-surface.test.ts`
+    - Added `packages/infra/tests/dialogue-renderer.test.ts`
+    - Updated `packages/infra/tests/dialogue-service.test.ts`
+    - Updated `packages/infra/tests/daemon-clarification-flow.test.ts`
+- Validation:
+  - `bun test packages/infra/tests/process-surface.test.ts packages/infra/tests/dialogue-renderer.test.ts packages/infra/tests/dialogue-service.test.ts` ✅
+  - `bun test packages/infra/tests/daemon-clarification-flow.test.ts packages/infra/tests/decision-queue-flow.test.ts packages/infra/tests/daemon-proactive-reflection.test.ts` ✅
+  - `bun x tsc --noEmit` ✅
+- Impact / Result:
+  - Nous threads now have a much more trustworthy interaction shape:
+    - turn trust receipt first
+    - structured process lane during work
+    - final answer lane separated from commentary
+  - The system now surfaces not just execution progress, but also **resolution progress**:
+    - how the turn was attached to thread state
+    - when clarification restored the original intent
+    - when a message was treated as a scope update
+  - Tool visibility is no longer limited to raw runtime ids; it is now projected into human-facing process items.
+  - `nous debug thread ...` now starts to answer the specific trust questions the user raised:
+    - did Nous find the right thread?
+    - did it recover the right intent?
+    - what process items were shown for that turn?
+- Open questions / next steps:
+  - The current Process Surface is metadata-backed and renderer-driven; if richer UI features (collapse/replace ephemeral items, timeline controls, IDE/web rich views) become important, we may later promote Turn/Process objects into more explicit persisted entities.
+  - The CLI attach/repl renderer is now much better, but still not a full Codex/Claude-Code-grade TUI. A next step could add:
+    - ephemeral coalescing
+    - richer shell/tool previews
+    - explicit pending/running badges
+  - Some older assistant notifications still use generic process rendering rather than fully typed `ProcessItem`s; we should keep migrating important status outputs onto the structured path over time.
+
+### Session: Add execution/state diagrams for Process Surface and clarify the interrupt-design question
+- Context / Trigger:
+  - After confirming that the Process Surface implementation had actually landed and its tests still passed, the user asked for two follow-up steps:
+    - convert the verbal review into an execution-flow diagram and a cross-object state-machine diagram
+    - then use that clearer model to discuss whether Nous should expose an `interrupt` control similar to Codex's foreground `esc to interrupt`
+- Problem:
+  - The existing Process Surface architecture text explained the rationale, objects, and phased rollout, but it still lacked a compact end-to-end visual explanation of:
+    - where the trust receipt is emitted
+    - where raw orchestrator/runtime events are projected into process items
+    - how `Turn`, `Intent`, `Decision`, and visible surface messages cooperate
+  - Without that visual model, the interrupt discussion would easily collapse into an imprecise debate about "stopping the model" rather than the real architectural question:
+    - what kinds of ongoing work can be interrupted
+    - at what boundary
+    - with what guarantees
+    - and what cannot be semantically rolled back
+- Alternatives considered:
+  - Option A: keep the diagrams only in the conversational explanation.
+    - Rejected because this topic is architectural reference material, not just transient chat context.
+  - Option B: add only one happy-path execution diagram.
+    - Rejected because the key Nous-specific complexity is cross-object state, especially `DecisionQueue` and turn routing.
+  - Option C: add both:
+    - an end-to-end execution-flow diagram
+    - a cross-object state-machine diagram
+    - plus one explicit note about presentation events vs persisted entity terminal states
+    - Chosen because it gives a reusable reference frame for later discussion of timing, interruption, pause/cancel semantics, and richer TUI affordances.
+- Decision:
+  - Extend the existing Process Surface section in `ARCHITECTURE.md` with:
+    - `End-to-end turn execution flow`
+    - `Cross-object state machine`
+  - Keep the interrupt question in analysis/discussion for now rather than prematurely locking a new architecture subsection before the product contract is agreed.
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added a turn execution diagram showing:
+      - daemon intake
+      - route selection
+      - execution-context assembly
+      - trust-receipt emission
+      - orchestrator/runtime progress production
+      - Process Surface projection
+      - channel presentation adaptation
+    - added a cross-object state-machine view for:
+      - `Turn`
+      - `Intent`
+      - `Decision`
+      - surface message lanes
+    - added a clarifying note that some surfaced progress labels and persisted terminal entity states intentionally differ
+      - example: user-facing cancellation progress vs persisted `Intent.status = abandoned`
+- Validation:
+  - Documentation-only change; no code/test execution required.
+- Impact / Result:
+  - The Process Surface section now explains not just *what objects exist*, but also:
+    - how a turn moves through the daemon/orchestrator/runtime stack
+    - how that internal motion becomes user-visible structured lanes
+    - how interruption should be reasoned about as boundary control rather than magical rollback
+  - This should make later discussion of:
+    - live timers
+    - interrupt affordances
+    - pause/cancel routing
+    - richer attach/debug/TUI surfaces
+    much less ambiguous.
+- Open questions / follow-ups:
+  - We still need to decide whether `interrupt` in Nous should be:
+    - a surface-level affordance that compiles to existing pause/cancel directives
+    - or a genuinely new control primitive with its own state model
+  - If Nous exposes live `working ...` timers, we should likely pair them with explicit interruption receipts:
+    - interrupt requested
+    - waiting for safe boundary
+    - paused / cancelled / partially completed
+
+### Session: Write the interrupt contract into architecture as boundary control rather than rollback
+- Context / Trigger:
+  - After the Process Surface execution/state diagrams were added, the user pushed on a more subtle product question:
+    - Codex shows `working ...` with an interrupt affordance
+    - Nous can obviously add timers
+    - but should Nous really promise an `interrupt`, given that once an intent has started, planning, task execution, and memory production are already in motion?
+  - The user also framed the issue in an important assistant-centric way:
+    - if Nous is treated more like a person than a disposable shell process, then already-seen information and already-performed partial work cannot simply be "taken back"
+- Problem:
+  - Without an explicit architecture statement, interrupt semantics would likely drift toward a false mental model:
+    - as if "interrupt" meant semantic rollback
+    - as if already-read context could be forgotten
+    - as if all side effects could be undone automatically
+  - That would be a serious contract mistake for a persistent assistant:
+    - it weakens traceability
+    - confuses pause vs cancel vs rollback
+    - creates impossible user expectations about memory and side effects
+- Alternatives considered:
+  - Option A: avoid the word `interrupt` entirely and only expose explicit pause/cancel controls.
+    - Rejected because users still need a fast "stop and give me control back" affordance in live surfaces.
+  - Option B: treat `interrupt` as a hard kill / universal rollback primitive.
+    - Rejected because it is architecturally false and semantically dishonest.
+  - Option C: define interrupt as a **surface-level boundary-control verb**:
+    - stop future execution as fast as safely possible
+    - preserve already-committed traces
+    - compile onto existing runtime/orchestrator pause/cancel controls
+    - Chosen because it matches both the current implementation direction and the persistent-assistant product model.
+- Decision:
+  - Added an architecture subsection:
+    - `Interrupt is boundary control, not semantic rollback`
+  - Locked the intended contract:
+    - interrupt is about stopping future work
+    - not erasing prior cognition
+    - not promising universal rollback
+  - Recommended v1 product shape:
+    - expose `interrupt` as a surface affordance
+    - default its semantics toward pause-at-safe-boundary
+    - keep explicit cancel as the stronger abandonment action
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - documented:
+      - what interrupt must not promise
+      - what it should guarantee
+      - why rollback must remain tool/artifact-specific
+      - why interrupted work should remain traceable
+      - how live timers and interrupt receipts should appear in Process Surface
+- Validation:
+  - Documentation-only change; no code/test execution required.
+- Impact / Result:
+  - Nous now has a clearer product/architecture contract for future live execution controls:
+    - `interrupt` is not magical undo
+    - it is governed boundary control
+  - This reduces ambiguity for future work around:
+    - REPL/TUI control affordances
+    - pause vs cancel routing
+    - partial-memory handling
+    - rollback UX after risky tools
+- Open questions / follow-ups:
+  - We still need a separate explicit policy for interrupted-memory handling:
+    - what partial observations may be written to durable memory
+    - with what provenance / confidence downgrade
+  - If a future rich client adds a literal interrupt hotkey, its receipt model should be consistent with:
+    - runtime boundary waiting
+    - orchestrator pause/cancel states
+    - visible Process Surface interruption artifacts
