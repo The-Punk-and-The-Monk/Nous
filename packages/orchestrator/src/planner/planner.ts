@@ -5,14 +5,26 @@ import type {
 	Task,
 	TaskContract,
 } from "@nous/core";
-import { createLogger, now, prefixedId } from "@nous/core";
+import {
+	CAPABILITY_NAMES,
+	createLogger,
+	isCapabilityName,
+	now,
+	prefixedId,
+} from "@nous/core";
 import { StructuredGenerationEngine } from "@nous/runtime";
 import { detectCycle } from "./dag.ts";
 
 const log = createLogger("task-planner");
 
 const PLAN_SYSTEM_PROMPT =
-	"Decompose the given intent into atomic tasks. Each task should be completable by a single agent.";
+	[
+		"Decompose the given intent into atomic tasks. Each task should be completable by a single agent.",
+		"capabilitiesRequired must use only concrete runtime capability tokens from this allowlist:",
+		CAPABILITY_NAMES.join(", "),
+		"If a task does not need a special permission boundary, return an empty array.",
+		"Do not invent abstract skills such as conversation design, planning, research, or explanation.",
+	].join(" ");
 
 interface PlannedTask {
 	id: number;
@@ -145,7 +157,10 @@ const TASK_PLAN_SPEC = {
 						},
 						capabilitiesRequired: {
 							type: "array",
-							items: { type: "string" },
+							items: {
+								type: "string",
+								enum: [...CAPABILITY_NAMES],
+							},
 						},
 					},
 				},
@@ -189,11 +204,22 @@ function normalizePlannedTask(value: unknown): PlannedTask | undefined {
 					typeof item === "string" && item.trim().length > 0,
 			)
 		: [];
+	const normalizedCapabilities = capabilitiesRequired.filter(isCapabilityName);
+	if (
+		normalizedCapabilities.length !== capabilitiesRequired.length &&
+		capabilitiesRequired.length > 0
+	) {
+		log.warn("Planner returned non-runtime capability labels; dropping them", {
+			description,
+			capabilitiesRequired,
+			normalizedCapabilities,
+		});
+	}
 	return {
 		id,
 		description,
 		dependsOn,
-		capabilitiesRequired,
+		capabilitiesRequired: normalizedCapabilities,
 	};
 }
 

@@ -1,8 +1,10 @@
 import type { Agent, CapabilityName, CapabilitySet, Task } from "@nous/core";
-import { hasCapability } from "@nous/core";
+import { createLogger, hasCapability, isCapabilityName } from "@nous/core";
 
 export class AgentRouter {
 	private agents = new Map<string, Agent>();
+	private readonly log = createLogger("agent-router");
+	private readonly warnedInvalidCapabilityTasks = new Set<string>();
 
 	register(agent: Agent): void {
 		this.agents.set(agent.id, agent);
@@ -29,7 +31,25 @@ export class AgentRouter {
 
 	/** Check if an agent has all capabilities required by a task */
 	private hasRequiredCapabilities(agent: Agent, task: Task): boolean {
-		for (const cap of task.capabilitiesRequired) {
+		const invalidCapabilities = task.capabilitiesRequired.filter(
+			(cap): cap is string => !isCapabilityName(cap),
+		);
+		if (
+			invalidCapabilities.length > 0 &&
+			!this.warnedInvalidCapabilityTasks.has(task.id)
+		) {
+			this.warnedInvalidCapabilityTasks.add(task.id);
+			this.log.warn(
+				"Task declared non-runtime capability labels; ignoring them for routing",
+				{
+					taskId: task.id,
+					invalidCapabilities,
+					validCapabilities: task.capabilitiesRequired.filter(isCapabilityName),
+				},
+			);
+		}
+
+		for (const cap of task.capabilitiesRequired.filter(isCapabilityName)) {
 			if (!hasCapability(agent.capabilities, cap as CapabilityName)) {
 				return false;
 			}

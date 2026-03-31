@@ -57,6 +57,7 @@ describe("ReflectionService", () => {
 				expect(request.messages[0]?.content).toContain(
 					"package.json changes often justify install and test checks",
 				);
+				expect(request.temperature).toBe(0);
 			},
 		);
 		const service = new ReflectionService({ llm, memory });

@@ -4409,6 +4409,69 @@ class ClaudeCliProvider implements LLMProvider { ... }
 
 **What this means for v1:** Nous can change provider defaults, add direct/compat endpoints, and keep Claude CLI as fallback without rewriting orchestrator/runtime logic. The provider boundary stays stable even as the transport mix evolves.
 
+#### Provider Compat Kernel
+
+The comparison with OpenClaw surfaced an important engineering lesson:
+
+- the **core `LLMProvider` contract should stay small**
+- but the code below that contract must still have explicit structure for
+  provider-specific compatibility behavior
+
+OpenClaw solves this with a broad provider-plugin system and many typed hooks.
+Nous should **borrow the seam design**, but **not** copy the full plugin
+marketplace architecture yet.
+
+For Nous, the right near-term shape is an **internal Provider Compat Kernel**:
+
+```typescript
+interface ProviderCompatProfile {
+  id: string;
+  providerFamily: string;
+  wireFamily: string;
+  requestPolicy: {
+    temperaturePolicy: "pass" | "omit_zero" | "provider_specific";
+    structuredOutputFallback: "none" | "json_object_on_400";
+    assistantReplayMode: "input_text" | "output_text";
+    reasoningEffortPolicy: "pass" | "model_gated" | "omit";
+  };
+  responsePolicy: {
+    messageSelection: "all_messages" | "prefer_final_answer";
+    toolCallIdMode: "default" | "provider_specific";
+  };
+}
+```
+
+And below that profile, a few explicit seams:
+
+- `RequestNormalizer`
+  - maps generic `LLMRequest` into provider/wire-safe payloads
+  - owns proxy-safe stripping / fallback preparation
+- `ResponseNormalizer`
+  - collapses provider-native output into generic `LLMResponse`
+  - owns commentary/final-answer selection and transcript quirks
+- `RetryPolicy`
+  - decides when to retry, when to fall back, and when to surface the error
+- diagnostics metadata
+  - every dispatch log should know not only `provider` and `model`
+  - but also **which compat profile** was active
+
+**Why this matters:** if Nous keeps solving compatibility only inside large
+provider classes, `openai-shared.ts` and future equivalents will slowly become
+a pile of special cases. The compat kernel keeps the top-level runtime simple
+while still admitting the ugly reality of:
+
+- official APIs vs proxy endpoints
+- chat-completions vs responses
+- history replay quirks
+- structured-output quirks
+- streaming/event quirks
+
+**Current implementation direction:** start with internal profiles for
+`openai` / `openai-compat`, especially for Responses-based proxy routes, and
+only promote this into a broader registry/plugin system if Nous later truly
+needs large-scale provider breadth, provider-owned auth flows, and provider
+marketplace concerns.
+
 #### Structured Generation Contract
 
 Control-plane objects — especially **Intent parsing**, **Task planning**, and later **memory extraction / evolution proposals** — must not depend on ad hoc `"JSON only"` prompting plus `JSON.parse`.

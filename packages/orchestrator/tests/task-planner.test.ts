@@ -85,6 +85,33 @@ describe("TaskPlanner", () => {
 		expect(tasks[0]?.description).toContain("git status");
 		expect(provider.lastRequest).toBeUndefined();
 	});
+
+	test("drops invented abstract capability labels that cannot be routed", async () => {
+		const provider = new MockProvider(
+			'{"tasks":[{"id":1,"description":"Explain the workflow","dependsOn":[],"capabilitiesRequired":["conversation design","planning","fs.read"]}]}',
+		);
+		const planner = new TaskPlanner(provider);
+
+		const intent: Intent = {
+			id: "int_demo",
+			raw: "Give me a workflow example",
+			goal: {
+				summary: "Give a workflow example",
+				successCriteria: ["Explain clearly"],
+			},
+			constraints: [],
+			priority: 1,
+			humanCheckpoints: "always",
+			status: "active",
+			source: "human",
+			createdAt: new Date().toISOString(),
+		};
+
+		const tasks = await planner.plan(intent);
+
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0]?.capabilitiesRequired).toEqual(["fs.read"]);
+	});
 });
 
 class MockProvider implements LLMProvider {

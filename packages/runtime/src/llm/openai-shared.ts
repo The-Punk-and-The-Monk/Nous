@@ -1,40 +1,78 @@
 import type {
-	ContentBlock,
-	LLMMessage,
 	LLMProvider,
 	LLMProviderCapabilities,
 	LLMRequest,
 	LLMResponse,
-	LLMResponseFormat,
 	StreamChunk,
 } from "@nous/core";
-import { LLMError, RateLimitError } from "@nous/core";
+import { LLMError, createLogger } from "@nous/core";
 import OpenAI from "openai";
+import {
+	resolveOpenAICompatProfile,
+	shouldFallbackOpenAIResponsesJsonSchema,
+	type OpenAICompatProfile,
+} from "./openai-compat-profile.ts";
+import {
+	buildResponsesRequestVariants,
+	summarizeOpenAIChatRequest,
+	summarizeOpenAIResponsesRequest,
+	toOpenAIChatParams,
+	toOpenAIResponsesParams,
+} from "./openai-request-normalizer.ts";
+import {
+	collectResponsesStream,
+	fromOpenAIChatResponse,
+	fromOpenAIResponsesResponse,
+	readResponsesFailureMessage,
+	responseToolItemKey,
+	summarizeOpenAIChatResponse,
+	summarizeOpenAIResponsesResponse,
+} from "./openai-response-normalizer.ts";
+import {
+	executeOpenAIRetryPolicy,
+	summarizeOpenAIError,
+} from "./openai-retry-policy.ts";
+import type { OpenAIReasoningEffort, OpenAIWireApi } from "./openai-types.ts";
 
-export interface OpenAIChatProviderOptions {
+const log = createLogger("openai-provider");
+
+export interface OpenAIProviderBaseOptions {
 	providerName: string;
 	model: string;
 	maxRetries?: number;
+	wireApi?: OpenAIWireApi;
+	reasoningEffort?: OpenAIReasoningEffort;
 	clientOptions: {
 		apiKey?: string;
 		baseURL?: string;
 		organization?: string;
 		project?: string;
 		timeout?: number;
+		defaultHeaders?: Record<string, string>;
 	};
 }
 
-export class OpenAIChatProvider implements LLMProvider {
+export class OpenAIProviderBase implements LLMProvider {
 	readonly name: string;
 	protected client: OpenAI;
-	private model: string;
-	private maxRetries: number;
+	private readonly model: string;
+	private readonly maxRetries: number;
+	private readonly wireApi: OpenAIWireApi;
+	private readonly reasoningEffort?: OpenAIReasoningEffort;
+	private readonly compatProfile: OpenAICompatProfile;
 
-	constructor(options: OpenAIChatProviderOptions) {
+	constructor(options: OpenAIProviderBaseOptions) {
 		this.name = options.providerName;
 		this.client = new OpenAI(options.clientOptions);
 		this.model = options.model;
 		this.maxRetries = options.maxRetries ?? 3;
+		this.wireApi = options.wireApi ?? "responses";
+		this.reasoningEffort = options.reasoningEffort;
+		this.compatProfile = resolveOpenAICompatProfile({
+			providerName: this.name,
+			baseURL: options.clientOptions.baseURL,
+			wireApi: this.wireApi,
+		});
 	}
 
 	getCapabilities(): LLMProviderCapabilities {
@@ -44,47 +82,160 @@ export class OpenAIChatProvider implements LLMProvider {
 	}
 
 	async chat(request: LLMRequest): Promise<LLMResponse> {
-		const params = toOpenAIParams(this.model, request);
-		let lastError: Error | undefined;
-
-		for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-			try {
-				const response = await this.client.chat.completions.create({
-					...params,
-					stream: false,
-				});
-				return fromOpenAIResponse(response);
-			} catch (err) {
-				lastError = err as Error;
-				if (isRateLimitError(err)) {
-					const retryAfter = getRetryAfterMs(err);
-					if (attempt < this.maxRetries) {
-						await sleep(retryAfter ?? 1000 * 2 ** attempt);
-						continue;
-					}
-					throw new RateLimitError(this.name, retryAfter);
-				}
-				throw new LLMError(
-					(err as Error).message,
-					this.name,
-					(err as { status?: number }).status,
-				);
-			}
-		}
-
-		throw new LLMError(lastError?.message ?? "Max retries exceeded", this.name);
+		return this.wireApi === "responses"
+			? this.chatWithResponses(request)
+			: this.chatWithChatCompletions(request);
 	}
 
 	async *stream(request: LLMRequest): AsyncIterable<StreamChunk> {
-		const params = toOpenAIParams(this.model, request);
+		if (this.wireApi === "responses") {
+			yield* this.streamWithResponses(request);
+			return;
+		}
+		yield* this.streamWithChatCompletions(request);
+	}
 
+	private async chatWithChatCompletions(
+		request: LLMRequest,
+	): Promise<LLMResponse> {
+		const params = toOpenAIChatParams(this.model, request, this.compatProfile);
+		return executeOpenAIRetryPolicy({
+			providerName: this.name,
+			maxRetries: this.maxRetries,
+			operation: async (attempt) => {
+				log.debug("Dispatching OpenAI chat request", {
+					...summarizeOpenAIChatRequest(this.name, this.client, params),
+					attempt: attempt + 1,
+					wireApi: this.wireApi,
+					compatProfile: this.compatProfile.id,
+				});
+				try {
+					const response = await this.client.chat.completions.create({
+						...params,
+						stream: false,
+					});
+					log.debug("OpenAI chat response received", {
+						...summarizeOpenAIChatResponse(response),
+						attempt: attempt + 1,
+						wireApi: this.wireApi,
+						compatProfile: this.compatProfile.id,
+					});
+					return fromOpenAIChatResponse(response);
+				} catch (err) {
+					log.error("OpenAI chat request failed", {
+						...summarizeOpenAIChatRequest(this.name, this.client, params),
+						attempt: attempt + 1,
+						wireApi: this.wireApi,
+						compatProfile: this.compatProfile.id,
+						...summarizeOpenAIError(err),
+					});
+					throw err;
+				}
+			},
+		});
+	}
+
+	private async chatWithResponses(request: LLMRequest): Promise<LLMResponse> {
+		const primaryParams = toOpenAIResponsesParams(
+			this.model,
+			request,
+			this.reasoningEffort,
+			this.compatProfile,
+		);
+		const requestVariants = buildResponsesRequestVariants(
+			primaryParams,
+			request,
+			this.compatProfile,
+		);
+		return executeOpenAIRetryPolicy({
+			providerName: this.name,
+			maxRetries: this.maxRetries,
+			operation: async (attempt) => {
+				for (const variant of requestVariants) {
+					log.debug("Dispatching OpenAI responses request", {
+						...summarizeOpenAIResponsesRequest(
+							this.name,
+							this.client,
+							variant.params,
+						),
+						attempt: attempt + 1,
+						wireApi: this.wireApi,
+						compatProfile: this.compatProfile.id,
+						requestVariant: variant.name,
+					});
+					try {
+						const stream = await this.client.responses.create(variant.params);
+						const response = await collectResponsesStream(stream, this.name);
+						log.debug("OpenAI responses response received", {
+							...summarizeOpenAIResponsesResponse(
+								response,
+								this.compatProfile,
+							),
+							attempt: attempt + 1,
+							wireApi: this.wireApi,
+							compatProfile: this.compatProfile.id,
+							requestVariant: variant.name,
+						});
+						return fromOpenAIResponsesResponse(response, this.compatProfile);
+					} catch (err) {
+						if (
+							variant.name === "native_json_schema" &&
+							shouldFallbackOpenAIResponsesJsonSchema({
+								profile: this.compatProfile,
+								err,
+							})
+						) {
+							log.warn(
+								"OpenAI responses json_schema failed; retrying with json_object fallback",
+								{
+									...summarizeOpenAIResponsesRequest(
+										this.name,
+										this.client,
+										variant.params,
+									),
+									attempt: attempt + 1,
+									wireApi: this.wireApi,
+									compatProfile: this.compatProfile.id,
+									requestVariant: variant.name,
+									...summarizeOpenAIError(err),
+								},
+							);
+							continue;
+						}
+
+						log.error("OpenAI responses request failed", {
+							...summarizeOpenAIResponsesRequest(
+								this.name,
+								this.client,
+								variant.params,
+							),
+							attempt: attempt + 1,
+							wireApi: this.wireApi,
+							compatProfile: this.compatProfile.id,
+							requestVariant: variant.name,
+							...summarizeOpenAIError(err),
+						});
+						throw err;
+					}
+				}
+				throw new LLMError(
+					"OpenAI responses request exhausted all variants",
+					this.name,
+				);
+			},
+		});
+	}
+
+	private async *streamWithChatCompletions(
+		request: LLMRequest,
+	): AsyncIterable<StreamChunk> {
+		const params = toOpenAIChatParams(this.model, request, this.compatProfile);
 		const stream = await this.client.chat.completions.create({
 			...params,
 			stream: true,
 		});
 
 		let currentToolCallIndex = -1;
-
 		for await (const chunk of stream) {
 			const delta = chunk.choices[0]?.delta;
 			if (!delta) continue;
@@ -123,201 +274,92 @@ export class OpenAIChatProvider implements LLMProvider {
 			}
 		}
 	}
-}
 
-function toOpenAIParams(
-	model: string,
-	request: LLMRequest,
-): OpenAI.ChatCompletionCreateParams {
-	const messages: OpenAI.ChatCompletionMessageParam[] = [];
-
-	if (request.system) {
-		messages.push({ role: "system", content: request.system });
-	}
-
-	for (const msg of request.messages) {
-		if (msg.role === "system") continue;
-		messages.push(toOpenAIMessage(msg));
-	}
-
-	const params: OpenAI.ChatCompletionCreateParams = {
-		model,
-		max_tokens: request.maxTokens,
-		messages,
-	};
-
-	if (request.tools && request.tools.length > 0) {
-		params.tools = request.tools.map((t) => ({
-			type: "function" as const,
-			function: {
-				name: t.name,
-				description: t.description,
-				parameters: t.inputSchema,
-			},
-		}));
-	}
-	if (request.temperature !== undefined) {
-		params.temperature = request.temperature;
-	}
-	if (request.stopSequences) {
-		params.stop = request.stopSequences;
-	}
-	const responseFormat = toOpenAIResponseFormat(request.responseFormat);
-	if (responseFormat) {
-		(
-			params as OpenAI.ChatCompletionCreateParams & {
-				response_format?: ReturnType<typeof toOpenAIResponseFormat>;
-			}
-		).response_format = responseFormat;
-	}
-
-	return params;
-}
-
-function toOpenAIResponseFormat(format?: LLMResponseFormat) {
-	if (!format || format.type === "text") return undefined;
-	if (format.type === "json_object") {
-		return { type: "json_object" as const };
-	}
-	return {
-		type: "json_schema" as const,
-		json_schema: {
-			name: format.name,
-			schema: format.schema,
-			strict: format.strict ?? true,
-		},
-	};
-}
-
-function fromOpenAIResponse(response: OpenAI.ChatCompletion): LLMResponse {
-	const choice = response.choices[0];
-	const content: ContentBlock[] = [];
-
-	if (choice?.message.content) {
-		content.push({ type: "text" as const, text: choice.message.content });
-	}
-
-	if (choice?.message.tool_calls) {
-		for (const tc of choice.message.tool_calls) {
-			if (tc.type !== "function") continue;
-			let input: Record<string, unknown> = {};
-			try {
-				input = JSON.parse(tc.function.arguments);
-			} catch {
-				// Keep empty object if the model returned malformed JSON.
-			}
-			content.push({
-				type: "tool_use" as const,
-				id: tc.id,
-				name: tc.function.name,
-				input,
-			});
-		}
-	}
-
-	return {
-		id: response.id,
-		content,
-		stopReason: mapFinishReason(choice?.finish_reason ?? null),
-		usage: {
-			inputTokens: response.usage?.prompt_tokens ?? 0,
-			outputTokens: response.usage?.completion_tokens ?? 0,
-		},
-	};
-}
-
-function toOpenAIMessage(msg: LLMMessage): OpenAI.ChatCompletionMessageParam {
-	if (typeof msg.content === "string") {
-		if (msg.role === "tool") {
-			return { role: "tool", content: msg.content, tool_call_id: "" };
-		}
-		return {
-			role: msg.role as "user" | "assistant",
-			content: msg.content,
-		};
-	}
-
-	if (msg.role === "assistant") {
-		let textContent = "";
-		const toolCalls: OpenAI.ChatCompletionMessageToolCall[] = [];
-
-		for (const block of msg.content) {
-			if (block.type === "text") {
-				textContent += block.text;
-			} else if (block.type === "tool_use") {
-				toolCalls.push({
-					id: block.id,
-					type: "function",
-					function: {
-						name: block.name,
-						arguments: JSON.stringify(block.input),
-					},
-				});
-			}
-		}
-
-		const result: OpenAI.ChatCompletionAssistantMessageParam = {
-			role: "assistant",
-			content: textContent || null,
-		};
-		if (toolCalls.length > 0) {
-			result.tool_calls = toolCalls;
-		}
-		return result;
-	}
-
-	if (msg.role === "user") {
-		const toolResults = msg.content.filter(
-			(b): b is Extract<ContentBlock, { type: "tool_result" }> =>
-				b.type === "tool_result",
+	private async *streamWithResponses(
+		request: LLMRequest,
+	): AsyncIterable<StreamChunk> {
+		const params = toOpenAIResponsesParams(
+			this.model,
+			request,
+			this.reasoningEffort,
+			this.compatProfile,
 		);
-		if (toolResults.length > 0) {
-			const tr = toolResults[0];
-			return {
-				role: "tool" as const,
-				tool_call_id: tr.toolUseId,
-				content: tr.content,
-			};
+
+		log.debug("Dispatching OpenAI responses stream", {
+			...summarizeOpenAIResponsesRequest(this.name, this.client, params),
+			wireApi: this.wireApi,
+			compatProfile: this.compatProfile.id,
+		});
+
+		const stream = await this.client.responses.create(params);
+		const activeToolCalls = new Set<string>();
+
+		try {
+			for await (const event of stream) {
+				switch (event.type) {
+					case "response.output_text.delta":
+						if (event.delta) {
+							yield { type: "text_delta", text: event.delta };
+						}
+						break;
+					case "response.output_item.added": {
+						if (event.item.type !== "function_call") break;
+						const callId = event.item.call_id;
+						const name = event.item.name;
+						if (!callId || !name) break;
+						const itemKey = responseToolItemKey(event.item, event.output_index);
+						activeToolCalls.add(itemKey);
+						yield {
+							type: "tool_use_start",
+							toolUse: {
+								type: "tool_use",
+								id: callId,
+								name,
+							},
+						};
+						break;
+					}
+					case "response.function_call_arguments.delta":
+						if (event.delta) {
+							yield { type: "tool_use_delta", text: event.delta };
+						}
+						break;
+					case "response.output_item.done": {
+						if (event.item.type !== "function_call") break;
+						const itemKey = responseToolItemKey(event.item, event.output_index);
+						if (!activeToolCalls.has(itemKey)) break;
+						activeToolCalls.delete(itemKey);
+						yield { type: "tool_use_end" };
+						break;
+					}
+					case "error":
+						throw new LLMError(event.message, this.name);
+					case "response.failed":
+						throw new LLMError(
+							readResponsesFailureMessage(event.response) ??
+								"OpenAI responses stream failed",
+							this.name,
+						);
+					case "response.incomplete":
+					case "response.completed":
+						for (const itemKey of activeToolCalls) {
+							activeToolCalls.delete(itemKey);
+							yield { type: "tool_use_end" };
+						}
+						yield { type: "message_end" };
+						break;
+					default:
+						break;
+				}
+			}
+		} catch (err) {
+			log.error("OpenAI responses stream failed", {
+				...summarizeOpenAIResponsesRequest(this.name, this.client, params),
+				wireApi: this.wireApi,
+				compatProfile: this.compatProfile.id,
+				...summarizeOpenAIError(err),
+			});
+			throw err;
 		}
-
-		const text = msg.content
-			.filter(
-				(b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
-			)
-			.map((b) => b.text)
-			.join("\n");
-		return { role: "user", content: text };
 	}
-
-	return { role: "user", content: String(msg.content) };
-}
-
-function mapFinishReason(reason: string | null): LLMResponse["stopReason"] {
-	switch (reason) {
-		case "stop":
-			return "end_turn";
-		case "tool_calls":
-			return "tool_use";
-		case "length":
-			return "max_tokens";
-		default:
-			return "end_turn";
-	}
-}
-
-function isRateLimitError(err: unknown): boolean {
-	return (err as { status?: number }).status === 429;
-}
-
-function getRetryAfterMs(err: unknown): number | undefined {
-	const headers = (err as { headers?: Record<string, string> }).headers;
-	const retryAfter = headers?.["retry-after"];
-	if (retryAfter) {
-		return Number.parseFloat(retryAfter) * 1000;
-	}
-	return undefined;
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -143,6 +143,44 @@ describe("createLLMProviderFromEnv", () => {
 		).toContain("https://openai-proxy.example/v1");
 	});
 
+	test("defaults direct OpenAI providers to Responses wire", () => {
+		const { provider } = createLLMProviderFromEnv({
+			OPENAI_API_KEY: "openai-key",
+		});
+
+		expect((provider as { wireApi: string }).wireApi).toBe("responses");
+	});
+
+	test("allows provider config to force chat-completions wire", () => {
+		const root = mkdtempSync(join(tmpdir(), "nous-provider-wire-"));
+		tempDirs.push(root);
+		const home = join(root, ".nous");
+		mkdirSync(join(home, "config"), { recursive: true });
+		mkdirSync(join(home, "secrets"), { recursive: true });
+		writeFileSync(
+			join(home, "config", "providers.json"),
+			JSON.stringify({
+				provider: {
+					priority: ["openai", "claude_cli"],
+					openaiModel: "gpt-5.4",
+					openaiWireApi: "chat_completions",
+				},
+			}),
+		);
+		writeFileSync(
+			join(home, "secrets", "providers.json"),
+			JSON.stringify({
+				providers: {
+					openai: { apiKey: "file-openai-key" },
+				},
+			}),
+		);
+
+		const { provider } = createLLMProviderFromEnv({ NOUS_HOME: home });
+
+		expect((provider as { wireApi: string }).wireApi).toBe("chat_completions");
+	});
+
 	test("falls back to Claude CLI when no API provider is configured", () => {
 		const { provider, providerName } = createLLMProviderFromEnv({});
 

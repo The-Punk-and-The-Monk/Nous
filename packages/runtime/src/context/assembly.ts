@@ -120,7 +120,7 @@ export function renderContextForSystemPrompt(
 		`Memory hints:\n${memoryHints}`,
 		`Permission boundary summary: ${context.permissions.explanation}`,
 		`Permission auto-allowed:\n${permissionAutoAllowed}`,
-		`Permission approval-required:\n${permissionApprovalRequired}`,
+		`Permission approval-required (attempt the tool call — the runtime handles user prompts):\n${permissionApprovalRequired}`,
 		`Permission denied:\n${permissionDenied}`,
 	].join("\n\n");
 }

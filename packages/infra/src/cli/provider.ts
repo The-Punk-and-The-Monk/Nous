@@ -45,6 +45,14 @@ export function createLLMProvider(
 		config.provider.openaiCompatBaseURL,
 	);
 	const openAIApiKey = firstDefined(env.OPENAI_API_KEY, secrets.openai?.apiKey);
+	const openAIWireApi = firstDefined(
+		env.OPENAI_WIRE_API,
+		config.provider.openaiWireApi,
+	);
+	const openAICompatWireApi = firstDefined(
+		env.OPENAI_COMPAT_WIRE_API,
+		config.provider.openaiCompatWireApi,
+	);
 	const openAIOrgId = firstDefined(
 		env.OPENAI_ORG_ID,
 		secrets.openai?.organization,
@@ -78,6 +86,7 @@ export function createLLMProvider(
 					secrets.openai?.apiKey,
 				),
 				model: env.OPENAI_MODEL ?? config.provider.openaiModel,
+				wireApi: parseWireApi(openAICompatWireApi),
 			}),
 			providerName: `openai-compat (${explicitCompatBaseURL})`,
 		};
@@ -90,6 +99,7 @@ export function createLLMProvider(
 					baseURL: compatBaseURL,
 					apiKey: compatApiKey,
 					model: env.OPENAI_MODEL ?? config.provider.openaiModel,
+					wireApi: parseWireApi(openAICompatWireApi),
 				}),
 				providerName: `openai-compat (${compatBaseURL})`,
 			};
@@ -103,6 +113,7 @@ export function createLLMProvider(
 					organization: openAIOrgId,
 					project: openAIProjectId,
 					model: env.OPENAI_MODEL ?? config.provider.openaiModel,
+					wireApi: parseWireApi(openAIWireApi),
 				}),
 				providerName: "openai",
 			};
@@ -135,6 +146,7 @@ export function createLLMProvider(
 				baseURL: compatBaseURL,
 				apiKey: compatApiKey,
 				model: env.OPENAI_MODEL ?? config.provider.openaiModel,
+				wireApi: parseWireApi(openAICompatWireApi),
 			}),
 			providerName: `openai-compat (${compatBaseURL})`,
 		};
@@ -148,6 +160,7 @@ export function createLLMProvider(
 				organization: openAIOrgId,
 				project: openAIProjectId,
 				model: env.OPENAI_MODEL ?? config.provider.openaiModel,
+				wireApi: parseWireApi(openAIWireApi),
 			}),
 			providerName: "openai",
 		};
@@ -179,6 +192,15 @@ function firstDefined(
 		if (typeof value === "string" && value.trim().length > 0) {
 			return value;
 		}
+	}
+	return undefined;
+}
+
+function parseWireApi(
+	value: string | undefined,
+): "chat_completions" | "responses" | undefined {
+	if (value === "chat_completions" || value === "responses") {
+		return value;
 	}
 	return undefined;
 }

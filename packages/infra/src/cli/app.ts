@@ -21,6 +21,7 @@ import { ProcessSupervisor } from "../supervisor/supervisor.ts";
 import { agentsCommand } from "./commands/agents.ts";
 import { attachCommand } from "./commands/attach.ts";
 import { daemonCommand, isDaemonRunning } from "./commands/daemon.ts";
+import { debugCommand } from "./commands/debug.ts";
 import { eventsCommand } from "./commands/events.ts";
 import { memoryCommand } from "./commands/memory.ts";
 import { networkCommand } from "./commands/network.ts";
@@ -29,6 +30,7 @@ import { openDaemonRepl } from "./commands/repl.ts";
 import { runCommand } from "./commands/run.ts";
 import { statusCommand } from "./commands/status.ts";
 import { createLLMProviderFromEnv } from "./provider.ts";
+import { createAutoApprovePermissionCallback, createInteractivePermissionCallback } from "./ui/permission-prompt.ts";
 import { colors } from "./ui/colors.ts";
 
 export async function main(args: string[]): Promise<void> {
@@ -37,6 +39,17 @@ export async function main(args: string[]): Promise<void> {
 	if (logLevelIdx >= 0 && args[logLevelIdx + 1]) {
 		setLogLevel(args[logLevelIdx + 1] as LogLevel);
 		args.splice(logLevelIdx, 2);
+	}
+
+	// Parse --yes / --dangerously-skip-permissions flag
+	const yesIdx = Math.max(
+		args.indexOf("--yes"),
+		args.indexOf("-y"),
+		args.indexOf("--dangerously-skip-permissions"),
+	);
+	const autoApproveAll = yesIdx >= 0;
+	if (yesIdx >= 0) {
+		args.splice(yesIdx, 1);
 	}
 
 	// Parse args
@@ -120,6 +133,12 @@ export async function main(args: string[]): Promise<void> {
 	if (command === "events") {
 		const limit = Number(args[1]) || 50;
 		eventsCommand(backend.events, { limit });
+		backend.close();
+		return;
+	}
+
+	if (command === "debug") {
+		debugCommand(args.slice(1), backend);
 		backend.close();
 		return;
 	}
@@ -226,6 +245,7 @@ export async function main(args: string[]): Promise<void> {
 	// Register default agents
 	const generalAgent = createGeneralAgent();
 	orchestrator.registerAgent(generalAgent);
+	orchestrator.start();
 
 	if (command === "agents") {
 		agentsCommand(orchestrator.getRouter());
@@ -284,10 +304,15 @@ export async function main(args: string[]): Promise<void> {
 		backend.close();
 	});
 
+	const onPermissionNeeded = autoApproveAll
+		? createAutoApprovePermissionCallback()
+		: createInteractivePermissionCallback();
+
 	await runCommand(orchestrator, intentText, {
 		systemPrompt,
 		capabilities: permissionCapabilities,
 		grounding,
+		onPermissionNeeded,
 	});
 
 	orchestrator.stop();
@@ -305,6 +330,7 @@ function printUsage(): void {
     nous status            Show running tasks and intents
     nous daemon <action>   Manage the background daemon (start|stop|status)
     nous attach <thread>   Attach to a persisted dialogue thread
+    nous debug ...        Inspect persisted runtime state
     nous agents            List registered agents
     nous events [N]        Show last N events (default: 50)
     nous memory [search]   View stored memories (optional search term)
@@ -313,6 +339,8 @@ function printUsage(): void {
 
   ${colors.bold("Options:")}
     --log-level <level>    Set log level: debug, info, warn, error, silent
+    --yes, -y              Auto-approve all permission prompts
+    --dangerously-skip-permissions  Alias for --yes
 
   ${colors.bold("Environment:")}
     ${colors.dim("Recommended default: direct OpenAI via OPENAI_API_KEY (or ~/.nous/secrets/providers.json).")}

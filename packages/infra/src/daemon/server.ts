@@ -9,7 +9,7 @@ import type {
 	ProactiveCandidate,
 	RelationshipBoundary,
 } from "@nous/core";
-import { now, prefixedId } from "@nous/core";
+import { createLogger, now, prefixedId } from "@nous/core";
 import { Orchestrator } from "@nous/orchestrator";
 import type { ProgressEvent } from "@nous/orchestrator";
 import { createPersistenceBackend } from "@nous/persistence";
@@ -51,6 +51,7 @@ export interface NousDaemonOptions {
 }
 
 export class NousDaemon {
+	private readonly log = createLogger("daemon");
 	private readonly paths = getDaemonPaths();
 	private readonly nousConfig = loadNousConfig();
 	private readonly backend = createPersistenceBackend(this.paths.dbPath);
@@ -169,6 +170,7 @@ export class NousDaemon {
 
 	async start(): Promise<void> {
 		cleanupSocket(this.paths.socketPath);
+		this.orchestrator.start();
 		this.supervisor.start();
 		if (this.nousConfig.sensors.enabled) {
 			this.perception.start();
@@ -2423,6 +2425,13 @@ export class NousDaemon {
 			for (const candidate of deliverable) {
 				await this.deliverProactiveCandidate(candidate);
 			}
+		} catch (error) {
+			this.log.warn("Proactive reflection tick failed", {
+				errorName:
+					error instanceof Error ? error.name : typeof error,
+				errorMessage:
+					error instanceof Error ? error.message : String(error),
+			});
 		} finally {
 			this.isReflectionTickRunning = false;
 		}

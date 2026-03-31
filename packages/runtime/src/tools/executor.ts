@@ -1,12 +1,15 @@
+import { resolve } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import type {
 	CapabilitySet,
+	PermissionCallback,
+	PermissionRequest,
 	RollbackExecutionResult,
 	ToolDef,
 	ToolResult,
 	ToolRollbackPlan,
 } from "@nous/core";
-import { prefixedId } from "@nous/core";
+import { CapabilityDeniedError, expandCapability, prefixedId } from "@nous/core";
 import {
 	assertCapabilities,
 	assertPathAccess,
@@ -19,6 +22,7 @@ export interface ToolExecutionContext {
 
 export interface ToolExecutionOptions {
 	signal?: AbortSignal;
+	onPermissionNeeded?: PermissionCallback;
 }
 
 export interface ToolHandlerOutput {
@@ -71,9 +75,8 @@ export class ToolExecutor {
 			| undefined;
 
 		try {
-			// Check capabilities
-			assertCapabilities(tool, capabilities);
-			assertToolInputAccess(tool, input, capabilities);
+			// Check capabilities — with optional interactive approval
+			await this.checkPermissions(tool, input, capabilities, options.onPermissionNeeded);
 			throwIfAborted(options.signal, tool.name);
 			abortWaiter = createAbortWaiter(options.signal, tool.name);
 
@@ -150,6 +153,76 @@ export class ToolExecutor {
 			};
 		}
 	}
+
+	/**
+	 * Check capabilities with optional interactive approval.
+	 * If the hard check fails but a permissionCallback is provided,
+	 * invoke it to let the user approve the action.
+	 */
+	private async checkPermissions(
+		tool: ToolDef,
+		input: Record<string, unknown>,
+		capabilities: CapabilitySet,
+		onPermissionNeeded?: PermissionCallback,
+	): Promise<void> {
+		try {
+			assertCapabilities(tool, capabilities);
+			assertToolInputAccess(tool, input, capabilities);
+		} catch (err) {
+			if (!(err instanceof CapabilityDeniedError) || !onPermissionNeeded) {
+				throw err;
+			}
+
+			const request = buildPermissionRequest(tool, input, err);
+			const decision = await onPermissionNeeded(request);
+
+			if (decision === "deny") {
+				throw err;
+			}
+			if (decision === "allow_session") {
+				expandCapability(capabilities, request);
+			}
+			// allow_once and allow_session both proceed to execution
+		}
+	}
+}
+
+function buildPermissionRequest(
+	tool: ToolDef,
+	input: Record<string, unknown>,
+	err: CapabilityDeniedError,
+): PermissionRequest {
+	const base: PermissionRequest = {
+		capability: err.capability as PermissionRequest["capability"],
+		toolName: tool.name,
+		detail: err.detail ?? err.message,
+	};
+
+	switch (tool.name) {
+		case "file_read":
+			base.path = resolve(String(input.path ?? ""));
+			break;
+		case "file_write":
+			base.path = resolve(String(input.path ?? ""));
+			break;
+		case "glob":
+		case "grep":
+			base.path = resolve(String(input.path ?? input.cwd ?? process.cwd()));
+			break;
+		case "shell":
+			base.command = extractExecutableFromCommand(
+				String(input.command ?? ""),
+			);
+			break;
+	}
+
+	return base;
+}
+
+function extractExecutableFromCommand(command: string): string | undefined {
+	const trimmed = command.trim();
+	if (!trimmed) return undefined;
+	return trimmed.split(/\s+/)[0];
 }
 
 function normalizeHandlerResult(

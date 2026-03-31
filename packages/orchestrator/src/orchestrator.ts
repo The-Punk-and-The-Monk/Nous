@@ -15,6 +15,7 @@ import type {
 	PendingIntentCancellation,
 	PendingIntentPause,
 	PendingIntentRevision,
+	PermissionCallback,
 	ResumeDirective,
 	ScopeRevisionDirective,
 	Task,
@@ -79,6 +80,7 @@ export interface IntentExecutionOptions {
 	grounding?: UserStateGrounding;
 	deferExecution?: boolean;
 	onIntentCreated?: (intent: Intent) => void;
+	onPermissionNeeded?: PermissionCallback;
 }
 
 export interface IntentScopeUpdateResult {
@@ -910,6 +912,8 @@ export class Orchestrator {
 				this.intentStore.getById(task.intentId)?.contract,
 				this.intentStore.getById(task.intentId)?.executionDepth,
 			),
+			onPermissionNeeded: this.intentExecutionOptions.get(task.intentId)
+				?.onPermissionNeeded,
 		});
 		this.runningRuntimes.set(task.id, runtime);
 
@@ -1425,6 +1429,10 @@ export class Orchestrator {
 			payload,
 		};
 		this.eventStore.append(event);
+	}
+
+	start(): void {
+		this.scheduler.start();
 	}
 
 	stop(): void {

@@ -5,6 +5,7 @@ import type {
 	LLMMessage,
 	LLMProvider,
 	Logger,
+	PermissionCallback,
 	Task,
 	ToolDef,
 	ToolResult,
@@ -29,6 +30,7 @@ export interface AgentRuntimeConfig {
 	maxIterations?: number;
 	maxTokens?: number;
 	systemPrompt?: string;
+	onPermissionNeeded?: PermissionCallback;
 }
 
 export interface AgentResult {
@@ -78,6 +80,7 @@ export class AgentRuntime {
 	private pendingInterrupt?: RuntimeInterruptState;
 	private activeToolExecution?: ActiveToolExecution;
 	private currentTaskId?: string;
+	private onPermissionNeeded?: PermissionCallback;
 
 	private log: Logger;
 
@@ -92,6 +95,7 @@ export class AgentRuntime {
 		this.maxIterations = config.maxIterations ?? 25;
 		this.maxTokens = config.maxTokens ?? 4096;
 		this.context = new ContextManager();
+		this.onPermissionNeeded = config.onPermissionNeeded;
 		this.systemPrompt =
 			config.systemPrompt ??
 			"You are a capable agent. Complete the assigned task using the available tools. When done, provide your final answer as text (without tool calls).";
@@ -302,7 +306,10 @@ export class AgentRuntime {
 							toolDef,
 							toolUse.input,
 							this.capabilities,
-							{ signal: controller.signal },
+							{
+								signal: controller.signal,
+								onPermissionNeeded: this.onPermissionNeeded,
+							},
 						);
 						this.activeToolExecution = undefined;
 						toolResults.push(result);

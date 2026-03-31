@@ -295,10 +295,10 @@ export function describePermissionBoundary(
 				denied.add(line);
 				break;
 			case "ask_once":
-				approvalRequired.add(`${line} (approval on first use)`);
+				approvalRequired.add(`${line} (will prompt user on first use — go ahead and use the tool)`);
 				break;
 			case "always_ask":
-				approvalRequired.add(`${line} (approval required every time)`);
+				approvalRequired.add(`${line} (will prompt user each time — go ahead and use the tool)`);
 				break;
 			default:
 				break;
@@ -422,7 +422,7 @@ function buildPermissionExplanation(input: {
 	}
 	if (input.approvalRequired.length > 0) {
 		parts.push(
-			`Needs approval: ${input.approvalRequired.slice(0, 2).join("; ")}`,
+			`Needs approval (go ahead and use the tool, the runtime handles prompting): ${input.approvalRequired.slice(0, 2).join("; ")}`,
 		);
 	}
 	if (input.denied.length > 0) {

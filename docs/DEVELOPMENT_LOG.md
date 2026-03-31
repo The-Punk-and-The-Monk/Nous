@@ -3237,3 +3237,626 @@ For significant sessions, capture:
     - vector backend seam / sqlite-vec
     - semantic / procedural digestion
   - Whether `ProactiveRuntimeService` should eventually move from local single-daemon leasing semantics to a more explicit worker/lease protocol
+
+### Session: Add provider-level OpenAI request/error diagnostics for real-machine debugging
+- Context / Trigger:
+  - During live debugging on macOS, the current intake path failed at `intent-parser` with:
+    - `Failed to analyze task intake JSON raw=404 openai_error`
+  - That surfaced only the orchestration symptom, not the actual provider contract or upstream error body.
+  - The immediate need was to inspect the real request shape at the OpenAI boundary before changing parser or planner logic.
+- Problem:
+  - `OpenAIChatProvider` converted SDK failures into `LLMError`, but did not log:
+    - resolved base URL
+    - resolved model
+    - whether `response_format=json_schema` was attached
+    - truncated message payload preview
+    - upstream `APIError.error` body / request ID / status metadata
+  - As a result, the runtime could not clearly distinguish:
+    - connectivity problems
+    - model mismatch
+    - proxy incompatibility
+    - structured-output incompatibility
+- Options considered:
+  - Option A: keep debugging from parser/orchestrator logs only.
+    - Rejected because upper layers only see collapsed `LLMError`, not transport truth.
+  - Option B: dump full raw HTTP traffic.
+    - Rejected for now because it is noisier, riskier, and heavier than needed for the current problem.
+  - Option C: add structured diagnostics inside the OpenAI provider boundary.
+    - Chosen because this is the narrowest architectural seam where request contract and upstream truth coexist.
+- Decision:
+  - Add first-class debug/error instrumentation to `packages/runtime/src/llm/openai-shared.ts`.
+  - The provider now logs:
+    - request summary:
+      - provider name
+      - base URL
+      - model
+      - `responseFormatType`
+      - `responseFormatPreview`
+      - message count
+      - truncated message preview
+      - tool count / stop count / max tokens / temperature
+    - response summary:
+      - response ID
+      - finish reason
+      - text preview
+      - tool call count
+      - token usage
+    - error summary:
+      - status
+      - error name / code / type / param
+      - request ID
+      - upstream JSON error body preview
+      - the same request summary used for dispatch
+- Changes made:
+  - Updated `packages/runtime/src/llm/openai-shared.ts`
+    - added `createLogger("openai-chat")`
+    - added request dispatch debug log
+    - added response debug log
+    - added error log on SDK failure before raising `LLMError`
+    - added helper functions for:
+      - request summarization
+      - message flattening / truncation
+      - response summarization
+      - OpenAI `APIError` extraction
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/provider.test.ts packages/runtime/tests/structured-generation.test.ts` ✅
+  - `bun x biome check packages/runtime/src/llm/openai-shared.ts` ✅
+- Impact:
+  - Real-machine debugging is now much more honest:
+    - Nous no longer hides provider failures behind a generic parser symptom alone.
+  - This strengthens an important architectural boundary:
+    - orchestration owns intent/planning semantics
+    - provider runtime owns transport observability and upstream error truth
+  - It also prepares the next likely fix:
+    - if logs show `json_schema` is what triggers the proxy failure, the right next move is capability negotiation / fallback policy, not parser prompt patching.
+
+## 2026-03-31
+
+### Session: Replace OpenAI chat-completions assumptions with a real Responses-wire runtime compatible with Codex-style proxies
+- Context / Trigger:
+  - Real-machine debugging showed that the packyapi route used by the user worked in Codex, but failed in Nous with:
+    - `404 openai_error`
+    - later, after partial fixes, `400 openai_error`
+  - The user explicitly asked to stop guessing, inspect local Codex source in `/Users/joey/Projects/codex`, understand how Codex talks to OpenAI, and then align Nous accordingly.
+- Problem:
+  - Nous had treated “OpenAI-compatible” as mostly:
+    - base URL
+    - API key
+    - model
+  - But Codex and the proxy reality showed that the real compatibility boundary is the **wire contract**, not just the endpoint hostname.
+  - Before this session, Nous assumed:
+    - `chat.completions`
+    - chat-style `response_format`
+    - chat-style assistant/tool history replay
+  - The proxy path that worked for Codex instead expected a Codex-like / Responses-style contract, and then exposed several additional runtime quirks:
+    - `responses` + SSE, not `chat/completions`
+    - `input` must be a message-item array, not a bare string, for this route
+    - `temperature: 0` triggered upstream 400s on this proxy path and had to be omitted
+    - replaying prior assistant turns as assistant `input_text` was invalid; prior assistant history had to be replayed as assistant `output_text`
+    - completed responses could contain multiple assistant messages with `phase=commentary` and `phase=final_answer`; blindly concatenating them broke JSON parsing in the structured-output path
+    - some native `json_schema` requests still failed on this proxy path and needed a `json_object` fallback while preserving client-side validation
+- Codex comparison / findings:
+  - Inspected local Codex source, especially:
+    - `codex-rs/codex-api/src/common.rs`
+    - `codex-rs/codex-api/src/endpoint/responses.rs`
+    - `codex-rs/codex-api/src/provider.rs`
+  - Key findings:
+    - Codex uses `POST /v1/responses`
+    - Codex streams via SSE
+    - Codex treats structured output through Responses `text.format`, not chat-completions `response_format`
+    - Codex’s request body shape is already aligned with a Responses-native worldview, so the proxy route accepted it while rejecting Nous’s earlier chat-completions path
+- Options considered:
+  - Option A: keep patching prompts / parser behavior while staying on `chat.completions`.
+    - Rejected because the failure was at the transport/wire boundary, not the parser prompt.
+  - Option B: hard-switch all “OpenAI-like” backends to Responses with no configurability.
+    - Rejected because openai-compatible ecosystems are fragmented; some still only implement chat-completions well.
+  - Option C: promote **wire API** to a first-class provider concern and add a real Responses transport path.
+    - Chosen because it matches the actual production compatibility boundary.
+- Decision:
+  - Add a real Responses-wire implementation to the OpenAI provider stack.
+  - Make wire selection explicit in provider/config instead of burying it inside endpoint assumptions.
+  - Default direct OpenAI to `responses`, while keeping `openai-compat` defaulted to `chat_completions` unless configured otherwise.
+  - Add proxy-hardening behavior inside the Responses path:
+    - omit `temperature: 0`
+    - replay assistant history as assistant `output_text`
+    - prefer `phase=final_answer` over commentary when collapsing completed Responses output into a generic `LLMResponse`
+    - fall back from Responses `json_schema` to `json_object` on 400s, while still relying on Nous’s existing client-side structured validation / retry layer
+- Changes made:
+  - Updated `packages/runtime/src/llm/openai-shared.ts`
+    - replaced the old chat-only provider framing with a wire-aware base provider
+    - added Responses request mapping:
+      - `system` -> `instructions`
+      - Nous messages -> Responses `input` items
+      - tool defs -> Responses function tools
+      - structured output -> Responses `text.format`
+    - implemented Responses stream collection for `chat()`
+    - implemented Responses streaming support for `stream()`
+    - normalized JSON schema objects for stricter backends
+    - added `json_schema -> json_object` fallback on upstream 400s
+    - omitted `temperature: 0` in Responses requests
+    - fixed assistant-history replay to use assistant `output_text`
+    - fixed completed-response collapse to prefer `phase=final_answer`
+    - kept and generalized provider-level request / response / error diagnostics
+  - Updated `packages/runtime/src/llm/openai.ts`
+    - direct OpenAI now defaults to `responses`
+    - added env / option parsing for wire selection and reasoning effort
+  - Updated `packages/runtime/src/llm/openai-compat.ts`
+    - compat provider now exposes the same wire-selection seam
+    - default remains `chat_completions`
+  - Updated `packages/infra/src/config/home.ts`
+    - added config keys:
+      - `provider.openaiWireApi`
+      - `provider.openaiCompatWireApi`
+    - defaulted direct OpenAI to `responses`
+    - defaulted compat to `chat_completions`
+  - Updated `packages/infra/src/cli/provider.ts`
+    - wired config / env resolution into provider construction
+    - added parsing for:
+      - `OPENAI_WIRE_API`
+      - `OPENAI_COMPAT_WIRE_API`
+  - Added / updated tests:
+    - `packages/runtime/tests/openai-responses-provider.test.ts`
+    - `packages/infra/tests/provider.test.ts`
+- Validation:
+  - Automated:
+    - `bun x tsc --noEmit` ✅
+    - `bun test packages/runtime/tests/openai-responses-provider.test.ts packages/runtime/tests/structured-generation.test.ts packages/infra/tests/provider.test.ts` ✅
+  - Real proxy validation:
+    - `NOUS_HOME=/tmp/nous-openai-test bun bin/nous.ts "Read LICENSE.md and summarize it in one sentence."` ✅
+    - End-to-end result:
+      - intent parsing succeeded
+      - planning succeeded
+      - task execution succeeded through the proxy-backed OpenAI path
+- Impact / Result:
+  - Nous no longer assumes that “OpenAI-compatible” means “chat-completions-compatible.”
+  - The provider layer now reflects a more production-real truth:
+    - **wire contract is part of provider identity**
+  - This materially improves Nous’s compatibility with:
+    - official modern OpenAI Responses workflows
+    - Codex-style proxy routes that behave more like Responses-native runtimes than generic chat-completions clones
+  - It also exposed an important future architectural seam:
+    - provider capability should eventually distinguish not just model/vendor, but also backend-specific structured-output / history-replay behavior more explicitly than a single capability bitset does today.
+- Open questions / follow-ups:
+  - Whether Nous should eventually model provider capabilities with finer granularity, for example:
+    - native strict json-schema reliability
+    - assistant-history replay mode
+    - commentary/final-answer phase preservation
+  - Whether the generic `LLMResponse` abstraction should eventually gain an explicit notion of assistant phase rather than collapsing everything down to plain text blocks.
+  - Whether direct OpenAI should later expose richer Responses-native controls beyond the current MVP-compatible mapping, such as more explicit reasoning / include / conversation-state controls.
+
+### Session: Isolate daemon-side proactive reflection failures from the main runtime and align reflection requests with proxy constraints
+- Context / Trigger:
+  - After the Responses-wire migration, the user observed a split outcome on the same proxy-backed OpenAI setup:
+    - foreground CLI task execution succeeded
+    - daemon startup path failed with `400 openai_error`
+  - The logs showed the failure was not in intent parsing itself, but in the daemon’s immediately-triggered proactive reflection request.
+- Problem:
+  - The daemon automatically starts the proactive reflection loop on boot.
+  - That reflective path still used `temperature: 0.2`, while the packyapi Responses route currently rejects non-zero temperature values.
+  - Worse, the reflection tick had no failure isolation, so a background ambient-reflection error could terminate the daemon process and make it look like “daemon mode is broken.”
+- Options considered:
+  - Option A: special-case packyapi in provider code and silently strip all non-zero temperatures.
+    - Rejected because the current bug was specifically in the reflective caller contract, and hiding all upstream incompatibilities in the provider would blur the boundary between caller policy and transport policy.
+  - Option B: make reflection use a deterministic/omittable temperature and add daemon-side error isolation around background reflection ticks.
+    - Chosen because it fixes the immediate production bug while preserving a cleaner architectural contract:
+      - reflection requests stay conservative and structure-friendly
+      - background failures cannot take down the main runtime
+- Decision:
+  - Change proactive reflection from `temperature: 0.2` to `temperature: 0`.
+    - This preserves the intended “conservative structured judgment” semantics.
+    - On the Responses path, the provider already omits zero temperature on the wire, which makes it proxy-compatible.
+  - Add daemon-side catch/log isolation around `runProactiveReflectionTick()`.
+    - Background ambient/reflection failures now degrade to warnings instead of crashing the daemon.
+- Changes made:
+  - Updated `packages/runtime/src/proactive/reflection.ts`
+    - changed reflective structured generation requests from `temperature: 0.2` to `temperature: 0`
+  - Updated `packages/infra/src/daemon/server.ts`
+    - added a daemon logger
+    - wrapped proactive reflection ticks with warning-level failure isolation
+    - ensured `isReflectionTickRunning` is still reset in `finally`
+  - Updated `packages/runtime/tests/reflection-service.test.ts`
+    - now asserts reflection requests use `temperature: 0`
+  - Added `packages/infra/tests/daemon-proactive-reflection.test.ts`
+    - verifies reflection failures are swallowed/logged and do not escape the daemon tick
+- Validation:
+  - `bun test packages/runtime/tests/reflection-service.test.ts packages/infra/tests/daemon-proactive-reflection.test.ts packages/runtime/tests/openai-responses-provider.test.ts packages/infra/tests/provider.test.ts` ✅
+  - `bun x tsc --noEmit` ✅
+- Impact / Result:
+  - The previously confusing “CLI works but daemon fails” split now has a concrete engineering explanation and fix:
+    - foreground task path used proxy-safe request parameters
+    - daemon startup reflection did not
+  - Nous now better respects an important runtime invariant:
+    - **background cognition must not be able to kill the main assistant runtime**
+  - This also clarifies an architectural lesson for future provider work:
+    - wire compatibility is not only about endpoint shape
+    - it also includes caller-side policy defaults like temperature, structured-output mode, and retry/fallback behavior
+- Open questions / follow-ups:
+  - Whether Nous should eventually expose per-call/provider policy hints more explicitly, so reflective / planning / execution paths can negotiate backend quirks without burying them in ad hoc caller defaults.
+  - Whether proactive reflection should later have a dedicated failure metric / backoff policy instead of simple warn-and-continue isolation.
+
+### Session: Compare OpenClaw’s multi-provider architecture with Nous and define the right borrowing boundary
+- Context / Trigger:
+  - After fixing the latest OpenAI/proxy compatibility bug, a broader architectural question became unavoidable:
+    - as Nous adds more provider support, should it keep growing provider logic through direct hardcoded adapters
+    - or should it adopt a more mature compatibility structure from an existing production-oriented agent framework
+  - The user provided a local OpenClaw checkout at `/Users/joey/Projects/openclaw` and asked for a grounded comparison rather than theoretical guessing.
+- Problem:
+  - Nous currently has a clean, small provider surface:
+    - `LLMProvider`
+    - direct `OpenAIProvider`
+    - `OpenAICompatProvider`
+    - `AnthropicProvider`
+    - `ClaudeCliProvider`
+  - That is excellent for current project clarity, but it risks future drift toward:
+    - ad hoc provider-specific `if/else`
+    - transport quirks leaking upward
+    - “openai-compatible” behavior being re-encoded case-by-case in shared provider files
+  - OpenClaw already lives in the world of:
+    - many providers
+    - multiple auth modes
+    - provider-owned model catalogs
+    - transport family quirks
+    - request/stream wrappers
+    - runtime auth preparation
+    - usage/quota endpoints
+  - So the question was not “is OpenClaw bigger?” but:
+    - which parts are genuinely reusable engineering structure
+    - and which parts are product-specific overhead Nous should avoid for now
+- Comparison findings:
+  - OpenClaw’s strongest design move is **separation of concerns inside provider support**:
+    - core owns the generic inference loop
+    - provider plugins own provider-specific behavior through typed hooks
+    - relevant files inspected:
+      - `/Users/joey/Projects/openclaw/src/plugins/types.ts`
+      - `/Users/joey/Projects/openclaw/src/plugins/provider-runtime.ts`
+      - `/Users/joey/Projects/openclaw/extensions/openai/openai-provider.ts`
+      - `/Users/joey/Projects/openclaw/extensions/openai/openai-codex-provider.ts`
+      - `/Users/joey/Projects/openclaw/src/agents/provider-capabilities.ts`
+  - OpenClaw explicitly models provider-owned seams such as:
+    - dynamic model resolution
+    - resolved-model / transport normalization
+    - extra request-param preparation
+    - stream wrapping
+    - runtime auth exchange
+    - usage/quota fetching
+    - provider capability quirks
+  - Nous currently has only a **single generic capability bitset** and a direct class-based provider implementation:
+    - `/Users/joey/Projects/Nous/packages/core/src/llm/types.ts`
+    - `/Users/joey/Projects/Nous/packages/runtime/src/llm/openai-shared.ts`
+    - `/Users/joey/Projects/Nous/packages/infra/src/cli/provider.ts`
+  - This means Nous is currently better at:
+    - conceptual clarity
+    - low implementation surface
+    - keeping provider logic close to the actual runtime contract
+  - But OpenClaw is currently better at:
+    - quarantining provider quirks behind explicit extension seams
+    - avoiding the need to fork whole provider implementations just to add one transport quirk
+    - scaling provider breadth without turning the core runner into a compatibility junk drawer
+- Options considered:
+  - Option A: keep Nous exactly as-is and continue adding provider quirks directly into hardcoded provider classes.
+    - Rejected as the long-term direction because it will scale poorly once more proxy/auth/wire variants arrive.
+  - Option B: fully copy OpenClaw’s provider-plugin architecture now.
+    - Rejected because OpenClaw’s architecture is solving a broader product problem than Nous currently has:
+      - plugin ecosystem
+      - onboarding/auth wizard flows
+      - provider-owned model catalogs
+      - usage/quota surfaces
+      - broad user-selectable provider marketplace concerns
+  - Option C: keep Nous’s small `LLMProvider` runtime interface, but add an internal **provider compatibility kernel** inspired by OpenClaw’s typed provider-runtime hooks.
+    - Chosen because it preserves Nous’s simplicity while borrowing the mature engineering shape that matters for real compatibility work.
+- Decision:
+  - Nous should **not** adopt OpenClaw’s full provider-plugin system right now.
+  - Nous **should** borrow these structural ideas:
+    - a provider-family / wire-family capability model richer than `structuredOutputModes`
+    - explicit provider-compat seams for:
+      - request normalization
+      - transcript/history replay normalization
+      - transport selection / base URL normalization
+      - response/stream normalization
+      - retry/fallback policy
+      - diagnostics metadata
+    - typed ownership of provider quirks, so shared runtime logic stops accumulating scattered backend exceptions
+  - The right Nous direction is therefore:
+    - keep `LLMProvider` as the stable execution boundary
+    - add an internal adapter/compat layer below it rather than jumping straight to external provider plugins
+- Changes made:
+  - No code changes in this comparison session.
+  - Recorded the architecture conclusion here so future provider work can follow the agreed borrowing boundary instead of oscillating between “keep it simple” and “copy OpenClaw.”
+- Impact / Result:
+  - Nous now has a clearer answer to a likely future refactor trap:
+    - we do **not** need a provider marketplace architecture to solve provider compatibility well
+    - but we **do** need stronger internal compat seams than a few constructor options and one shared OpenAI file
+  - This comparison also sharpened a boundary that matters for Nous’s philosophy:
+    - provider support is infrastructure
+    - it should not drag the core product architecture away from personal-assistant continuity, memory, intent, and runtime harness concerns
+- Open questions / follow-ups:
+  - The next concrete step should likely be a small internal design draft such as:
+    - `ProviderCompatProfile`
+    - `WireProfile`
+    - `RequestNormalizer`
+    - `ResponseNormalizer`
+    - `RetryPolicy`
+  - If Nous later adds:
+    - OAuth-backed providers
+    - Codex-like special runtime auth
+    - usage/quota reporting
+    - many vendor-specific model families
+    then it may become worth promoting that internal compat layer into a first-class registry.
+
+### Session: Add the first internal OpenAI compat kernel and validate proxy-backed GPT-5.4 requests end to end
+- Context / Trigger:
+  - After comparing Nous with OpenClaw’s provider/runtime architecture, the next step was no longer abstract discussion.
+  - The user had installed and configured local OpenClaw with:
+    - `~/.openclaw/openclaw.json`
+    - `models.providers.openai.baseUrl = https://www.packyapi.com/v1`
+    - `models.providers.openai.api = openai-responses`
+    - primary model `openai/gpt-5.4`
+  - OpenClaw could successfully use the proxy-backed GPT-5.4 path, so Nous needed a clearer internal compatibility structure and a real acceptance pass against the same style of backend.
+- Problem:
+  - Nous already worked against the proxy after the earlier Responses-wire fix, but the compatibility rules were still mostly embedded inside `openai-shared.ts`.
+  - That was good enough for one emergency fix, but not a good long-term shape:
+    - request quirks
+    - response quirks
+    - reasoning / fallback policy
+    - official-vs-proxy transport differences
+    would otherwise keep accumulating in a single implementation file.
+- Options considered:
+  - Option A: stop after the previous bug fix since proxy requests were already possible.
+    - Rejected because the code would remain structurally fragile even though the happy path currently worked.
+  - Option B: copy OpenClaw’s provider-plugin/runtime-hook system wholesale.
+    - Rejected because that would import too much product/platform complexity too early.
+  - Option C: keep the stable `LLMProvider` contract, but introduce a **small internal compat kernel** for OpenAI-style providers first.
+    - Chosen because it captures the real engineering lesson without dragging Nous into plugin-platform scope.
+- Decision:
+  - Add the first internal OpenAI compat profile layer.
+  - Keep the upper `LLMProvider` interface unchanged.
+  - Move existing compatibility behaviors into explicit profile-owned decisions, starting with:
+    - official vs proxy-like Responses endpoints
+    - reasoning-effort passthrough vs omission
+    - structured-output fallback policy
+    - assistant-history replay policy
+    - final-answer selection policy
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added the **Provider Compat Kernel** section under LLM Provider Strategy
+    - documented `ProviderCompatProfile`, `RequestNormalizer`, `ResponseNormalizer`, and `RetryPolicy` as the right internal borrowing boundary from OpenClaw
+  - Added `packages/runtime/src/llm/openai-types.ts`
+    - extracted `OpenAIWireApi` and `OpenAIReasoningEffort`
+  - Added `packages/runtime/src/llm/openai-compat-profile.ts`
+    - introduced the first internal compat profile resolver for OpenAI-style backends
+    - modeled:
+      - official vs compatible Responses endpoints
+      - temperature omission policy
+      - reasoning-effort policy
+      - JSON-schema fallback policy
+      - final-answer message selection policy
+  - Updated `packages/runtime/src/llm/openai-shared.ts`
+    - threaded compat profiles through request building, response collapsing, fallback handling, and diagnostics logging
+    - provider logs now include the active compat profile id
+  - Updated `packages/runtime/src/llm/openai.ts`
+  - Updated `packages/runtime/src/llm/openai-compat.ts`
+    - now import shared OpenAI wire/reasoning types from the new type module
+  - Updated `packages/runtime/tests/openai-responses-provider.test.ts`
+    - added behavioral coverage that:
+      - proxy-like Responses endpoints omit reasoning effort
+      - official OpenAI Responses endpoints keep reasoning effort when supported
+- Validation:
+  - Automated:
+    - `bun test packages/runtime/tests/openai-responses-provider.test.ts packages/runtime/tests/reflection-service.test.ts packages/infra/tests/daemon-proactive-reflection.test.ts packages/infra/tests/provider.test.ts` ✅
+    - `bun x tsc --noEmit` ✅
+  - Real proxy-backed acceptance:
+    - `NOUS_HOME=/tmp/nous-openai-test bun bin/nous.ts "Read LICENSE.md and summarize it in one sentence."` ✅
+    - using:
+      - `openaiBaseURL = https://www.packyapi.com/v1`
+      - `openaiModel = gpt-5.4`
+      - API key from `/tmp/nous-openai-test/secrets/providers.json`
+    - result:
+      - intent parsing succeeded
+      - planning succeeded
+      - execution succeeded
+      - final answer returned normally through the proxy-backed OpenAI path
+- Impact / Result:
+  - Nous still keeps a small and understandable provider abstraction at the top.
+  - But provider compatibility is now beginning to have the **right internal shape**:
+    - explicit compat profiles
+    - explicit policy ownership
+    - less accidental coupling between one-off proxy fixes and the generic provider runtime
+  - This makes the OpenAI / OpenAI-compatible boundary much more maintainable as more real-world endpoints and quirks appear.
+- Open questions / follow-ups:
+  - Whether the next compat-kernel step should generalize beyond OpenAI into a small shared runtime concept or remain provider-family-specific for another iteration.
+  - Whether Nous should later expose a user-visible override for compat profile selection when auto-detection is insufficient.
+  - Whether retry/fallback policy should be pulled one level higher into an explicit reusable object instead of still living mostly inside `OpenAIProviderBase`.
+
+### Session: Split the OpenAI compat kernel into RequestNormalizer / ResponseNormalizer / RetryPolicy layers
+- Context / Trigger:
+  - After the first compat-kernel pass landed, the code now had the right **policy concept** (`OpenAICompatProfile`) but still kept too much execution detail inside `packages/runtime/src/llm/openai-shared.ts`.
+  - The next step was to make the new architecture real in code rather than leaving the profile layer as a thin wrapper over one large provider implementation file.
+- Problem:
+  - `openai-shared.ts` still mixed:
+    - provider orchestration
+    - request mapping
+    - response collapsing
+    - retry/backoff
+    - diagnostics shaping
+  - Even though behavior was now more correct, that file was still structurally too “god-object-like” for ongoing compatibility work.
+- Options considered:
+  - Option A: stop after `ProviderCompatProfile` and accept one large OpenAI runtime file.
+    - Rejected because this would make future quirks harder to place cleanly, defeating the point of the compat-kernel direction.
+  - Option B: go all the way to a generalized provider registry right now.
+    - Rejected because it would again jump too far beyond the current OpenAI-focused need.
+  - Option C: extract the three concrete seams already identified in architecture:
+    - request normalization
+    - response normalization
+    - retry policy
+    while keeping the provider class boundary stable.
+    - Chosen because it is the smallest refactor that makes the new design materially real.
+- Decision:
+  - Keep `OpenAIProviderBase` responsible only for:
+    - provider lifecycle
+    - dispatch orchestration
+    - logging around request/response boundaries
+  - Move lower-level responsibilities into dedicated modules:
+    - `openai-request-normalizer.ts`
+    - `openai-response-normalizer.ts`
+    - `openai-retry-policy.ts`
+- Changes made:
+  - Added `packages/runtime/src/llm/openai-request-normalizer.ts`
+    - owns:
+      - chat/responses request mapping
+      - structured-output format mapping
+      - schema normalization
+      - request-variant generation
+      - request diagnostics summarization
+  - Added `packages/runtime/src/llm/openai-response-normalizer.ts`
+    - owns:
+      - chat/responses response collapsing
+      - completed stream collection
+      - final-answer selection
+      - stop-reason mapping
+      - response diagnostics summarization
+  - Added `packages/runtime/src/llm/openai-retry-policy.ts`
+    - owns:
+      - 429 retry/backoff handling
+      - conversion to `LLMError` / `RateLimitError`
+      - upstream error summarization for diagnostics
+  - Rewrote `packages/runtime/src/llm/openai-shared.ts`
+    - reduced it to a coordinator over compat profile + normalizer + retry-policy seams
+  - Added `packages/runtime/tests/openai-retry-policy.test.ts`
+    - verifies:
+      - 429 retry succeeds when a later attempt succeeds
+      - non-rate-limit failures become `LLMError`
+      - exhausted 429 retries produce `RateLimitError`
+- Validation:
+  - `bun test packages/runtime/tests/openai-responses-provider.test.ts packages/runtime/tests/openai-retry-policy.test.ts packages/runtime/tests/reflection-service.test.ts packages/infra/tests/daemon-proactive-reflection.test.ts packages/infra/tests/provider.test.ts` ✅
+  - `bun x tsc --noEmit` ✅
+  - Real proxy-backed acceptance:
+    - `NOUS_HOME=/tmp/nous-openai-test bun bin/nous.ts "Read LICENSE.md and summarize it in one sentence."` ✅
+- Impact / Result:
+  - The compat-kernel architecture is no longer just a documented idea; it now has real code-level boundaries.
+  - Future OpenAI/proxy quirks now have a clearer home:
+    - request issue → request normalizer
+    - output/event collapse issue → response normalizer
+    - retry/backoff issue → retry policy
+  - This substantially lowers the risk that `openai-shared.ts` turns back into a large compatibility dumping ground.
+- Open questions / follow-ups:
+  - Whether diagnostics shaping should become a fourth extracted seam (`OpenAIDiagnostics`) or remain close to request/response normalizers for now.
+  - Whether Anthropic / Claude CLI paths should later gain the same explicit compatibility layering or whether OpenAI-style transports remain the only family that needs it in v1.
+
+### Session: Diagnose multi-turn daemon “stuck after planning” and add a first debug surface
+- Context / Trigger:
+  - During real-machine daemon testing with thread attach, the user observed that a multi-turn request such as “我要测试一下你的多轮对话,和多轮任务,给我个例子” stopped after:
+    - `Context assembled`
+    - `Task contract formed`
+    - `Intent parsed`
+    - `Tasks planned: 3`
+  - The user correctly asked whether this meant Nous now needed a TUI to inspect thread / decision / task / agent / memory / dialogue state.
+- Problem:
+  - The visible symptom looked like “daemon stuck”, but the system lacked a fast way to answer:
+    - is the thread blocked on a decision?
+    - are tasks queued but undispatched?
+    - is an agent running?
+    - is outbox delivery the problem?
+  - Manual inspection of `/tmp/nous-debug/state/nous.db` showed the actual failure mode was narrower and more architectural:
+    - the intent was still `active`
+    - the three tasks were all `queued`
+    - there were no pending decisions
+    - no agent was assigned
+    - the planner had emitted abstract labels like:
+      - `conversation design`
+      - `planning`
+      - `state tracking`
+      - `concise explanation`
+    - but `AgentRouter` can only match concrete runtime capability tokens from `CapabilitySet`
+  - So the daemon was not blocked on dialogue or TUI complexity; it was blocked on a **planner/runtime contract mismatch**.
+- Options considered:
+  - Option A: jump directly to a full TUI.
+    - Rejected because the immediate gap was not presentation richness but the absence of a small diagnostic surface and a planner invariant.
+  - Option B: treat the queued tasks as a scheduler bug and special-case dispatch.
+    - Rejected because the scheduler was behaving correctly; the real bug was that no agent could satisfy invented capabilities.
+  - Option C: fix the planner/runtime contract and add a lightweight debug CLI first.
+    - Chosen because it addresses both:
+      - the root cause
+      - the operator visibility gap
+- Decision:
+  - Make runtime capability names explicit and reusable at the core layer.
+  - Tighten `TaskPlanner` so `capabilitiesRequired` can only contain real runtime capability tokens.
+  - If the model still returns abstract/non-runtime labels, drop them and warn rather than letting tasks silently become undispatchable forever.
+  - Add a runtime-side safety net too:
+    - `AgentRouter` should ignore non-runtime labels for routing while still enforcing real capability tokens
+    - the orchestrator scheduler should start with the runtime itself, so persisted queued work can resume after daemon restart instead of waiting for a new planning event
+  - Add a minimal `nous debug` surface before building any heavier TUI:
+    - `nous debug thread <threadId>`
+    - `nous debug daemon`
+- Changes made:
+  - Updated `packages/core/src/types/capability.ts`
+    - added:
+      - `CAPABILITY_NAMES`
+      - `isCapabilityName()`
+  - Updated `packages/core/src/index.ts`
+    - re-exported the new capability helpers
+  - Updated `packages/orchestrator/src/planner/planner.ts`
+    - strengthened the planning system prompt so it names the allowed runtime capability tokens explicitly
+    - tightened the structured schema to enumerate allowed capability strings
+    - added runtime filtering + warning when the model returns invented labels anyway
+  - Updated `packages/orchestrator/src/router/router.ts`
+    - added a routing-time safety net:
+      - invalid capability labels are warned and ignored for routing
+      - real runtime capability requirements are still enforced normally
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - added an explicit `start()` entrypoint so scheduler activity is part of orchestrator lifecycle, not only triggered by fresh planning
+  - Updated `packages/orchestrator/tests/task-planner.test.ts`
+    - added coverage that abstract labels are dropped while real runtime tokens are preserved
+  - Added `packages/orchestrator/tests/agent-router.test.ts`
+    - verifies:
+      - non-runtime labels no longer block routing
+      - real capability requirements still block routing when missing
+  - Added `packages/infra/src/cli/commands/debug.ts`
+    - thread-level inspection:
+      - linked intents
+      - tasks
+      - decisions
+      - recent messages
+      - recent events
+      - dispatch warnings for non-runtime capability labels
+    - daemon-level inspection:
+      - active intents
+      - queued/assigned/running tasks
+      - pending/queued decisions
+      - pending outbox count
+      - recent threads/events
+  - Updated `packages/infra/src/cli/app.ts`
+    - wired in the new `debug` command
+    - now starts the orchestrator runtime explicitly in direct CLI execution too
+  - Updated `packages/infra/src/daemon/server.ts`
+    - now starts the orchestrator runtime during daemon startup
+- Validation:
+  - Automated:
+    - `bun test packages/orchestrator/tests/task-planner.test.ts packages/orchestrator/tests/agent-router.test.ts` ✅
+    - `bun x tsc --noEmit` ✅
+  - Real persisted-thread diagnosis:
+    - `NOUS_HOME=/tmp/nous-debug bun bin/nous.ts debug thread thread_01KN1N9857AR5KSFRX32D3BRNA` ✅
+    - the new debug output made the root cause explicit:
+      - queued tasks
+      - no pending decisions
+      - no assigned/running work
+      - dispatch warnings showing the invalid capability labels
+    - `NOUS_HOME=/tmp/nous-debug bun bin/nous.ts debug daemon` ✅
+- Impact / Result:
+  - Nous now has a much better answer to “why is this thread stuck?” without needing to open SQLite manually or guess from REPL output.
+  - More importantly, the planner/runtime boundary is now better defined:
+    - planner output must describe **runtime-executable permissions/capabilities**, not human semantic skills
+  - The fix is now both preventive and reparative:
+    - future plans are constrained at generation time
+    - already-persisted bad tasks can still route after restart because invalid labels are no longer treated as hard blockers
+    - queued work is no longer dependent on “some later planning event” to restart the scheduler loop
+  - Architecturally, this reinforces a key Nous principle:
+    - semantic intelligence can stay rich at intake/planning time
+    - but execution contracts must collapse onto explicit runtime invariants
+- Open questions / follow-ups:
+  - The current fix drops invented capability labels; later we should consider whether some of them belong in a different field entirely, e.g.:
+    - semantic task tags
+    - routing hints
+    - skill/artifact references
+    rather than `capabilitiesRequired`
+  - `nous debug` is intentionally a minimal operator surface, not a full TUI. If state complexity keeps growing, the next step should likely be a lightweight state browser built on the same data model rather than ad hoc logs.

@@ -7,9 +7,13 @@ export class NousError extends Error {
 }
 
 export class CapabilityDeniedError extends NousError {
+	readonly capability: string;
+	readonly detail?: string;
 	constructor(capability: string, detail?: string) {
 		super(`Capability denied: ${capability}${detail ? ` — ${detail}` : ""}`);
 		this.name = "CapabilityDeniedError";
+		this.capability = capability;
+		this.detail = detail;
 	}
 }
 

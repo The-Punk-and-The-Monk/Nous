@@ -34,6 +34,8 @@ export interface NousConfig {
 		openaiModel: string;
 		openaiBaseURL?: string;
 		openaiCompatBaseURL?: string;
+		openaiWireApi?: "chat_completions" | "responses";
+		openaiCompatWireApi?: "chat_completions" | "responses";
 	};
 	sensors: {
 		enabled: boolean;
@@ -120,6 +122,8 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 		provider: {
 			priority: ["openai", "openai_compat", "anthropic", "claude_cli"],
 			openaiModel: "gpt-5.1",
+			openaiWireApi: "responses",
+			openaiCompatWireApi: "chat_completions",
 			claudeModel: "sonnet",
 		},
 	});
@@ -363,6 +367,8 @@ const DEFAULT_NOUS_CONFIG: NousConfig = {
 	provider: {
 		priority: ["openai", "openai_compat", "anthropic", "claude_cli"],
 		openaiModel: "gpt-5.1",
+		openaiWireApi: "responses",
+		openaiCompatWireApi: "chat_completions",
 		claudeModel: "sonnet",
 	},
 	sensors: {

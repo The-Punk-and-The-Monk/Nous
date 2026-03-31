@@ -70,10 +70,16 @@ export type {
 export type {
 	CapabilitySet,
 	CapabilityName,
+	PermissionRequest,
+	PermissionDecision,
+	PermissionCallback,
 } from "./types/capability.ts";
 export {
+	CAPABILITY_NAMES,
+	isCapabilityName,
 	hasCapability,
 	intersectCapabilities,
+	expandCapability,
 	DENY_ALL,
 } from "./types/capability.ts";
 

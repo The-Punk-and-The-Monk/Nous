@@ -108,7 +108,7 @@ export class ReflectionService {
 				retrievedMemories,
 			),
 			maxTokens: 600,
-			temperature: 0.2,
+			temperature: 0,
 		});
 
 		const candidate = buildCandidateFromDecision({
