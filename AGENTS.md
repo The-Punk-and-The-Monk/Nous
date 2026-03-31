@@ -143,3 +143,5 @@ Do not wait for the user to explicitly ask you to read extra migration files bef
 - Additional migrated Claude memory is archived in `~/.codex/memories/claude-import/`.
 - For routine Nous work, this `AGENTS.md` file should be sufficient and should be treated as the primary always-on project memory.
 - Only consult `~/.codex/memories/claude-import/seed-memory-nous.md` or the `raw/` archive when exact historical wording, older rationale, or prior session transcripts are actually needed.
+
+## Commit after every iteration with clear and detailed message
