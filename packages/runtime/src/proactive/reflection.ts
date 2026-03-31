@@ -8,6 +8,7 @@ import type {
 	ProactiveDeliveryMode,
 	ReflectionAgendaCategory,
 	ReflectionAgendaItem,
+	ReflectionAgendaMetadata,
 	ReflectionRun,
 	RelationshipBoundary,
 } from "@nous/core";
@@ -29,6 +30,12 @@ export interface ReflectSignalInput {
 	threadId?: string;
 	suggestedIntentText?: string;
 	sourceMemoryIds?: string[];
+	relationshipBoundary?: RelationshipBoundary;
+	dedupeKey?: string;
+}
+
+export interface ReflectAgendaInput {
+	agendaItem: ReflectionAgendaItem;
 	relationshipBoundary?: RelationshipBoundary;
 }
 
@@ -55,13 +62,29 @@ export class ReflectionService {
 	}
 
 	async reflectSignal(input: ReflectSignalInput): Promise<ReflectionOutcome> {
-		const agendaItem = buildAgendaItem(input, this.clock());
+		return this.reflectAgenda({
+			agendaItem: createSignalAgendaItem(input, this.clock()),
+			relationshipBoundary: input.relationshipBoundary,
+		});
+	}
+
+	async reflectAgenda(input: ReflectAgendaInput): Promise<ReflectionOutcome> {
+		const agendaItem = input.agendaItem;
+		const metadata = readAgendaMetadata(agendaItem);
+		const summary = agendaItem.summary;
+		const retrievalQuery = [
+			summary,
+			metadata.suggestedIntentText ?? "",
+			metadata.signalType ?? "",
+			metadata.prospectiveTitle ?? "",
+			agendaItem.drivingQuestion,
+		]
+			.filter(Boolean)
+			.join("\n");
 		const retrievedMemories = this.options.memory.retrieve({
-			query: [input.summary, input.suggestedIntentText ?? "", input.signalType]
-				.filter(Boolean)
-				.join("\n"),
-			scope: input.scope,
-			threadId: input.threadId,
+			query: retrievalQuery,
+			scope: agendaItem.scope,
+			threadId: agendaItem.sourceThreadIds[0],
 			limit: 4,
 		});
 		for (const result of retrievedMemories) {
@@ -79,14 +102,17 @@ export class ReflectionService {
 				"Prefer silence over low-value interruption.",
 				"If you emit an ambient_intent, keep it read-only / investigative unless the inputs clearly justify otherwise.",
 			].join("\n"),
-			messages: buildReflectionMessages(input, boundary, retrievedMemories),
+			messages: buildReflectionMessages(
+				agendaItem,
+				boundary,
+				retrievedMemories,
+			),
 			maxTokens: 600,
 			temperature: 0.2,
 		});
 
 		const candidate = buildCandidateFromDecision({
 			decision,
-			input,
 			agendaItem,
 			boundary,
 			createdAt: this.clock(),
@@ -151,49 +177,71 @@ export function createDefaultRelationshipBoundary(
 }
 
 function buildReflectionMessages(
-	input: ReflectSignalInput,
+	agendaItem: ReflectionAgendaItem,
 	boundary: RelationshipBoundary,
 	retrievedMemories: RetrievedMemory[],
 ): LLMMessage[] {
+	const metadata = readAgendaMetadata(agendaItem);
 	const memoryHints = renderMemoryHints(retrievedMemories);
 	return [
 		{
 			role: "user",
 			content: [
 				"Reflect on whether Nous should proactively do anything now.",
-				`Signal type: ${input.signalType}`,
-				`Signal summary: ${input.summary}`,
-				`Signal confidence: ${input.confidence.toFixed(2)}`,
-				`Suggested investigative intent: ${input.suggestedIntentText ?? "none"}`,
-				`Thread: ${input.threadId ?? "none"}`,
-				`Scope: projectRoot=${input.scope?.projectRoot ?? "unknown"}; focusedFile=${input.scope?.focusedFile ?? "none"}`,
+				`Agenda category: ${agendaItem.category}`,
+				`Agenda summary: ${agendaItem.summary}`,
+				`Driving question: ${agendaItem.drivingQuestion}`,
+				`Signal type: ${metadata.signalType ?? "n/a"}`,
+				`Signal confidence: ${metadata.signalConfidence?.toFixed(2) ?? "n/a"}`,
+				`Suggested investigative intent: ${metadata.suggestedIntentText ?? "none"}`,
+				`Thread: ${agendaItem.sourceThreadIds[0] ?? "none"}`,
+				`Scope: projectRoot=${agendaItem.scope?.projectRoot ?? "unknown"}; focusedFile=${agendaItem.scope?.focusedFile ?? "none"}`,
+				metadata.prospectiveTitle
+					? `Prospective commitment: ${metadata.prospectiveTitle}`
+					: undefined,
+				metadata.reminderKind
+					? `Prospective reminder kind: ${metadata.reminderKind}`
+					: undefined,
 				`Relationship boundary:\n${JSON.stringify(boundary, null, 2)}`,
 				`Retrieved memories:\n${memoryHints.length > 0 ? memoryHints.map((item) => `- ${item}`).join("\n") : "- none"}`,
-			].join("\n\n"),
+			]
+				.filter(Boolean)
+				.join("\n\n"),
 		},
 	];
 }
 
-function buildAgendaItem(
+export function createSignalAgendaItem(
 	input: ReflectSignalInput,
 	createdAt: string,
 ): ReflectionAgendaItem {
 	const category = mapSignalTypeToAgendaCategory(input.signalType);
+	const metadata: ReflectionAgendaMetadata = {
+		origin: "signal",
+		signalType: input.signalType,
+		signalConfidence: input.confidence,
+		suggestedIntentText: input.suggestedIntentText,
+		sourceMemoryIds: input.sourceMemoryIds ?? [],
+	};
 	return {
 		id: prefixedId("agenda"),
 		category,
 		summary: input.summary,
 		drivingQuestion: buildDrivingQuestion(input.signalType),
 		priority: Math.round(Math.min(100, Math.max(1, input.confidence * 100))),
-		dedupeKey: `${input.signalType}:${input.scope?.projectRoot ?? "workspace"}:${input.scope?.focusedFile ?? "none"}`,
+		dedupeKey:
+			input.dedupeKey ??
+			`${input.signalType}:${input.scope?.projectRoot ?? "workspace"}:${input.scope?.focusedFile ?? "none"}`,
 		budgetClass: input.confidence >= 0.85 ? "standard" : "cheap",
 		sourceSignalIds: [input.signalId],
 		sourceMemoryIds: input.sourceMemoryIds ?? [],
 		sourceIntentIds: [],
 		sourceThreadIds: input.threadId ? [input.threadId] : [],
-		status: "synthesized",
+		status: "queued",
 		scope: input.scope,
 		createdAt,
+		runCount: 0,
+		metadata,
 	};
 }
 
@@ -314,12 +362,12 @@ const proactiveCandidateSpec: StructuredOutputSpec<ProactiveCandidateDecision> =
 
 function buildCandidateFromDecision(input: {
 	decision: ProactiveCandidateDecision;
-	input: ReflectSignalInput;
 	agendaItem: ReflectionAgendaItem;
 	boundary: RelationshipBoundary;
 	createdAt: string;
 }): ProactiveCandidate | undefined {
 	if (!input.decision.emit) return undefined;
+	const metadata = readAgendaMetadata(input.agendaItem);
 	const kind = input.decision.kind ?? "suggestion";
 	if (input.boundary.proactivityPolicy.blockedKinds.includes(kind)) {
 		return undefined;
@@ -333,7 +381,7 @@ function buildCandidateFromDecision(input: {
 		input.boundary.proactivityPolicy.requireApprovalForKinds.includes(kind);
 	const proposedIntentText =
 		kind === "ambient_intent"
-			? (input.decision.proposedIntentText ?? input.input.suggestedIntentText)
+			? (input.decision.proposedIntentText ?? metadata.suggestedIntentText)
 			: undefined;
 	if (kind === "ambient_intent" && !proposedIntentText) {
 		return undefined;
@@ -371,32 +419,50 @@ function buildCandidateFromDecision(input: {
 		id: prefixedId("pcand"),
 		kind,
 		summary:
-			input.decision.summary?.trim() || compactText(input.input.summary, 140),
+			input.decision.summary?.trim() ||
+			compactText(input.agendaItem.summary, 140),
 		messageDraft:
 			input.decision.messageDraft?.trim() ||
 			input.decision.summary?.trim() ||
-			compactText(input.input.summary, 220),
+			compactText(input.agendaItem.summary, 220),
 		rationale:
 			input.decision.rationale?.trim() ||
 			"Reflected on a promoted signal and found enough value to surface it.",
 		proposedIntentText,
-		confidence: clampScore(input.decision.confidence ?? input.input.confidence),
-		valueScore: clampScore(input.decision.valueScore ?? input.input.confidence),
+		confidence: clampScore(
+			input.decision.confidence ?? metadata.signalConfidence ?? 0.7,
+		),
+		valueScore: clampScore(
+			input.decision.valueScore ?? metadata.signalConfidence ?? 0.7,
+		),
 		interruptionCost: clampScore(input.decision.interruptionCost ?? 0.35),
 		urgency: input.decision.urgency ?? "normal",
 		recommendedMode,
 		requiresApproval,
-		cooldownKey:
-			input.decision.cooldownKey ??
-			`${input.input.signalType}:${input.input.scope?.projectRoot ?? "workspace"}`,
-		sourceSignalIds: [input.input.signalId],
-		sourceMemoryIds: input.input.sourceMemoryIds ?? [],
+		cooldownKey: input.decision.cooldownKey ?? input.agendaItem.dedupeKey,
+		sourceSignalIds: [...input.agendaItem.sourceSignalIds],
+		sourceMemoryIds: [...input.agendaItem.sourceMemoryIds],
 		sourceIntentIds: [],
-		sourceThreadIds: input.input.threadId ? [input.input.threadId] : [],
+		sourceThreadIds: [...input.agendaItem.sourceThreadIds],
 		sourceAgendaItemIds: [input.agendaItem.id],
 		status: "candidate",
-		scope: input.input.scope,
+		scope: input.agendaItem.scope,
 		createdAt: input.createdAt,
+		metadata: {
+			agendaCategory: input.agendaItem.category,
+			agendaOrigin: metadata.origin,
+			reminderKind: metadata.reminderKind,
+			prospectiveMemoryId: metadata.prospectiveMemoryId,
+		},
+	};
+}
+
+function readAgendaMetadata(
+	item: ReflectionAgendaItem,
+): ReflectionAgendaMetadata {
+	return {
+		origin: "scheduler",
+		...(item.metadata ?? {}),
 	};
 }
 

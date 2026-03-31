@@ -1283,6 +1283,10 @@ What exists today is best described as:
     - conversation turns
     - perception signals
     - prospective commitments
+  - first prospective lifecycle exists:
+    - pending/scheduled/done state updates
+    - due/remind-time scanning
+    - linked intent success can close related prospective commitments
 
 What does **not** exist yet:
 
@@ -1291,7 +1295,8 @@ What does **not** exist yet:
 - graph traversal
 - persisted chunk store / ANN chunk index
 - metabolism pipeline
-- true procedural / prospective producers
+- true procedural memory producers
+- rich prospective metabolism / reminder families beyond the first queue-backed producer
 
 This distinction matters architecturally. If we pretend the current implementation is already “RAG memory”, we will scatter ad hoc patches across daemon, retriever, and future evolution code. The right framing is:
 
@@ -1353,12 +1358,15 @@ interface MemoryService {
   ingestIntentOutcome(...): MemoryEntry;
   ingestConversationTurn(...): MemoryEntry;
   ingestPerceptionSignal(...): MemoryEntry;
+  ingestProspectiveCommitment(...): MemoryEntry;
+
   retrieveForContext(...): string[];
   recordAccess(memoryId: string): void;
+  findDueProspectiveCommitments(...): DueProspectiveCommitment[];
+  updateProspectiveCommitment(...): MemoryEntry | undefined;
 
   // next / future
   ingestDecision(...): MemoryEntry;
-  ingestProspectiveCommitment(...): MemoryEntry;
   runMetabolismPass(...): Promise<void>;
 }
 ```
@@ -2873,12 +2881,15 @@ Each Sensor still has an `emitRateLimit`. If raw signals arrive faster than Stag
 - redundant `git.status_changed` notices can be suppressed after a stronger file-change promotion
 - ambient notices are threaded by workspace instead of one undifferentiated global stream
 - file-type-specific safe follow-up suggestions exist for tests / deps / config / docs / sensitive config
-- a first **reflection-stage seed** now exists:
-  - promoted signals can trigger a lower-frequency reflective synthesis step
+- a first **agenda-backed reflection runtime** now exists:
+  - promoted signals are persisted as `ReflectionAgendaItem`s instead of only being handled inline
+  - periodic reflection ticks exist in the daemon
+  - due prospective commitments can become agenda items too
   - the reflective step can retrieve memory before deciding whether to emit:
     - silence
     - a proactive message
     - an ambient intent candidate
+  - proactive candidates are now queued with basic cooldown / quota governance before delivery
 
 The full target architecture still adds the agenda-driven reflective layer and richer proactive candidate family described above.
 

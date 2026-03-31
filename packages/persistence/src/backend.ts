@@ -4,6 +4,7 @@ import type { EventStore } from "./interfaces/event-store.ts";
 import type { IntentStore } from "./interfaces/intent-store.ts";
 import type { MemoryStore } from "./interfaces/memory-store.ts";
 import type { MessageStore } from "./interfaces/message-store.ts";
+import type { ProactiveStore } from "./interfaces/proactive-store.ts";
 import type { TaskStore } from "./interfaces/task-store.ts";
 import { initDatabase } from "./sqlite/connection.ts";
 import { SQLiteDecisionStore } from "./sqlite/decision-store.sqlite.ts";
@@ -11,6 +12,7 @@ import { SQLiteEventStore } from "./sqlite/event-store.sqlite.ts";
 import { SQLiteIntentStore } from "./sqlite/intent-store.sqlite.ts";
 import { SQLiteMemoryStore } from "./sqlite/memory-store.sqlite.ts";
 import { SQLiteMessageStore } from "./sqlite/message-store.sqlite.ts";
+import { SQLiteProactiveStore } from "./sqlite/proactive-store.sqlite.ts";
 import { SQLiteTaskStore } from "./sqlite/task-store.sqlite.ts";
 
 export interface PersistenceBackend {
@@ -20,6 +22,7 @@ export interface PersistenceBackend {
 	intents: IntentStore;
 	messages: MessageStore;
 	decisions: DecisionStore;
+	proactive: ProactiveStore;
 	close(): void;
 }
 
@@ -37,6 +40,7 @@ class SQLitePersistenceBackend implements PersistenceBackend {
 	readonly intents: IntentStore;
 	readonly messages: MessageStore;
 	readonly decisions: DecisionStore;
+	readonly proactive: ProactiveStore;
 
 	constructor(private db: Database) {
 		this.events = new SQLiteEventStore(db);
@@ -45,6 +49,7 @@ class SQLitePersistenceBackend implements PersistenceBackend {
 		this.intents = new SQLiteIntentStore(db);
 		this.messages = new SQLiteMessageStore(db);
 		this.decisions = new SQLiteDecisionStore(db);
+		this.proactive = new SQLiteProactiveStore(db);
 	}
 
 	close(): void {

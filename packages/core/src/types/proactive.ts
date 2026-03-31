@@ -26,6 +26,10 @@ export type ProactiveCandidateStatus =
 	| "dismissed"
 	| "expired";
 
+export interface ProactiveCandidateMetadata {
+	[key: string]: unknown;
+}
+
 export interface ProactiveCandidate {
 	id: string;
 	kind: ProactiveCandidateKind;
@@ -49,6 +53,27 @@ export interface ProactiveCandidate {
 	status: ProactiveCandidateStatus;
 	scope?: ChannelScope;
 	createdAt: string;
+	deliveredAt?: string;
+	metadata?: ProactiveCandidateMetadata;
+}
+
+export type ReflectionAgendaOrigin =
+	| "signal"
+	| "prospective_memory"
+	| "scheduler";
+
+export type ProspectiveReminderKind = "remind_at" | "due_at" | "overdue";
+
+export interface ReflectionAgendaMetadata {
+	origin: ReflectionAgendaOrigin;
+	signalType?: string;
+	signalConfidence?: number;
+	suggestedIntentText?: string;
+	prospectiveMemoryId?: string;
+	prospectiveTitle?: string;
+	reminderKind?: ProspectiveReminderKind;
+	sourceMemoryIds?: string[];
+	[key: string]: unknown;
 }
 
 export type ReflectionAgendaCategory =
@@ -87,6 +112,11 @@ export interface ReflectionAgendaItem {
 	status: ReflectionAgendaStatus;
 	scope?: ChannelScope;
 	createdAt: string;
+	leasedAt?: string;
+	leaseOwner?: string;
+	lastRunAt?: string;
+	runCount: number;
+	metadata?: ReflectionAgendaMetadata;
 }
 
 export type ReflectionRunOutcome =
@@ -105,6 +135,7 @@ export interface ReflectionRun {
 	outcome: ReflectionRunOutcome;
 	startedAt: string;
 	finishedAt?: string;
+	metadata?: Record<string, unknown>;
 }
 
 export interface RelationshipBoundary {

@@ -6,6 +6,7 @@ import type {
 	DaemonEnvelope,
 	Decision,
 	LLMProvider,
+	ProactiveCandidate,
 	RelationshipBoundary,
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
@@ -15,6 +16,7 @@ import { createPersistenceBackend } from "@nous/persistence";
 import {
 	ContextAssembler,
 	MemoryService,
+	ProactiveRuntimeService,
 	ReflectionService,
 	createDefaultRelationshipBoundary,
 	renderContextForSystemPrompt,
@@ -62,6 +64,7 @@ export class NousDaemon {
 		store: this.backend.memory,
 		agentId: "nous",
 	});
+	private readonly proactive: ProactiveRuntimeService;
 	private readonly reflection: ReflectionService;
 	private readonly perception: PerceptionService;
 	private readonly threadInputRouter: ThreadInputRouter;
@@ -74,10 +77,18 @@ export class NousDaemon {
 	private readonly scheduledIntentExecutions = new Set<string>();
 	private readonly procedureSeeds = new LocalProcedureSeedStore();
 	private readonly sessions = new Map<Socket, ConnectionState>();
+	private reflectionIntervalId: ReturnType<typeof setInterval> | null = null;
+	private isReflectionTickRunning = false;
 	private server?: ReturnType<typeof createServer>;
 	private isShuttingDown = false;
 
 	constructor(private readonly options: NousDaemonOptions) {
+		this.proactive = new ProactiveRuntimeService({
+			store: this.backend.proactive,
+			memory: this.memory,
+			leaseOwner: "daemon",
+			lookaheadMs: this.nousConfig.ambient.prospectiveLookaheadMs,
+		});
 		this.reflection = new ReflectionService({
 			llm: options.llm,
 			memory: this.memory,
@@ -137,7 +148,7 @@ export class NousDaemon {
 					scope,
 					threadId: thread.id,
 				});
-				const reflection = await this.reflection.reflectSignal({
+				this.proactive.enqueueSignalAgenda({
 					signalId: promotion.signal.id,
 					signalType: promotion.signal.signalType,
 					summary: promotion.message,
@@ -146,64 +157,9 @@ export class NousDaemon {
 					threadId: thread.id,
 					suggestedIntentText: promotion.suggestedIntentText,
 					sourceMemoryIds: [signalMemory.id],
-					relationshipBoundary: this.buildAmbientRelationshipBoundary(),
+					dedupeKey: promotion.cooldownKey,
 				});
-				const candidate = reflection.candidate;
-				if (!candidate) {
-					await this.flushPendingDeliveriesForThread(thread.id);
-					return;
-				}
-				if (candidate.recommendedMode === "silent") {
-					await this.flushPendingDeliveriesForThread(thread.id);
-					return;
-				}
-				this.dialogue.enqueueAssistantMessage({
-					threadId: thread.id,
-					content: candidate.messageDraft,
-					kind: "notification",
-					metadata: {
-						source: "proactive_reflection",
-						confidence: candidate.confidence,
-						kind: candidate.kind,
-						recommendedMode: candidate.recommendedMode,
-						agendaItemId: reflection.agendaItem.id,
-						reflectionRunId: reflection.run.id,
-					},
-				});
-				if (this.nousConfig.ambient.enabled && promotion.suggestedIntentText) {
-					const ambientIntentText =
-						candidate.kind === "ambient_intent"
-							? candidate.proposedIntentText
-							: undefined;
-					if (!ambientIntentText) {
-						await this.flushPendingDeliveriesForThread(thread.id);
-						return;
-					}
-					const allowAutoExecute =
-						this.nousConfig.ambient.autoSubmit &&
-						candidate.recommendedMode === "auto_execute" &&
-						candidate.requiresApproval === false;
-					if (allowAutoExecute) {
-						this.dialogue.enqueueAssistantMessage({
-							threadId: thread.id,
-							content: `Auto-submitting ambient intent: ${ambientIntentText}`,
-							kind: "notification",
-							metadata: {
-								source: "ambient_intent_strategy",
-								candidateId: candidate.id,
-							},
-						});
-						await this.submitAmbientIntent(thread.id, ambientIntentText, scope);
-					} else if (candidate.kind === "ambient_intent") {
-						await this.queueAmbientIntentForApproval(
-							thread.id,
-							ambientIntentText,
-							scope,
-							candidate.messageDraft,
-							candidate.confidence,
-						);
-					}
-				}
+				await this.runProactiveReflectionTick();
 				await this.flushPendingDeliveriesForThread(thread.id);
 			},
 		});
@@ -216,6 +172,9 @@ export class NousDaemon {
 		this.supervisor.start();
 		if (this.nousConfig.sensors.enabled) {
 			this.perception.start();
+		}
+		if (this.nousConfig.ambient.enabled) {
+			this.startProactiveReflectionLoop();
 		}
 		writeFileSync(this.paths.pidPath, String(process.pid));
 
@@ -240,6 +199,10 @@ export class NousDaemon {
 		this.supervisor.stop();
 		if (this.nousConfig.sensors.enabled) {
 			this.perception.stop();
+		}
+		if (this.reflectionIntervalId) {
+			clearInterval(this.reflectionIntervalId);
+			this.reflectionIntervalId = null;
 		}
 
 		await new Promise<void>((resolve) => {
@@ -2422,6 +2385,142 @@ export class NousDaemon {
 				}),
 			);
 		}
+	}
+
+	private startProactiveReflectionLoop(): void {
+		if (this.reflectionIntervalId) {
+			return;
+		}
+		this.reflectionIntervalId = setInterval(
+			() => void this.runProactiveReflectionTick(),
+			this.nousConfig.ambient.reflectionIntervalMs,
+		);
+		void this.runProactiveReflectionTick();
+	}
+
+	private async runProactiveReflectionTick(): Promise<void> {
+		if (!this.nousConfig.ambient.enabled || this.isReflectionTickRunning) {
+			return;
+		}
+		this.isReflectionTickRunning = true;
+		try {
+			this.proactive.enqueueDueProspectiveAgendas({
+				lookaheadMs: this.nousConfig.ambient.prospectiveLookaheadMs,
+			});
+			const boundary = this.buildAmbientRelationshipBoundary();
+			const leased = this.proactive.leaseDueAgendaItems(4);
+			for (const agendaItem of leased) {
+				const outcome = await this.reflection.reflectAgenda({
+					agendaItem,
+					relationshipBoundary: boundary,
+				});
+				this.proactive.recordReflectionOutcome(outcome);
+			}
+			const deliverable = this.proactive.drainDeliverableCandidates(
+				boundary,
+				4,
+			);
+			for (const candidate of deliverable) {
+				await this.deliverProactiveCandidate(candidate);
+			}
+		} finally {
+			this.isReflectionTickRunning = false;
+		}
+	}
+
+	private async deliverProactiveCandidate(
+		candidate: ProactiveCandidate,
+	): Promise<void> {
+		if (candidate.recommendedMode === "silent") {
+			this.proactive.markCandidateDismissed(
+				candidate.id,
+				"silent_delivery_mode",
+			);
+			return;
+		}
+
+		const scope = candidate.scope;
+		const threadId =
+			candidate.sourceThreadIds[0] ??
+			(scope?.projectRoot
+				? this.getAmbientThreadId(scope.projectRoot)
+				: undefined);
+		if (!threadId) {
+			this.proactive.markCandidateDismissed(
+				candidate.id,
+				"missing_delivery_thread",
+			);
+			return;
+		}
+
+		if (scope?.projectRoot) {
+			this.dialogue.ensureThread({
+				threadId,
+				title: this.getAmbientThreadTitle(scope.projectRoot),
+				channelId: "daemon",
+			});
+		}
+
+		this.dialogue.enqueueAssistantMessage({
+			threadId,
+			content: candidate.messageDraft,
+			kind: "notification",
+			metadata: {
+				source: "proactive_reflection",
+				candidateId: candidate.id,
+				confidence: candidate.confidence,
+				kind: candidate.kind,
+				recommendedMode: candidate.recommendedMode,
+				sourceAgendaItemIds: candidate.sourceAgendaItemIds,
+			},
+		});
+
+		if (
+			candidate.kind === "ambient_intent" &&
+			scope &&
+			candidate.proposedIntentText
+		) {
+			const ambientIntentText = candidate.proposedIntentText;
+			const allowAutoExecute =
+				this.nousConfig.ambient.autoSubmit &&
+				candidate.recommendedMode === "auto_execute" &&
+				candidate.requiresApproval === false;
+
+			if (allowAutoExecute) {
+				this.dialogue.enqueueAssistantMessage({
+					threadId,
+					content: `Auto-submitting ambient intent: ${ambientIntentText}`,
+					kind: "notification",
+					metadata: {
+						source: "ambient_intent_strategy",
+						candidateId: candidate.id,
+					},
+				});
+				await this.submitAmbientIntent(threadId, ambientIntentText, scope);
+				this.proactive.markCandidateConverted(candidate.id);
+				await this.flushPendingDeliveriesForThread(threadId);
+				return;
+			}
+
+			if (
+				candidate.requiresApproval ||
+				candidate.recommendedMode === "ask_first"
+			) {
+				await this.queueAmbientIntentForApproval(
+					threadId,
+					ambientIntentText,
+					scope,
+					candidate.messageDraft,
+					candidate.confidence,
+				);
+				this.proactive.markCandidateConverted(candidate.id);
+				await this.flushPendingDeliveriesForThread(threadId);
+				return;
+			}
+		}
+
+		this.proactive.markCandidateDelivered(candidate.id);
+		await this.flushPendingDeliveriesForThread(threadId);
 	}
 
 	private getAmbientThreadId(rootDir: string): string {

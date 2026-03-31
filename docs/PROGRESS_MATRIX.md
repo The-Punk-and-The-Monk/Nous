@@ -41,34 +41,34 @@ This file answers a different question:
 
 | Area | Yesterday | Today | What changed |
 |---|---|---|---|
-| Sprint 6 / Memory retrieval | first retrieval loop only | stronger first retrieval loop + richer producers | added lexical FTS candidate expansion, chunk-aware selection, provenance/thread/scope-biased ranking, better packed context hints, and canonical producers for perception / conversation / prospective memory |
+| Sprint 6 / Memory retrieval | first retrieval loop only | stronger first retrieval loop + richer producers + first prospective lifecycle | added lexical FTS candidate expansion, chunk-aware selection, provenance/thread/scope-biased ranking, better packed context hints, canonical producers for perception / conversation / prospective memory, and a first due-reminder / scheduled / done lifecycle for prospective commitments |
 | Sprint 7 / Context | basic rich context | context boundary much more explicit | context now includes git status detail, local `.nous` config files, scope labels, and a human-readable permission boundary summary |
-| Sprint 8 / Perception | heuristic skeleton | first low-noise usable slice + reflection seed | idle-first attention, redundant git-status suppression, workspace-scoped ambient notice threads, path-specific safe follow-up suggestions, and a first reflection-stage candidate synthesis path |
+| Sprint 8 / Perception | heuristic skeleton | first low-noise usable slice + agenda-backed reflection seed | idle-first attention, redundant git-status suppression, workspace-scoped ambient notice threads, path-specific safe follow-up suggestions, persisted reflection agenda/candidate state, a daemon reflection tick, and governed candidate delivery with cooldown / daily quota policy |
 
 #### B. Module maturity deltas
 
 | Module | New reading | Why |
 |---|---|---|
 | Context Assembly | **Medium-High → stronger Medium-High (~70%)** | It now carries richer project state plus explicit “why can/can’t I act here?” boundary context, which materially improves explainability and scope-awareness |
-| Memory | **Medium (~35%) → stronger Medium (~50%)** | Still not true vector/graph RAG, but no longer just whole-entry heuristic recall; retrieval now has a more honest packing/ranking policy and more real producers feeding the substrate |
-| Perception / Proactive Cognition | **Early (~30%) → early but more usable (~45%)** | Still far from full Memory Rover / reflective proactive cognition, but a real reflection-stage seed now exists instead of only raw heuristic promotion |
+| Memory | **Medium (~35%) → stronger Medium (~55%)** | Still not true vector/graph RAG, but no longer just whole-entry heuristic recall; retrieval now has a more honest packing/ranking policy, more real producers feeding the substrate, and the first prospective reminder lifecycle feeding proactive runtime |
+| Perception / Proactive Cognition | **Early (~30%) → medium-early but materially more real (~58%)** | Still far from the full relationship-learning / memory-rover target, but Nous now has persisted agenda objects, reflection runs, queued proactive candidates, and a background daemon tick instead of only inline heuristic promotion |
 
 #### C. Sprint / phase read after today's work
 
 | Sprint / Phase | Current status | Notes |
 |---|---|---|
-| Sprint 6 | **Advanced seed, but not final architecture** | The practical V1 retrieval loop is much stronger; long-term vector / graph / metabolism target is still ahead |
+| Sprint 6 | **Advanced seed, with first prospective runtime seam** | The practical V1 retrieval loop is much stronger, and prospective memory now has a first real runtime lifecycle; long-term vector / graph / metabolism target is still ahead |
 | Sprint 7 (context slice) | **Substantially done** | The main remaining Sprint 7 gap is tool breadth, not context boundary clarity |
-| Sprint 8 | **Started in earnest** | The perception loop is now being hardened for low-noise usefulness instead of staying a pure skeleton |
-| Phase 0: MVP | **~70%** | The “feels like one continuing assistant with memory + governed awareness” story is more credible than yesterday, though tools / proactive runtime / growth still lag |
+| Sprint 8 | **Meaningfully entered agenda/runtime territory** | The perception loop is no longer just “promote then maybe notify”; there is now a persisted agenda queue, reflection scheduler seed, and candidate delivery policy |
+| Phase 0: MVP | **~74%** | The “feels like one continuing assistant with memory + governed awareness” story is more credible than yesterday, though tool breadth / deeper memory / growth still lag |
 
 #### D. Steering implication
 
 After this round, the next highest-leverage gaps are no longer “basic context realism.” They are:
 
 1. **more real tool breadth**
-2. **Memory Rover / reflective proactive runtime**
-3. **procedural / prospective memory producers**
+2. **relationship-aware Memory Rover / reflective proactive runtime**
+3. **procedural memory + richer prospective producer families**
 
 ## 2026-03-30
 

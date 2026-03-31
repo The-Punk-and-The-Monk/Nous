@@ -79,6 +79,21 @@ export interface MemoryContextQuery
 	recordAccess?: boolean;
 }
 
+export interface UpdateProspectiveCommitmentInput {
+	fulfillmentStatus?: "pending" | "scheduled" | "done" | "cancelled";
+	dueAt?: string;
+	remindAt?: string;
+}
+
+export interface DueProspectiveCommitment {
+	entry: MemoryEntry;
+	title: string;
+	detail?: string;
+	dueAt?: string;
+	remindAt?: string;
+	reminderKind: "remind_at" | "due_at" | "overdue";
+}
+
 export class MemoryService {
 	private readonly agentId: string;
 	private readonly retriever: HybridMemoryRetriever;
@@ -180,7 +195,7 @@ export class MemoryService {
 					}),
 				};
 
-		return this.store({
+		const stored = this.store({
 			id: prefixedId("mem"),
 			tier,
 			agentId: this.agentId,
@@ -191,6 +206,10 @@ export class MemoryService {
 			accessCount: 0,
 			retentionScore: isAchieved ? 1.2 : 0.8,
 		});
+		if (isAchieved) {
+			this.completeProspectiveCommitmentsForIntent(input.intentId);
+		}
+		return stored;
 	}
 
 	ingestConversationTurn(input: IngestConversationTurnInput): MemoryEntry {
@@ -320,6 +339,78 @@ export class MemoryService {
 		});
 	}
 
+	getById(memoryId: string): MemoryEntry | undefined {
+		return this.options.store.getById(memoryId);
+	}
+
+	findDueProspectiveCommitments(
+		input: {
+			now?: string;
+			lookaheadMs?: number;
+			scope?: ChannelScope;
+		} = {},
+	): DueProspectiveCommitment[] {
+		const referenceTime = Date.parse(input.now ?? now());
+		const lookaheadMs = Math.max(0, input.lookaheadMs ?? 15 * 60_000);
+		return this.options.store
+			.getByTier(this.agentId, "prospective")
+			.map((entry) => toDueProspectiveCommitment(entry, referenceTime))
+			.filter((item): item is DueProspectiveCommitment => Boolean(item))
+			.filter((item) =>
+				matchesScope(
+					(item.entry.metadata as Record<string, unknown>).projectRoot as
+						| string
+						| undefined,
+					input.scope?.projectRoot,
+				),
+			)
+			.filter((item) => {
+				const status = readProspectiveStatus(item.entry);
+				if (status === "done" || status === "cancelled") {
+					return false;
+				}
+				if (status === "scheduled" && item.reminderKind !== "overdue") {
+					return false;
+				}
+				const remindAt = item.remindAt ? Date.parse(item.remindAt) : Number.NaN;
+				const dueAt = item.dueAt ? Date.parse(item.dueAt) : Number.NaN;
+				if (!Number.isNaN(remindAt)) {
+					return remindAt <= referenceTime + lookaheadMs;
+				}
+				if (!Number.isNaN(dueAt)) {
+					return dueAt <= referenceTime + lookaheadMs;
+				}
+				return false;
+			});
+	}
+
+	updateProspectiveCommitment(
+		memoryId: string,
+		update: UpdateProspectiveCommitmentInput,
+	): MemoryEntry | undefined {
+		const entry = this.options.store.getById(memoryId);
+		if (!entry || entry.tier !== "prospective") {
+			return undefined;
+		}
+		const metadata = {
+			...(entry.metadata as Record<string, unknown>),
+		};
+		if (update.fulfillmentStatus) {
+			metadata.fulfillmentStatus = update.fulfillmentStatus;
+		}
+		if (update.dueAt !== undefined) {
+			metadata.dueAt = update.dueAt;
+		}
+		if (update.remindAt !== undefined) {
+			metadata.remindAt = update.remindAt;
+		}
+		this.options.store.update(memoryId, {
+			metadata,
+			lastAccessedAt: now(),
+		});
+		return this.options.store.getById(memoryId);
+	}
+
 	retrieveForContext(input: MemoryContextQuery): string[] {
 		const results = this.retrieve(input);
 		if (input.recordAccess !== false) {
@@ -349,6 +440,27 @@ export class MemoryService {
 	private recordAccessBatch(memoryIds: string[]): void {
 		for (const memoryId of memoryIds) {
 			this.recordAccess(memoryId);
+		}
+	}
+
+	private completeProspectiveCommitmentsForIntent(intentId: string): void {
+		const entries = this.options.store.getByTier(this.agentId, "prospective");
+		for (const entry of entries) {
+			const metadata = entry.metadata as Record<string, unknown>;
+			if (metadata.intentId !== intentId) {
+				continue;
+			}
+			const currentStatus = readProspectiveStatus(entry);
+			if (currentStatus === "done" || currentStatus === "cancelled") {
+				continue;
+			}
+			this.options.store.update(entry.id, {
+				metadata: {
+					...metadata,
+					fulfillmentStatus: "done",
+				},
+				lastAccessedAt: now(),
+			});
 		}
 	}
 
@@ -407,4 +519,66 @@ function compactEvidenceRefs(
 ): MemoryEvidenceRef[] | undefined {
 	const compact = refs.filter((ref): ref is MemoryEvidenceRef => Boolean(ref));
 	return compact.length > 0 ? compact : undefined;
+}
+
+function toDueProspectiveCommitment(
+	entry: MemoryEntry,
+	referenceTime: number,
+): DueProspectiveCommitment | undefined {
+	if (entry.tier !== "prospective") return undefined;
+	const lines = entry.content
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	const title =
+		lines
+			.find((line) => line.startsWith("Prospective commitment: "))
+			?.replace("Prospective commitment: ", "")
+			.trim() ?? entry.content.trim();
+	const detail = lines
+		.find((line) => line.startsWith("Detail: "))
+		?.replace("Detail: ", "")
+		.trim();
+	const metadata = entry.metadata as Record<string, unknown>;
+	const dueAt = typeof metadata.dueAt === "string" ? metadata.dueAt : undefined;
+	const remindAt =
+		typeof metadata.remindAt === "string" ? metadata.remindAt : undefined;
+	let reminderKind: DueProspectiveCommitment["reminderKind"] = "due_at";
+	if (remindAt) {
+		reminderKind = "remind_at";
+	} else if (dueAt && Date.parse(dueAt) < referenceTime) {
+		reminderKind = "overdue";
+	}
+	return {
+		entry,
+		title,
+		detail,
+		dueAt,
+		remindAt,
+		reminderKind,
+	};
+}
+
+function readProspectiveStatus(
+	entry: MemoryEntry,
+): "pending" | "scheduled" | "done" | "cancelled" | undefined {
+	const metadata = entry.metadata as Record<string, unknown>;
+	const value = metadata.fulfillmentStatus;
+	if (
+		value === "pending" ||
+		value === "scheduled" ||
+		value === "done" ||
+		value === "cancelled"
+	) {
+		return value;
+	}
+	return undefined;
+}
+
+function matchesScope(
+	projectRoot: string | undefined,
+	expectedProjectRoot: string | undefined,
+): boolean {
+	if (!expectedProjectRoot) return true;
+	return projectRoot === expectedProjectRoot;
 }

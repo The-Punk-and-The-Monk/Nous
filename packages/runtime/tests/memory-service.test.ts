@@ -175,4 +175,67 @@ describe("MemoryService", () => {
 			"prospective_commitment",
 		);
 	});
+
+	test("finds due prospective commitments and can update their lifecycle state", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const service = new MemoryService({ store, agentId: "nous" });
+
+		const entry = service.ingestProspectiveCommitment({
+			title: "Check auth migration progress",
+			threadId: "thread_1",
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+			},
+			remindAt: "2026-04-01T08:00:00.000Z",
+			dueAt: "2026-04-01T09:00:00.000Z",
+		});
+
+		const due = service.findDueProspectiveCommitments({
+			now: "2026-04-01T07:55:00.000Z",
+			lookaheadMs: 10 * 60_000,
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+			},
+		});
+		expect(due).toHaveLength(1);
+		expect(due[0]?.title).toBe("Check auth migration progress");
+		expect(due[0]?.reminderKind).toBe("remind_at");
+
+		service.updateProspectiveCommitment(entry.id, {
+			fulfillmentStatus: "scheduled",
+		});
+		expect(
+			(store.getById(entry.id)?.metadata as Record<string, unknown>)
+				.fulfillmentStatus,
+		).toBe("scheduled");
+	});
+
+	test("marks linked prospective commitments done when the intent succeeds", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const service = new MemoryService({ store, agentId: "nous" });
+
+		const entry = service.ingestProspectiveCommitment({
+			title: "Summarize auth migration",
+			threadId: "thread_1",
+			intentId: "int_auth",
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+			},
+		});
+
+		service.ingestIntentOutcome({
+			intentId: "int_auth",
+			intentText: "Summarize auth migration",
+			outcome: "intent.achieved",
+			threadId: "thread_1",
+		});
+
+		expect(
+			(store.getById(entry.id)?.metadata as Record<string, unknown>)
+				.fulfillmentStatus,
+		).toBe("done");
+	});
 });

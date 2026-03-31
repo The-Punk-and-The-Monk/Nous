@@ -172,6 +172,78 @@ CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status, created_at)
 CREATE INDEX IF NOT EXISTS idx_decisions_thread ON decisions(thread_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_decisions_intent ON decisions(intent_id, status, created_at);
 
+-- Proactive / reflection runtime
+CREATE TABLE IF NOT EXISTS reflection_agenda_items (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  driving_question TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 0,
+  dedupe_key TEXT NOT NULL,
+  due_at TEXT,
+  cooldown_until TEXT,
+  budget_class TEXT NOT NULL,
+  source_signal_ids TEXT NOT NULL DEFAULT '[]',
+  source_memory_ids TEXT NOT NULL DEFAULT '[]',
+  source_intent_ids TEXT NOT NULL DEFAULT '[]',
+  source_thread_ids TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'queued',
+  scope TEXT,
+  created_at TEXT NOT NULL,
+  leased_at TEXT,
+  lease_owner TEXT,
+  last_run_at TEXT,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  metadata TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reflection_agenda_status_due ON reflection_agenda_items(status, due_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_reflection_agenda_dedupe ON reflection_agenda_items(dedupe_key, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS reflection_runs (
+  id TEXT PRIMARY KEY,
+  agenda_item_ids TEXT NOT NULL DEFAULT '[]',
+  retrieved_memory_ids TEXT NOT NULL DEFAULT '[]',
+  produced_candidate_ids TEXT NOT NULL DEFAULT '[]',
+  model_class TEXT NOT NULL,
+  max_tokens_budget INTEGER NOT NULL DEFAULT 0,
+  tokens_used INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  metadata TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reflection_runs_started ON reflection_runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reflection_runs_outcome ON reflection_runs(outcome, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS proactive_candidates (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  message_draft TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  proposed_intent_text TEXT,
+  confidence REAL NOT NULL,
+  value_score REAL NOT NULL,
+  interruption_cost REAL NOT NULL,
+  urgency TEXT NOT NULL,
+  recommended_mode TEXT NOT NULL,
+  requires_approval INTEGER NOT NULL DEFAULT 0,
+  cooldown_key TEXT,
+  expires_at TEXT,
+  source_signal_ids TEXT NOT NULL DEFAULT '[]',
+  source_memory_ids TEXT NOT NULL DEFAULT '[]',
+  source_intent_ids TEXT NOT NULL DEFAULT '[]',
+  source_thread_ids TEXT NOT NULL DEFAULT '[]',
+  source_agenda_item_ids TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'candidate',
+  scope TEXT,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT,
+  metadata TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proactive_candidates_status_created ON proactive_candidates(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_proactive_candidates_cooldown ON proactive_candidates(cooldown_key, created_at DESC);
+
 -- Persistent outbox
 CREATE TABLE IF NOT EXISTS message_outbox (
   id TEXT PRIMARY KEY,

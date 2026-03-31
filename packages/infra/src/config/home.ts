@@ -46,6 +46,8 @@ export interface NousConfig {
 		enabled: boolean;
 		autoSubmit: boolean;
 		idleOnly: boolean;
+		reflectionIntervalMs: number;
+		prospectiveLookaheadMs: number;
 	};
 }
 
@@ -135,6 +137,8 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 			enabled: true,
 			autoSubmit: true,
 			idleOnly: true,
+			reflectionIntervalMs: 60000,
+			prospectiveLookaheadMs: 900000,
 		},
 	});
 	writeDefaultJsonIfMissing(join(paths.configDir, "network.json"), {
@@ -372,5 +376,7 @@ const DEFAULT_NOUS_CONFIG: NousConfig = {
 		enabled: true,
 		autoSubmit: true,
 		idleOnly: true,
+		reflectionIntervalMs: 60000,
+		prospectiveLookaheadMs: 900000,
 	},
 };

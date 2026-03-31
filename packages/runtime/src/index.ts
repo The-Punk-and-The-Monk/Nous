@@ -76,14 +76,24 @@ export type {
 	IngestConversationTurnInput,
 	IngestPerceptionSignalInput,
 	IngestProspectiveCommitmentInput,
+	DueProspectiveCommitment,
 	MemoryContextQuery,
 	MemoryServiceOptions,
+	UpdateProspectiveCommitmentInput,
 } from "./memory/service.ts";
+export { ProactiveRuntimeService } from "./proactive/agenda.ts";
+export type {
+	AgendaEnqueueDisposition,
+	AgendaEnqueueResult,
+	ProactiveRuntimeServiceOptions,
+} from "./proactive/agenda.ts";
 export {
 	ReflectionService,
 	createDefaultRelationshipBoundary,
+	createSignalAgendaItem,
 } from "./proactive/reflection.ts";
 export type {
+	ReflectAgendaInput,
 	ReflectSignalInput,
 	ReflectionOutcome,
 	ReflectionServiceOptions,

@@ -3097,3 +3097,143 @@ For significant sessions, capture:
     - DecisionQueue
     - outbox digesting
     - future relationship-bound personalization
+
+### Session: Land persisted proactive agenda/runtime and give prospective memory its first real lifecycle
+- Context / Trigger:
+  - After committing `feat: add proactive reflection seed and memory producers`, the next explicit user direction was to **keep pushing Sprint 6 and Sprint 8** rather than stopping at the first reflection seed.
+  - The architectural gap was now clear:
+    - Sprint 8 had a reflective synthesis boundary, but it was still mostly **inline** and ephemeral
+    - Sprint 6 had prospective commitment ingestion, but not a true runtime lifecycle that could actually feed proactive behavior
+- Problem:
+  - The current reflection path still had several “not yet production-shaped” weaknesses:
+    - no persisted `ReflectionAgenda` queue
+    - no persisted `ReflectionRun` / `ProactiveCandidate` substrate
+    - no daemon-side reflection tick / scheduler seed
+    - no governed candidate delivery policy for cooldown / quota
+  - On the memory side, prospective memory still risked becoming a dead-end tier:
+    - commitments could be written, but not scanned for reminder windows
+    - they had no meaningful `pending → scheduled → done` lifecycle in runtime
+    - successful intents did not yet close related prospective commitments
+- Options considered:
+  - Option A: keep reflection fully inline in daemon promotion flow and only add more heuristics.
+    - Rejected because that would keep Sprint 8 trapped in an “if promoted then maybe synthesize” shape instead of a durable runtime model.
+  - Option B: jump directly to the full long-horizon Memory Rover / relationship-learning architecture.
+    - Rejected because it would expand surface area too aggressively before landing the persistable substrate and basic governance semantics.
+  - Option C: land the **persisted agenda/candidate substrate + scheduler seed + first prospective producer/lifecycle** now.
+    - Chosen because it advances Sprint 6 and Sprint 8 along one shared seam:
+      - memory produces real future-oriented signals
+      - proactive runtime queues and governs them durably
+- Decision:
+  - Add a persistence-backed proactive runtime substrate with three first-class objects:
+    - `ReflectionAgendaItem`
+    - `ReflectionRun`
+    - `ProactiveCandidate`
+  - Add `ProactiveRuntimeService` as the runtime boundary responsible for:
+    - agenda dedupe / cooldown
+    - stale-lease recovery
+    - candidate queueing
+    - daily quota / cooldown-based candidate delivery gating
+    - first prospective reminder producer path
+  - Extend `MemoryService` so prospective memory is no longer just write-only:
+    - query due commitments
+    - update commitment lifecycle state
+    - auto-close linked commitments when the related intent succeeds
+  - Rework daemon proactive flow so ambient perception does **not** go straight from promotion to immediate message logic:
+    - promotion → persisted agenda
+    - daemon reflection tick leases agenda
+    - reflection produces run + queued candidate
+    - delivery policy decides what is actually surfaced
+- Changes made:
+  - Core object model
+    - Updated `packages/core/src/types/proactive.ts`
+      - added agenda metadata/origin types
+      - added lease/run bookkeeping to `ReflectionAgendaItem`
+      - added delivery metadata fields to `ProactiveCandidate`
+    - Updated `packages/core/src/index.ts`
+  - Persistence substrate
+    - Added `packages/persistence/src/interfaces/proactive-store.ts`
+    - Added `packages/persistence/src/sqlite/proactive-store.sqlite.ts`
+    - Updated `packages/persistence/src/sqlite/connection.ts`
+      - added tables for:
+        - `reflection_agenda_items`
+        - `reflection_runs`
+        - `proactive_candidates`
+    - Updated `packages/persistence/src/backend.ts`
+      - backend now exposes `proactive`
+    - Updated `packages/persistence/src/index.ts`
+    - Added `packages/persistence/tests/proactive-store.test.ts`
+  - Sprint 6 / memory lifecycle
+    - Updated `packages/runtime/src/memory/service.ts`
+      - added `findDueProspectiveCommitments`
+      - added `updateProspectiveCommitment`
+      - added `getById`
+      - linked successful intent outcomes to prospective-memory completion
+    - Updated `packages/runtime/tests/memory-service.test.ts`
+      - covered due reminder discovery
+      - covered prospective lifecycle update
+      - covered auto-completion on intent success
+  - Sprint 8 / proactive runtime
+    - Added `packages/runtime/src/proactive/agenda.ts`
+      - `ProactiveRuntimeService`
+      - agenda dedupe / lease / cooldown policy
+      - candidate delivery gating
+      - first prospective reminder agenda producer
+    - Updated `packages/runtime/src/proactive/reflection.ts`
+      - reflection now supports both:
+        - `reflectSignal`
+        - `reflectAgenda`
+      - signal agendas are now explicit queued objects rather than immediately “synthesized” placeholders
+    - Updated `packages/runtime/src/index.ts`
+    - Added `packages/runtime/tests/proactive-runtime.test.ts`
+  - Daemon integration
+    - Updated `packages/infra/src/config/home.ts`
+      - ambient config now includes:
+        - `reflectionIntervalMs`
+        - `prospectiveLookaheadMs`
+    - Updated `packages/infra/src/daemon/server.ts`
+      - ambient promotions now enqueue persisted agendas instead of running all proactive logic inline
+      - daemon now runs a reflection tick loop
+      - reflection tick leases agendas, records runs, drains deliverable candidates, and routes ambient intents through governed conversion/delivery paths
+  - Documentation
+    - Updated `ARCHITECTURE.md`
+    - Updated `docs/PROGRESS_MATRIX.md`
+    - Updated `docs/DEVELOPMENT_LOG.md`
+- Analysis / trade-offs:
+  - This is a substantial step toward production shape, but it is still intentionally **MVP-bounded**:
+    - agenda leasing is still single-daemon / local-instance oriented
+    - delivery policy is still heuristic quota/cooldown policy, not relationship-learned personalization
+    - prospective lifecycle is still minimal; it does not yet model richer recurrence / snooze / dependency semantics
+  - The important architectural improvement is that proactive cognition now has a **persistable runtime seam**.
+    - before: reflection existed, but largely as a transient function call
+    - after: reflection input, run, and candidate all have durable storage and queue semantics
+  - The important Sprint 6 improvement is not “more retrieval polish.”
+    - it is that prospective memory can now actually become agenda-producing runtime input instead of being a write-only future bucket
+- Impact / Result:
+  - Sprint 8 is now materially closer to a real production agent runtime:
+    - agenda objects persist
+    - scheduler/tick exists
+    - candidate delivery is governed instead of blindly immediate
+  - Sprint 6 now has the first real bridge from memory into proactive behavior:
+    - prospective commitments can surface reminders
+    - successful completion can close linked future commitments
+  - This makes Nous feel less like:
+    - a daemon plus heuristics
+    - and more like:
+      - a persistent assistant with background reflective state
+- Validation:
+  - Ran:
+    - `bun x tsc --noEmit`
+    - `bun test`
+  - Result:
+    - typecheck passed
+    - full test suite passed (`186 pass / 0 fail`)
+- Open questions / next steps:
+  - Whether the next proactive step should be:
+    - candidate digests / outbox batching
+    - richer `DecisionQueue` integration for non-intent proactive acts
+    - relationship-aware delivery personalization
+  - Whether the next memory step should be:
+    - retrieval feedback signals
+    - vector backend seam / sqlite-vec
+    - semantic / procedural digestion
+  - Whether `ProactiveRuntimeService` should eventually move from local single-daemon leasing semantics to a more explicit worker/lease protocol
