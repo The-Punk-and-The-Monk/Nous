@@ -33,6 +33,43 @@ This file answers a different question:
 
 ---
 
+## 2026-03-31
+
+### Daily snapshot
+
+#### A. What moved materially today
+
+| Area | Yesterday | Today | What changed |
+|---|---|---|---|
+| Sprint 6 / Memory retrieval | first retrieval loop only | stronger first retrieval loop | added lexical FTS candidate expansion, chunk-aware selection, provenance/thread/scope-biased ranking, better packed context hints |
+| Sprint 7 / Context | basic rich context | context boundary much more explicit | context now includes git status detail, local `.nous` config files, scope labels, and a human-readable permission boundary summary |
+| Sprint 8 / Perception | heuristic skeleton | first low-noise usable slice | idle-first attention, redundant git-status suppression, workspace-scoped ambient notice threads, path-specific safe follow-up suggestions |
+
+#### B. Module maturity deltas
+
+| Module | New reading | Why |
+|---|---|---|
+| Context Assembly | **Medium-High → stronger Medium-High (~70%)** | It now carries richer project state plus explicit “why can/can’t I act here?” boundary context, which materially improves explainability and scope-awareness |
+| Memory | **Medium (~35%) → stronger Medium (~45%)** | Still not true vector/graph RAG, but no longer just whole-entry heuristic recall; retrieval now has a more honest packing/ranking policy |
+| Perception / Proactive Cognition | **Early (~30%) → early but more usable (~40%)** | Still far from Memory Rover / reflective proactive cognition, but the shipped slice is less noisy and more assistant-like |
+
+#### C. Sprint / phase read after today's work
+
+| Sprint / Phase | Current status | Notes |
+|---|---|---|
+| Sprint 6 | **Advanced seed, but not final architecture** | The practical V1 retrieval loop is much stronger; long-term vector / graph / metabolism target is still ahead |
+| Sprint 7 (context slice) | **Substantially done** | The main remaining Sprint 7 gap is tool breadth, not context boundary clarity |
+| Sprint 8 | **Started in earnest** | The perception loop is now being hardened for low-noise usefulness instead of staying a pure skeleton |
+| Phase 0: MVP | **~70%** | The “feels like one continuing assistant with memory + governed awareness” story is more credible than yesterday, though tools / proactive runtime / growth still lag |
+
+#### D. Steering implication
+
+After this round, the next highest-leverage gaps are no longer “basic context realism.” They are:
+
+1. **more real tool breadth**
+2. **Memory Rover / reflective proactive runtime**
+3. **procedural / prospective memory producers**
+
 ## 2026-03-30
 
 ### Daily snapshot
@@ -125,4 +162,3 @@ If the goal is to make Nous feel genuinely usable soon, the next highest-leverag
 1. **Memory** — true retrieval substrate and prospective memory
 2. **Proactive cognition** — from skeleton to governed runtime objects / delivery path
 3. **Tool breadth** — real-world tasks need more than a strong controller and 5 basic tools
-

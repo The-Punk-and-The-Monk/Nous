@@ -32,15 +32,30 @@ describe("HybridMemoryRetriever", () => {
 		storeMemory(store, {
 			content:
 				"Fixed auth login failure by updating the authentication token flow.",
-			metadata: { projectRoot: "/repo/app", tags: ["auth", "fix"] },
+			metadata: {
+				projectRoot: "/repo/app",
+				tags: ["auth", "fix"],
+				sourceKind: "intent_outcome",
+				provenance: { confidence: 0.9, evidenceRefs: [{ kind: "intent" }] },
+			},
 		});
 		storeMemory(store, {
 			content: "Updated README documentation for installation.",
-			metadata: { projectRoot: "/repo/app", tags: ["documentation"] },
+			metadata: {
+				projectRoot: "/repo/app",
+				tags: ["documentation"],
+				sourceKind: "manual_note",
+				provenance: { confidence: 0.6 },
+			},
 		});
 		storeMemory(store, {
 			content: "Investigated flaky payment test in another project.",
-			metadata: { projectRoot: "/repo/other", tags: ["test", "payment"] },
+			metadata: {
+				projectRoot: "/repo/other",
+				tags: ["test", "payment"],
+				sourceKind: "conversation_turn",
+				provenance: { confidence: 0.4 },
+			},
 		});
 
 		const retriever = new HybridMemoryRetriever(store);
@@ -57,12 +72,47 @@ describe("HybridMemoryRetriever", () => {
 		expect(results[0]?.entry.embedding?.length).toBeGreaterThan(0);
 	});
 
+	test("selects the most relevant chunk from a long memory entry", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const prefix = Array.from(
+			{ length: 140 },
+			(_, index) => `preface${index}`,
+		).join(" ");
+		storeMemory(store, {
+			content: `${prefix} later in the execution trace the daemon attach reconnection path was fixed so pending outbox deliveries flush correctly after reconnect and the socket push stream resumes without duplicating messages.`,
+			metadata: {
+				projectRoot: "/repo/app",
+				threadId: "thread_1",
+				sourceKind: "intent_outcome",
+				provenance: { confidence: 0.85 },
+			},
+		});
+
+		const retriever = new HybridMemoryRetriever(store);
+		const results = retriever.retrieve({
+			agentId: "nous",
+			query: "attach reconnect pending outbox flush",
+			scope: { projectRoot: "/repo/app" },
+			threadId: "thread_1",
+			limit: 1,
+		});
+
+		expect(results).toHaveLength(1);
+		expect(results[0]?.chunkCount).toBeGreaterThan(1);
+		expect(results[0]?.excerpt).toContain("pending outbox deliveries flush");
+	});
+
 	test("renders compact memory hints for context assembly", () => {
 		const store = new SQLiteMemoryStore(initDatabase());
 		storeMemory(store, {
 			content:
 				"Refactored the daemon attach flow so a single connected client can receive live notification pushes over the same socket.",
-			metadata: { projectRoot: "/repo/app", tags: ["daemon", "attach"] },
+			metadata: {
+				projectRoot: "/repo/app",
+				tags: ["daemon", "attach"],
+				sourceKind: "intent_outcome",
+				provenance: { confidence: 0.8 },
+			},
 		});
 
 		const retriever = new HybridMemoryRetriever(store);
@@ -75,7 +125,7 @@ describe("HybridMemoryRetriever", () => {
 		);
 
 		expect(hints).toHaveLength(1);
-		expect(hints[0]).toContain("[episodic");
+		expect(hints[0]).toContain("[episodic intent_outcome");
 		expect(hints[0]).toContain("daemon attach flow");
 	});
 });

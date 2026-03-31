@@ -55,6 +55,7 @@ export type EventType =
 	| "sensor.signal"
 	| "sensor.dropped"
 	| "attention.evaluated"
+	| "attention.suppressed"
 	| "attention.promoted"
 	// Communication events
 	| "comm.pattern_shared"

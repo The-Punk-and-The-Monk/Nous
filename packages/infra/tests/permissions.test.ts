@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ensureNousHome } from "../src/config/home.ts";
 import {
 	allowPermissionAction,
+	describePermissionBoundary,
 	loadPermissionPolicy,
 	resolvePermissionCapabilities,
 	revokePermissionAction,
@@ -87,5 +88,24 @@ describe("Permission policy", () => {
 			},
 		);
 		expect(capabilities["fs.write"]).toBe(false);
+	});
+
+	test("describes permission boundary for context assembly and explainability", () => {
+		const root = mkdtempSync(join(tmpdir(), "nous-permissions-describe-"));
+		tempDirs.push(root);
+		const env = { NOUS_HOME: join(root, ".nous") };
+		ensureNousHome({ env, cwd: root });
+
+		const summary = describePermissionBoundary(loadPermissionPolicy({ env }), {
+			projectRoot: root,
+		});
+
+		expect(summary.autoAllowed.some((line) => line.includes("fs.read"))).toBe(
+			true,
+		);
+		expect(
+			summary.approvalRequired.some((line) => line.includes("fs.write")),
+		).toBe(true);
+		expect(summary.explanation).toContain("Needs approval");
 	});
 });

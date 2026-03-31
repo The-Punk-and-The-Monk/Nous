@@ -1,17 +1,24 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { AssembledContext, ChannelScope, Intent } from "@nous/core";
+import type {
+	AssembledContext,
+	ChannelScope,
+	Intent,
+	PermissionContext,
+} from "@nous/core";
 import { now } from "@nous/core";
 
 export interface ContextAssemblyInput {
 	scope: ChannelScope;
 	activeIntents?: Pick<Intent, "id" | "raw" | "goal" | "status" | "source">[];
 	recentMemoryHints?: string[];
+	permissionContext?: PermissionContext;
 }
 
 export class ContextAssembler {
 	assemble(input: ContextAssemblyInput): AssembledContext {
 		const rootDir = resolveProjectRoot(input.scope);
+		const gitStatusDetail = getGitStatusDetail(rootDir);
 		return {
 			environment: {
 				cwd: input.scope.workingDirectory ?? process.cwd(),
@@ -35,14 +42,23 @@ export class ContextAssembler {
 				packageManager: detectPackageManager(rootDir),
 				gitBranch: getGitBranch(rootDir),
 				gitStatus: getGitStatus(rootDir),
+				gitStatusDetail,
 				directoryTree: buildDirectoryTree(rootDir),
 				readmeSnippet: readReadmeSnippet(rootDir),
 				configFiles: detectConfigFiles(rootDir),
+				localNousConfigFiles: detectLocalNousConfigFiles(rootDir),
 				focusedFile: input.scope.focusedFile,
 			},
 			user: {
 				activeIntents: input.activeIntents ?? [],
 				recentMemoryHints: input.recentMemoryHints ?? [],
+				scopeLabels: input.scope.labels ?? [],
+			},
+			permissions: input.permissionContext ?? {
+				autoAllowed: [],
+				approvalRequired: [],
+				denied: [],
+				explanation: "No permission boundary summary was provided.",
 			},
 		};
 	}
@@ -61,16 +77,51 @@ export function renderContextForSystemPrompt(
 		context.user.recentMemoryHints.length > 0
 			? context.user.recentMemoryHints.map((hint) => `- ${hint}`).join("\n")
 			: "- none";
+	const scopeLabels =
+		context.user.scopeLabels.length > 0
+			? context.user.scopeLabels.map((label) => `- ${label}`).join("\n")
+			: "- none";
+	const gitStatusDetail =
+		context.project.gitStatusDetail.length > 0
+			? context.project.gitStatusDetail.map((line) => `- ${line}`).join("\n")
+			: "- none";
+	const localNousConfig =
+		context.project.localNousConfigFiles.length > 0
+			? context.project.localNousConfigFiles
+					.map((file) => `- ${file}`)
+					.join("\n")
+			: "- none";
+	const permissionAutoAllowed =
+		context.permissions.autoAllowed.length > 0
+			? context.permissions.autoAllowed.map((line) => `- ${line}`).join("\n")
+			: "- none";
+	const permissionApprovalRequired =
+		context.permissions.approvalRequired.length > 0
+			? context.permissions.approvalRequired
+					.map((line) => `- ${line}`)
+					.join("\n")
+			: "- none";
+	const permissionDenied =
+		context.permissions.denied.length > 0
+			? context.permissions.denied.map((line) => `- ${line}`).join("\n")
+			: "- none";
 
 	return [
 		"Context Assembly",
 		`Environment: cwd=${context.environment.cwd}; os=${context.environment.os}; arch=${context.environment.arch}; shell=${context.environment.shell}; tools=${context.environment.availableTools.join(", ") || "none"}; timestamp=${context.environment.timestamp}`,
 		`Project: root=${context.project.rootDir}; type=${context.project.type}; language=${context.project.language}; framework=${context.project.framework ?? "unknown"}; packageManager=${context.project.packageManager ?? "unknown"}; gitBranch=${context.project.gitBranch ?? "none"}; gitStatus=${context.project.gitStatus ?? "unknown"}; focusedFile=${context.project.focusedFile ?? "none"}`,
+		`Git status detail:\n${gitStatusDetail}`,
 		`Config files:\n${context.project.configFiles.map((file) => `- ${file}`).join("\n") || "- none"}`,
+		`Local Nous config:\n${localNousConfig}`,
 		`Directory tree:\n${context.project.directoryTree}`,
 		`README snippet:\n${context.project.readmeSnippet ?? "(none)"}`,
 		`Active intents:\n${activeIntents}`,
+		`Scope labels:\n${scopeLabels}`,
 		`Memory hints:\n${memoryHints}`,
+		`Permission boundary summary: ${context.permissions.explanation}`,
+		`Permission auto-allowed:\n${permissionAutoAllowed}`,
+		`Permission approval-required:\n${permissionApprovalRequired}`,
+		`Permission denied:\n${permissionDenied}`,
 	].join("\n\n");
 }
 
@@ -158,6 +209,21 @@ function detectConfigFiles(rootDir: string): string[] {
 	return candidates.filter((file) => existsSync(join(rootDir, file)));
 }
 
+function detectLocalNousConfigFiles(rootDir: string): string[] {
+	const localNousRoot = join(rootDir, ".nous");
+	if (!existsSync(localNousRoot)) return [];
+	const candidates = [
+		"config.json",
+		"providers.json",
+		"sensors.json",
+		"ambient.json",
+		"permissions.json",
+	];
+	return candidates
+		.filter((file) => existsSync(join(localNousRoot, file)))
+		.map((file) => `.nous/${file}`);
+}
+
 function buildDirectoryTree(
 	rootDir: string,
 	depth = 2,
@@ -219,6 +285,17 @@ function getGitStatus(rootDir: string): string | undefined {
 	const status = runGit(rootDir, ["status", "--short", "--untracked-files=no"]);
 	if (status === undefined) return undefined;
 	return status.trim() ? "dirty" : "clean";
+}
+
+function getGitStatusDetail(rootDir: string, limit = 12): string[] {
+	if (!existsSync(join(rootDir, ".git"))) return [];
+	const status = runGit(rootDir, ["status", "--short", "--untracked-files=no"]);
+	if (!status?.trim()) return [];
+	return status
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.slice(0, limit);
 }
 
 function runGit(rootDir: string, args: string[]): string | undefined {

@@ -487,6 +487,10 @@ function renderIntakeInput(
 		grounding.recentMemoryHints.length > 0
 			? grounding.recentMemoryHints.map((item) => `- ${item}`).join("\n")
 			: "- none";
+	const permissionLines =
+		grounding.permissionSummary && grounding.permissionSummary.length > 0
+			? grounding.permissionSummary.map((item) => `- ${item}`).join("\n")
+			: "- none";
 	const recentThreadLines =
 		grounding.recentThreadMessages && grounding.recentThreadMessages.length > 0
 			? grounding.recentThreadMessages.map((item) => `- ${item}`).join("\n")
@@ -498,6 +502,7 @@ function renderIntakeInput(
 		`Channel context: cwd=${grounding.channelContext?.workingDirectory ?? "unknown"}; projectRoot=${grounding.channelContext?.projectRoot ?? "unknown"}; focusedFile=${grounding.channelContext?.focusedFile ?? "none"}`,
 		`Active intents:\n${activeIntentLines}`,
 		`Recent memory hints:\n${memoryHintLines}`,
+		`Permission boundary:\n${permissionLines}`,
 		`Recent thread messages:\n${recentThreadLines}`,
 		`Incoming request:\n${rawText}`,
 	].join("\n\n");

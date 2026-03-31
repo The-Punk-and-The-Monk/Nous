@@ -19,6 +19,7 @@ export interface UserStateGrounding {
 	summary: string;
 	activeIntentSummaries: string[];
 	recentMemoryHints: string[];
+	permissionSummary?: string[];
 	channelContext?: {
 		workingDirectory?: string;
 		projectRoot?: string;

@@ -16,6 +16,17 @@ export function buildUserStateGrounding(
 		(intent) => `${intent.goal.summary} (${intent.status})`,
 	);
 	const recentMemoryHints = input.context.user.recentMemoryHints.slice(0, 5);
+	const permissionSummary = [
+		...input.context.permissions.autoAllowed
+			.slice(0, 2)
+			.map((line) => `auto: ${line}`),
+		...input.context.permissions.approvalRequired
+			.slice(0, 2)
+			.map((line) => `ask: ${line}`),
+		...input.context.permissions.denied
+			.slice(0, 2)
+			.map((line) => `deny: ${line}`),
+	];
 	const recentThreadMessages = (input.recentThreadMessages ?? [])
 		.slice(-6)
 		.map(
@@ -33,9 +44,12 @@ export function buildUserStateGrounding(
 			`focusedFile=${input.context.project.focusedFile ?? "none"}`,
 			`activeIntents=${activeIntentSummaries.length}`,
 			`memoryHints=${recentMemoryHints.length}`,
+			`scopeLabels=${input.context.user.scopeLabels.length}`,
+			`approvalBoundaries=${input.context.permissions.approvalRequired.length}`,
 		].join("; "),
 		activeIntentSummaries,
 		recentMemoryHints,
+		permissionSummary,
 		channelContext: {
 			workingDirectory: input.context.environment.cwd,
 			projectRoot: input.context.project.rootDir,

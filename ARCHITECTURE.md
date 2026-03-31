@@ -1219,6 +1219,8 @@ $ nous permissions log --last 24h     # Audit log of permission checks
 
 Agents still declare what capabilities they *need* (their `capabilitiesRequired`). But whether those capabilities are actually *granted* is determined by the Permission System, not by the agent definition. An agent that needs `fs.write` will be denied at runtime if the user hasn't granted that permission — regardless of the agent's definition.
 
+The same permission policy should also be rendered back into Context Assembly as an **explainable boundary summary**. This matters product-wise: a personal assistant should be able to say not only "I can't do that," but **why** the current scope/policy blocks it and what kind of approval would unblock it.
+
 ```
 Effective permission at runtime = AgentDeclaredNeeds ∩ PermissionRules ∩ IntentConstraints
 ```
@@ -1268,6 +1270,9 @@ What exists today is best described as:
   - 5-tier enum and basic entry model
 - **first retrieval loop**
   - hybrid lexical + local-semantic heuristic retrieval
+  - lexical FTS candidate expansion + local semantic scoring
+  - chunk-aware selection and compact context packing
+  - provenance / scope / thread bias in ranking
   - context assembly consumes compact memory hints
   - daemon already auto-ingests:
     - incoming human intents
@@ -1278,7 +1283,7 @@ What does **not** exist yet:
 - real embedding provider abstraction in production use
 - sqlite-vec / ANN retrieval
 - graph traversal
-- provenance-aware chunking and packing
+- persisted chunk store / ANN chunk index
 - metabolism pipeline
 - true procedural / prospective producers
 
@@ -2561,22 +2566,30 @@ interface AssembledContext {
     rootDir: string;
     gitBranch?: string;
     gitStatus?: string;            // Clean / dirty / conflict
+    gitStatusDetail: string[];     // Short `git status --short` lines
     packageManager?: string;       // "bun" | "npm" | "pip" | "cargo" | ...
     language: string;
     framework?: string;
     directoryTree: string;         // Top 3 levels, truncated
     readmeSnippet?: string;        // First 200 lines of README
     configFiles: string[];         // Which config files exist
+    localNousConfigFiles: string[];// `.nous/*.json` files in scope
   };
   user: {
-    relevantMemories: MemoryEntry[];  // From RAG retrieval
+    recentMemoryHints: string[];      // Compact packed retrieval hints
     activeIntents: Intent[];          // What the user is currently working on
-    recentFeedbackPatterns: string[]; // "User prefers concise output", etc.
+    scopeLabels: string[];            // Channel / workspace labels
+  };
+  permissions: {
+    autoAllowed: string[];
+    approvalRequired: string[];
+    denied: string[];
+    explanation: string;              // Why Nous can / cannot act here
   };
 }
 ```
 
-**Context Assembly is cheap.** Environment and project context are gathered via filesystem reads and shell commands (no LLM calls). User context comes from the RAG pipeline. The total overhead is <100ms.
+**Context Assembly is cheap.** Environment and project context are gathered via filesystem reads and shell commands (no LLM calls). User context comes from the RAG pipeline. The permission system also contributes a **human-readable boundary summary**, so Nous can explain why it can or cannot act in the current scope instead of treating permissions as invisible runtime-only state. The total overhead is still kept low enough for every-run assembly.
 
 ---
 
@@ -2845,7 +2858,15 @@ The system still needs bounded always-on cost:
 
 Each Sensor still has an `emitRateLimit`. If raw signals arrive faster than Stage A can process them, they are buffered in the Perception Log; oldest unprocessed signals can be dropped with a `signal.dropped` event. The stronger reflective layer should never be the first line of defense against raw volume.
 
-**Current implementation note:** today's codebase only implements the early skeleton of this design (FS/Git sensors + heuristic attention + ambient promotion path). The full target architecture adds the agenda-driven reflective layer and richer proactive candidate family described above.
+**Current implementation note:** today's codebase still implements only the early skeleton of the full design, but the skeleton is now less toy-like:
+
+- FS/Git sensors exist
+- idle-first heuristic attention exists
+- redundant `git.status_changed` notices can be suppressed after a stronger file-change promotion
+- ambient notices are threaded by workspace instead of one undifferentiated global stream
+- file-type-specific safe follow-up suggestions exist for tests / deps / config / docs / sensitive config
+
+The full target architecture still adds the agenda-driven reflective layer and richer proactive candidate family described above.
 
 ### Runtime contract: Agenda → Reflection → Candidate
 

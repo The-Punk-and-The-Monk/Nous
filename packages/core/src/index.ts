@@ -95,6 +95,7 @@ export type {
 	EnvironmentContext,
 	ProjectContext,
 	UserContext,
+	PermissionContext,
 } from "./types/context.ts";
 export type {
 	ExecutionTrace,

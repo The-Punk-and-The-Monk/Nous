@@ -71,7 +71,7 @@ describe("MemoryService", () => {
 		const stored = store.getById(entry.id);
 		const metadata = stored?.metadata as SemanticMemoryMetadata;
 		expect(hints).toHaveLength(1);
-		expect(hints[0]).toContain("[semantic");
+		expect(hints[0]).toContain("[semantic intent_outcome");
 		expect(hints[0]).toContain("authentication");
 		expect(stored?.accessCount).toBe(1);
 		expect(stored?.retentionScore).toBeGreaterThan(1.2);

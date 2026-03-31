@@ -2806,3 +2806,163 @@ For significant sessions, capture:
     - risk level column
     - “next owner/action” column
   - Keep the matrix lightweight enough to stay updated daily rather than becoming another stale planning artifact
+
+### Session: Push Sprint 6 retrieval closure, Sprint 7 context boundary, and Sprint 8 low-noise perception
+- Context / Trigger:
+  - At the start of the new day, the user explicitly asked to continue directly from the progress review and:
+    - finish the current Sprint 6 work
+    - finish the Sprint 7 **context** slice
+    - start Sprint 8 in a more real way
+  - The important nuance was architectural honesty:
+    - do real closure work
+    - but do not pretend long-term target architecture is already fully shipped
+- Problem:
+  - **Sprint 6 / memory**
+    - retrieval was already hybrid in name, but practically still too close to “whole-entry heuristic recall”
+    - long memory entries were not chunk-aware
+    - context packing did not reflect provenance / thread / scope well enough
+  - **Sprint 7 / context**
+    - Nous had permission enforcement, but the execution context still lacked an explicit, explainable boundary summary
+    - context assembly also still under-surfaced:
+      - local `.nous` config presence
+      - detailed git status lines
+      - scope labels
+  - **Sprint 8 / perception**
+    - the perception loop still felt too skeletal and slightly noisy:
+      - one global ambient notice thread
+      - redundant `git.status_changed` notices after a stronger file-change signal
+      - insufficient idle-first behavior
+      - generic file-change follow-up suggestions
+- Options considered:
+  - Memory
+    - Option A: wait for sqlite-vec / external embeddings / real ANN before improving retrieval quality.
+      - Rejected because that would leave the current first retrieval loop structurally too weak for day-to-day usability.
+    - Option B: strengthen the current retrieval loop with better policy:
+      - lexical candidate expansion
+      - chunk-aware selection
+      - provenance / thread / scope bias
+      - compact context packing
+      - Chosen because it materially improves current usefulness without pretending we already have final-form memory.
+  - Context
+    - Option A: keep permissions runtime-only and let the model infer capability boundaries indirectly.
+      - Rejected because Nous should be able to explain **why** it can or cannot act in a scope.
+    - Option B: surface a human-readable permission boundary summary directly into Context Assembly and grounding.
+      - Chosen because it aligns with the personal-assistant thesis and reduces “invisible policy” behavior.
+  - Perception
+    - Option A: jump straight to Memory Rover / reflective proactive runtime.
+      - Rejected because the current heuristic layer still needed hardening before a second-stage reflective system could be trusted.
+    - Option B: harden the shipped heuristic slice first with low-noise policy and better ambient delivery shape.
+      - Chosen because it makes Sprint 8 start from a believable production stepping stone instead of a toy loop.
+- Decision:
+  - Upgrade the current memory retriever into a stronger **first retrieval loop**, not a fake claim of full RAG completion.
+  - Extend Context Assembly so it reflects both:
+    - richer project/scope state
+    - explicit permission/governance boundaries
+  - Harden the perception runtime into an **idle-first, lower-noise ambient loop** with better workspace scoping and safer follow-up suggestions.
+- Changes made:
+  - Core / shared contracts
+    - Updated `packages/core/src/types/context.ts`
+      - added:
+        - `gitStatusDetail`
+        - `localNousConfigFiles`
+        - `scopeLabels`
+        - `PermissionContext`
+    - Updated `packages/core/src/types/task-intake.ts`
+      - added optional permission summary support to `UserStateGrounding`
+    - Updated `packages/core/src/types/event.ts`
+      - added `attention.suppressed`
+    - Updated `packages/core/src/index.ts`
+  - Sprint 6 / memory retrieval
+    - Updated `packages/runtime/src/memory/retrieval.ts`
+      - added lexical FTS candidate expansion
+      - added chunk-aware scoring / selection for long entries
+      - added provenance score
+      - improved scope/thread-sensitive ranking
+      - improved compact packed memory hints for context assembly
+    - Existing `MemoryService` automatically benefited because context retrieval already routes through it
+    - Updated tests:
+      - `packages/runtime/tests/memory-retrieval.test.ts`
+      - `packages/runtime/tests/memory-service.test.ts`
+  - Sprint 7 / context boundary
+    - Updated `packages/runtime/src/context/assembly.ts`
+      - now assembles:
+        - git status detail
+        - local `.nous` config files
+        - scope labels
+        - permission boundary summary
+    - Added permission-boundary explanation helper in:
+      - `packages/infra/src/config/permissions.ts`
+    - Updated call sites:
+      - `packages/infra/src/daemon/server.ts`
+      - `packages/infra/src/cli/app.ts`
+    - Updated user-state grounding and intent intake rendering:
+      - `packages/infra/src/intake/grounding.ts`
+      - `packages/orchestrator/src/intent/parser.ts`
+    - Updated tests:
+      - `packages/runtime/tests/context-assembly.test.ts`
+      - `packages/infra/tests/permissions.test.ts`
+  - Sprint 8 / perception start
+    - Updated `packages/infra/src/daemon/perception.ts`
+      - added idle-first attention behavior
+      - added suppression of redundant `git.status_changed` promotions after recent stronger file-change promotions
+      - improved file-type-specific ambient messaging / follow-up suggestions
+      - preserved conservative safe follow-up shape (read-only investigative intent text)
+    - Updated `packages/infra/src/daemon/server.ts`
+      - ambient notices are now threaded by workspace instead of a single global ambient thread
+      - ambient perception respects the configured idle-only policy more explicitly
+    - Updated tests:
+      - `packages/infra/tests/perception.test.ts`
+  - Documentation
+    - Updated `ARCHITECTURE.md`
+      - reflected stronger current memory retrieval reality
+      - updated Context Assembly model
+      - clarified the explainable permission boundary role
+      - updated perception implementation note
+    - Updated `docs/PROGRESS_MATRIX.md`
+      - added `2026-03-31` snapshot
+    - Updated `docs/DEVELOPMENT_LOG.md`
+- Analysis / trade-offs:
+  - This round deliberately chose **policy strengthening over substrate replacement**.
+    - That means:
+      - better current behavior
+      - but still no claim that sqlite-vec / graph memory / reflective proactive cognition are done
+  - Adding permission summaries into context slightly increases prompt size.
+    - That cost is acceptable because it buys:
+      - explainability
+      - better planning/intake grounding
+      - better user-facing “why I can/can’t do this” behavior
+  - Sprint 8 remains intentionally conservative.
+    - The system is still not doing rich reflective proactive cognition.
+    - But it is now less noisy and more workspace-aware, which is the correct direction for a production assistant.
+- Impact / Result:
+  - **Sprint 6** is materially stronger in current practice:
+    - context retrieval is now chunk-aware and more governance-aware
+  - **Sprint 7 context slice** is much closer to “operational, not prose”:
+    - Nous can now carry an explicit explanation of its permission boundary into runtime context
+  - **Sprint 8** is now genuinely started rather than merely named:
+    - the perception loop has a more believable low-noise assistant shape
+  - Overall product effect:
+    - Nous feels more like a continuing scoped assistant
+    - and less like a controller with hidden policy and noisy ambient hooks
+- Validation:
+  - Ran:
+    - `bun x tsc --noEmit`
+    - `bun test`
+    - targeted `biome check` on the changed files
+  - Result:
+    - typecheck passed
+    - tests passed
+    - changed-file lint/format check passed
+  - Note:
+    - full-repo `bun run lint` still reports unrelated pre-existing formatting issues outside this round's touched file set
+- Open questions / next steps:
+  - Memory
+    - when to introduce a real embedding provider + sqlite-vec / ANN path
+    - when to add persistent chunk/index objects instead of on-read chunk selection
+  - Perception / proactive runtime
+    - when to add `ReflectionAgenda` persistence
+    - when to introduce `Memory Rover`
+    - how proactive candidates should enter dialogue / decision governance beyond ambient task suggestions
+  - Product readiness
+    - the next biggest user-perceived gap is still **tool breadth**
+    - after that, prospective/procedural memory and reflective proactive behavior become the main differentiators

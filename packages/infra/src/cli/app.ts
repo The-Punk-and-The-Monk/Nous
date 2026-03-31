@@ -10,6 +10,7 @@ import {
 import { createGeneralAgent } from "../agents/general.ts";
 import { ensureNousHome } from "../config/home.ts";
 import {
+	describePermissionBoundary,
 	loadPermissionPolicy,
 	resolvePermissionCapabilities,
 } from "../config/permissions.ts";
@@ -239,8 +240,9 @@ export async function main(args: string[]): Promise<void> {
 		store: backend.memory,
 		agentId: "nous",
 	});
+	const permissionPolicy = loadPermissionPolicy();
 	const permissionCapabilities = resolvePermissionCapabilities(
-		loadPermissionPolicy(),
+		permissionPolicy,
 		{ projectRoot: process.cwd() },
 	);
 	const assembledContext = contextAssembler.assemble({
@@ -261,6 +263,9 @@ export async function main(args: string[]): Promise<void> {
 				workingDirectory: process.cwd(),
 				projectRoot: process.cwd(),
 			},
+		}),
+		permissionContext: describePermissionBoundary(permissionPolicy, {
+			projectRoot: process.cwd(),
 		}),
 	});
 	const systemPrompt = renderContextForSystemPrompt(assembledContext);

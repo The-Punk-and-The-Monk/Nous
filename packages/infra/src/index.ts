@@ -23,6 +23,7 @@ export {
 export {
 	allowPermissionAction,
 	createDefaultPermissionPolicy,
+	describePermissionBoundary,
 	loadPermissionPolicy,
 	resetPermissionPolicy,
 	resolvePermissionCapabilities,

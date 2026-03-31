@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { CapabilitySet } from "@nous/core";
+import type { CapabilitySet, PermissionContext } from "@nous/core";
 import { DENY_ALL } from "@nous/core";
 import { type NousConfigLoadOptions, getNousPaths } from "./home.ts";
 
@@ -266,6 +266,61 @@ export function resolvePermissionCapabilities(
 	};
 }
 
+export function describePermissionBoundary(
+	policy: PermissionPolicy,
+	input: PermissionResolutionInput = {},
+): PermissionContext {
+	if (policy.grantAll) {
+		return {
+			autoAllowed: ["All actions are auto-allowed in the current scope."],
+			approvalRequired: [],
+			denied: [],
+			explanation:
+				"Grant-all is enabled, so Nous can act without per-action approval checks.",
+		};
+	}
+
+	const autoAllowed = new Set<string>();
+	const approvalRequired = new Set<string>();
+	const denied = new Set<string>();
+
+	for (const rule of policy.rules) {
+		const line = formatPermissionRule(rule, input);
+		if (!line) continue;
+		switch (rule.approval) {
+			case "auto_allow":
+				autoAllowed.add(line);
+				break;
+			case "deny":
+				denied.add(line);
+				break;
+			case "ask_once":
+				approvalRequired.add(`${line} (approval on first use)`);
+				break;
+			case "always_ask":
+				approvalRequired.add(`${line} (approval required every time)`);
+				break;
+			default:
+				break;
+		}
+	}
+
+	const autoAllowedLines = [...autoAllowed];
+	const approvalRequiredLines = [...approvalRequired];
+	const deniedLines = [...denied];
+
+	return {
+		autoAllowed: autoAllowedLines,
+		approvalRequired: approvalRequiredLines,
+		denied: deniedLines,
+		explanation: buildPermissionExplanation({
+			autoAllowed: autoAllowedLines,
+			approvalRequired: approvalRequiredLines,
+			denied: deniedLines,
+		}),
+	};
+}
+
 export function revokePermissionAction(
 	policy: PermissionPolicy,
 	action: PermissionAction,
@@ -304,6 +359,78 @@ function resolvePermissionPath(path: string, projectRoot?: string): string {
 
 function normalizePermissionPath(path: string): string {
 	return resolve(path).replace(/\\/g, "/");
+}
+
+function formatPermissionRule(
+	rule: PermissionRule,
+	input: PermissionResolutionInput,
+): string | undefined {
+	switch (rule.action) {
+		case "fs.read":
+		case "fs.write":
+			if (rule.scope.type === "all") {
+				return `${rule.action} on any path`;
+			}
+			if (rule.scope.type === "directory") {
+				const paths = rule.scope.paths.map((path) =>
+					resolvePermissionPath(path, input.projectRoot),
+				);
+				return `${rule.action} under ${paths.join(", ")}`;
+			}
+			return undefined;
+		case "shell.exec":
+			if (rule.scope.type === "all") return "shell.exec for any command";
+			if (rule.scope.type === "command") {
+				if (rule.scope.allowlist.length === 0) {
+					return "shell.exec for commands outside the allowlist";
+				}
+				return `shell.exec for ${rule.scope.allowlist.join(", ")}`;
+			}
+			return undefined;
+		case "network.http":
+			if (rule.scope.type === "all") return "network.http to any domain";
+			if (rule.scope.type === "network") {
+				if (rule.scope.domains.length === 0) {
+					return "network.http to domains not explicitly auto-allowed";
+				}
+				return `network.http to ${rule.scope.domains.join(", ")}`;
+			}
+			return undefined;
+		case "browser.control":
+			return "browser.control";
+		case "spawn_subagent":
+			return "spawn_subagent";
+		case "memory.write":
+			return "memory.write";
+		case "evolution.self_mutate":
+			return "evolution.self_mutate";
+		case "escalate_to_human":
+			return "escalate_to_human";
+		default:
+			return undefined;
+	}
+}
+
+function buildPermissionExplanation(input: {
+	autoAllowed: string[];
+	approvalRequired: string[];
+	denied: string[];
+}): string {
+	const parts: string[] = [];
+	if (input.autoAllowed.length > 0) {
+		parts.push(`Auto-allowed: ${input.autoAllowed.slice(0, 2).join("; ")}`);
+	}
+	if (input.approvalRequired.length > 0) {
+		parts.push(
+			`Needs approval: ${input.approvalRequired.slice(0, 2).join("; ")}`,
+		);
+	}
+	if (input.denied.length > 0) {
+		parts.push(`Denied: ${input.denied.slice(0, 2).join("; ")}`);
+	}
+	return parts.length > 0
+		? parts.join(" ")
+		: "No permissions are currently granted for this scope.";
 }
 
 function parsePermissionRule(value: JsonValue): PermissionRule | undefined {

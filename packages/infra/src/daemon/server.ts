@@ -19,6 +19,7 @@ import {
 import { createGeneralAgent } from "../agents/general.ts";
 import { loadNousConfig } from "../config/home.ts";
 import {
+	describePermissionBoundary,
 	loadPermissionPolicy,
 	resolvePermissionCapabilities,
 } from "../config/permissions.ts";
@@ -105,10 +106,15 @@ export class NousDaemon {
 			intentStore: this.backend.intents,
 			pollIntervalMs: this.nousConfig.sensors.pollIntervalMs,
 			cooldownMs: this.nousConfig.sensors.cooldownMs,
+			idleOnly: this.nousConfig.ambient.idleOnly,
 			onPromoted: async (promotion) => {
+				const rootDir = String(
+					(promotion.signal.payload as { rootDir?: string }).rootDir ??
+						process.cwd(),
+				);
 				const thread = this.dialogue.ensureThread({
-					threadId: "thread_ambient",
-					title: "Ambient notices",
+					threadId: this.getAmbientThreadId(rootDir),
+					title: this.getAmbientThreadTitle(rootDir),
 					channelId: "daemon",
 				});
 				this.dialogue.enqueueAssistantMessage({
@@ -123,14 +129,8 @@ export class NousDaemon {
 				});
 				if (this.nousConfig.ambient.enabled && promotion.suggestedIntentText) {
 					const scope = {
-						workingDirectory: String(
-							(promotion.signal.payload as { rootDir?: string }).rootDir ??
-								process.cwd(),
-						),
-						projectRoot: String(
-							(promotion.signal.payload as { rootDir?: string }).rootDir ??
-								process.cwd(),
-						),
+						workingDirectory: rootDir,
+						projectRoot: rootDir,
 					};
 					if (this.nousConfig.ambient.autoSubmit && promotion.autoSubmit) {
 						this.dialogue.enqueueAssistantMessage({
@@ -1582,6 +1582,7 @@ export class NousDaemon {
 		text: string;
 		scope: Channel["scope"];
 	}) {
+		const permissionPolicy = loadPermissionPolicy();
 		const assembledContext = this.contextAssembler.assemble({
 			scope: params.scope,
 			activeIntents: this.backend.intents.getActive().map((intent) => ({
@@ -1596,6 +1597,9 @@ export class NousDaemon {
 				scope: params.scope,
 				threadId: params.threadId,
 			}),
+			permissionContext: describePermissionBoundary(permissionPolicy, {
+				projectRoot: params.scope.projectRoot,
+			}),
 		});
 		const systemPrompt = renderContextForSystemPrompt(assembledContext);
 		const grounding = buildUserStateGrounding({
@@ -1609,7 +1613,7 @@ export class NousDaemon {
 				})),
 		});
 		const permissionCapabilities = resolvePermissionCapabilities(
-			loadPermissionPolicy(),
+			permissionPolicy,
 			{ projectRoot: params.scope.projectRoot },
 		);
 		return {
@@ -2339,6 +2343,16 @@ export class NousDaemon {
 			);
 		}
 	}
+
+	private getAmbientThreadId(rootDir: string): string {
+		return `thread_ambient_${hashText(rootDir)}`;
+	}
+
+	private getAmbientThreadTitle(rootDir: string): string {
+		const segments = rootDir.replace(/\\/g, "/").split("/").filter(Boolean);
+		const label = segments.at(-1) ?? rootDir;
+		return `Ambient notices — ${label}`;
+	}
 }
 
 interface ConnectionState {
@@ -2353,6 +2367,15 @@ function cleanupSocket(socketPath: string): void {
 	} catch {
 		// ignore
 	}
+}
+
+function hashText(text: string): string {
+	let hash = 0;
+	for (let index = 0; index < text.length; index += 1) {
+		hash = (hash << 5) - hash + text.charCodeAt(index);
+		hash |= 0;
+	}
+	return Math.abs(hash).toString(36);
 }
 
 function shouldDeliverToSession(

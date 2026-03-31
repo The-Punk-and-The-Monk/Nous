@@ -17,11 +17,17 @@ export interface RetrievedMemory {
 	semanticScore: number;
 	lexicalScore: number;
 	scopeScore: number;
+	provenanceScore: number;
+	excerpt: string;
+	chunkIndex: number;
+	chunkCount: number;
 }
 
 const EMBEDDING_DIMENSIONS = 64;
 const DEFAULT_LIMIT = 5;
 const DEFAULT_CANDIDATE_LIMIT = 100;
+const CHUNK_TOKEN_LIMIT = 96;
+const CHUNK_TOKEN_OVERLAP = 24;
 
 export class LocalEmbeddingModel {
 	embedText(text: string): number[] {
@@ -50,44 +56,81 @@ export class HybridMemoryRetriever {
 		const queryEmbedding = this.embeddingModel.embedText(
 			buildQueryDocument(input.query, input.scope, input.threadId),
 		);
-		const candidates = this.store
-			.query({
-				agentId: input.agentId,
-				limit: input.candidateLimit ?? DEFAULT_CANDIDATE_LIMIT,
-			})
-			.filter((entry) =>
-				input.tiers && input.tiers.length > 0
-					? input.tiers.includes(entry.tier)
-					: true,
-			);
+		const candidates = this.collectCandidates(input).filter((entry) =>
+			input.tiers && input.tiers.length > 0
+				? input.tiers.includes(entry.tier)
+				: true,
+		);
 
 		const lexicalQueryTokens = new Set(tokenize(input.query));
 		const ranked = candidates
 			.map((entry) => {
 				const hydrated = this.ensureEmbedding(entry);
-				const semanticScore = cosineSimilarity(
+				const bestChunk = selectBestChunk({
+					entry: hydrated,
 					queryEmbedding,
-					hydrated.embedding ?? [],
-				);
-				const lexicalScore = computeLexicalScore(
-					lexicalQueryTokens,
-					tokenize(buildMemoryDocument(hydrated)),
-				);
-				const scopeScore = computeScopeScore(hydrated, input.scope);
+					queryTokens: lexicalQueryTokens,
+					scope: input.scope,
+					threadId: input.threadId,
+					embeddingModel: this.embeddingModel,
+				});
 				const score =
-					semanticScore * 0.55 + lexicalScore * 0.3 + scopeScore * 0.15;
+					bestChunk.semanticScore * 0.45 +
+					bestChunk.lexicalScore * 0.22 +
+					bestChunk.scopeScore * 0.18 +
+					bestChunk.provenanceScore * 0.1 +
+					computeRetentionScore(hydrated) * 0.05;
 				return {
 					entry: hydrated,
 					score,
-					semanticScore,
-					lexicalScore,
-					scopeScore,
+					semanticScore: bestChunk.semanticScore,
+					lexicalScore: bestChunk.lexicalScore,
+					scopeScore: bestChunk.scopeScore,
+					provenanceScore: bestChunk.provenanceScore,
+					excerpt: bestChunk.excerpt,
+					chunkIndex: bestChunk.chunkIndex,
+					chunkCount: bestChunk.chunkCount,
 				};
 			})
-			.filter((item) => item.score > 0)
-			.sort((left, right) => right.score - left.score);
+			.filter(
+				(item) =>
+					item.semanticScore > 0 ||
+					item.lexicalScore > 0 ||
+					item.scopeScore > 0,
+			)
+			.sort((left, right) => {
+				if (right.score !== left.score) return right.score - left.score;
+				return (
+					(right.entry.lastAccessedAt || "").localeCompare(
+						left.entry.lastAccessedAt || "",
+					) || right.entry.createdAt.localeCompare(left.entry.createdAt)
+				);
+			});
 
 		return ranked.slice(0, input.limit ?? DEFAULT_LIMIT);
+	}
+
+	private collectCandidates(input: MemoryRetrievalInput): MemoryEntry[] {
+		const merged = new Map<string, MemoryEntry>();
+		for (const entry of this.store.query({
+			agentId: input.agentId,
+			limit: input.candidateLimit ?? DEFAULT_CANDIDATE_LIMIT,
+		})) {
+			merged.set(entry.id, entry);
+		}
+
+		const lexicalSearch = buildLexicalSearchQuery(input.query);
+		if (lexicalSearch) {
+			for (const entry of this.store.search(
+				input.agentId ?? "",
+				lexicalSearch,
+				input.candidateLimit ?? DEFAULT_CANDIDATE_LIMIT,
+			)) {
+				merged.set(entry.id, entry);
+			}
+		}
+
+		return [...merged.values()];
 	}
 
 	private ensureEmbedding(entry: MemoryEntry): MemoryEntry {
@@ -107,7 +150,15 @@ export class HybridMemoryRetriever {
 export function renderMemoryHints(results: RetrievedMemory[]): string[] {
 	return results.map((result) => {
 		const score = result.score.toFixed(2);
-		return `[${result.entry.tier} score=${score}] ${compactText(result.entry.content, 180)}`;
+		const sourceKind =
+			typeof result.entry.metadata?.sourceKind === "string"
+				? ` ${result.entry.metadata.sourceKind}`
+				: "";
+		const chunkLabel =
+			result.chunkCount > 1
+				? ` chunk=${result.chunkIndex + 1}/${result.chunkCount}`
+				: "";
+		return `[${result.entry.tier}${sourceKind} score=${score}${chunkLabel}] ${compactText(result.excerpt, 180)}`;
 	});
 }
 
@@ -156,6 +207,35 @@ function buildMemoryDocument(entry: MemoryEntry): string {
 		.join("\n");
 }
 
+function buildChunkDocument(entry: MemoryEntry, chunkText: string): string {
+	const metadata = entry.metadata ?? {};
+	const tags = Array.isArray(metadata.tags)
+		? metadata.tags.map((value) => String(value))
+		: [];
+	const labels = Array.isArray(metadata.labels)
+		? metadata.labels.map((value) => String(value))
+		: [];
+	const projectRoot =
+		typeof metadata.projectRoot === "string" ? metadata.projectRoot : "";
+	const focusedFile =
+		typeof metadata.focusedFile === "string" ? metadata.focusedFile : "";
+	const threadId =
+		typeof metadata.threadId === "string" ? metadata.threadId : "";
+	const sourceKind =
+		typeof metadata.sourceKind === "string" ? metadata.sourceKind : "";
+	return [
+		chunkText,
+		projectRoot,
+		focusedFile,
+		threadId,
+		sourceKind,
+		tags.join(" "),
+		labels.join(" "),
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
 function computeLexicalScore(
 	queryTokens: Set<string>,
 	candidateTokens: string[],
@@ -172,9 +252,15 @@ function computeLexicalScore(
 function computeScopeScore(
 	entry: MemoryEntry,
 	scope: ChannelScope | undefined,
+	threadId?: string,
 ): number {
-	if (!scope) return 0;
 	const metadata = entry.metadata ?? {};
+	const memoryThreadId =
+		typeof metadata.threadId === "string" ? metadata.threadId : undefined;
+	if (threadId && memoryThreadId && threadId === memoryThreadId) {
+		return 1;
+	}
+	if (!scope) return 0;
 	const projectRoot =
 		typeof metadata.projectRoot === "string" ? metadata.projectRoot : undefined;
 	const focusedFile =
@@ -185,6 +271,149 @@ function computeScopeScore(
 			: 0.7;
 	}
 	return 0;
+}
+
+function computeProvenanceScore(entry: MemoryEntry): number {
+	const metadata = entry.metadata ?? {};
+	const provenance =
+		metadata.provenance && typeof metadata.provenance === "object"
+			? (metadata.provenance as {
+					confidence?: unknown;
+					evidenceRefs?: unknown[];
+				})
+			: undefined;
+	const explicitConfidence =
+		typeof provenance?.confidence === "number" ? provenance.confidence : 0.55;
+	const evidenceBoost = Array.isArray(provenance?.evidenceRefs)
+		? Math.min(provenance.evidenceRefs.length * 0.08, 0.24)
+		: 0;
+	return clamp01(explicitConfidence + evidenceBoost);
+}
+
+function computeRetentionScore(entry: MemoryEntry): number {
+	return clamp01(entry.retentionScore / 3);
+}
+
+function clamp01(value: number): number {
+	return Math.max(0, Math.min(1, value));
+}
+
+function buildLexicalSearchQuery(query: string): string | undefined {
+	const tokens = [...new Set(tokenize(query))]
+		.map((token) => token.replace(/[^a-z0-9_]+/g, ""))
+		.filter((token) => token.length > 1)
+		.slice(0, 8);
+	return tokens.length > 0
+		? tokens.map((token) => `"${token}"`).join(" OR ")
+		: undefined;
+}
+
+interface ChunkSelectionInput {
+	entry: MemoryEntry;
+	queryEmbedding: number[];
+	queryTokens: Set<string>;
+	scope?: ChannelScope;
+	threadId?: string;
+	embeddingModel: LocalEmbeddingModel;
+}
+
+interface ChunkSelectionResult {
+	semanticScore: number;
+	lexicalScore: number;
+	scopeScore: number;
+	provenanceScore: number;
+	excerpt: string;
+	chunkIndex: number;
+	chunkCount: number;
+}
+
+function selectBestChunk(input: ChunkSelectionInput): ChunkSelectionResult {
+	const chunks = buildMemoryChunks(input.entry.content);
+	const provenanceScore = computeProvenanceScore(input.entry);
+	const scopeScore = computeScopeScore(
+		input.entry,
+		input.scope,
+		input.threadId,
+	);
+	let best: ChunkSelectionResult | undefined;
+
+	for (const chunk of chunks) {
+		const chunkDocument = buildChunkDocument(input.entry, chunk.text);
+		const semanticScore = cosineSimilarity(
+			input.queryEmbedding,
+			input.embeddingModel.embedText(chunkDocument),
+		);
+		const lexicalScore = computeLexicalScore(
+			input.queryTokens,
+			tokenize(chunkDocument),
+		);
+		const candidate: ChunkSelectionResult = {
+			semanticScore,
+			lexicalScore,
+			scopeScore,
+			provenanceScore,
+			excerpt: chunk.text,
+			chunkIndex: chunk.index,
+			chunkCount: chunks.length,
+		};
+		if (!best) {
+			best = candidate;
+			continue;
+		}
+		const currentScore =
+			candidate.semanticScore * 0.55 +
+			candidate.lexicalScore * 0.3 +
+			candidate.scopeScore * 0.15;
+		const bestScore =
+			best.semanticScore * 0.55 +
+			best.lexicalScore * 0.3 +
+			best.scopeScore * 0.15;
+		if (currentScore > bestScore) {
+			best = candidate;
+		}
+	}
+
+	return (
+		best ?? {
+			semanticScore: 0,
+			lexicalScore: 0,
+			scopeScore,
+			provenanceScore,
+			excerpt: compactText(input.entry.content, 240),
+			chunkIndex: 0,
+			chunkCount: 1,
+		}
+	);
+}
+
+interface MemoryChunk {
+	index: number;
+	text: string;
+}
+
+function buildMemoryChunks(content: string): MemoryChunk[] {
+	const tokens = content.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+	if (tokens.length === 0) {
+		return [{ index: 0, text: "" }];
+	}
+	if (tokens.length <= CHUNK_TOKEN_LIMIT) {
+		return [{ index: 0, text: tokens.join(" ") }];
+	}
+
+	const step = Math.max(CHUNK_TOKEN_LIMIT - CHUNK_TOKEN_OVERLAP, 1);
+	const chunks: MemoryChunk[] = [];
+	let index = 0;
+	for (let start = 0; start < tokens.length; start += step) {
+		const slice = tokens.slice(start, start + CHUNK_TOKEN_LIMIT);
+		if (slice.length === 0) continue;
+		chunks.push({
+			index,
+			text: slice.join(" "),
+		});
+		index += 1;
+		if (start + CHUNK_TOKEN_LIMIT >= tokens.length) break;
+	}
+	return chunks;
 }
 
 function tokenize(text: string): string[] {
