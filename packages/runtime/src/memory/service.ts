@@ -74,6 +74,18 @@ export interface IngestProspectiveCommitmentInput {
 	sourceRefs?: MemorySourceRef[];
 }
 
+export interface StoreManualMemoryNoteInput {
+	content: string;
+	factType?: SemanticMemoryMetadata["factType"];
+	threadId?: string;
+	intentId?: string;
+	scope?: ChannelScope;
+	tags?: string[];
+	sourceRefs?: MemorySourceRef[];
+	parentMemoryIds?: string[];
+	confidence?: number;
+}
+
 export interface MemoryContextQuery
 	extends Omit<MemoryRetrievalInput, "agentId"> {
 	recordAccess?: boolean;
@@ -332,6 +344,47 @@ export class MemoryService {
 		});
 	}
 
+	storeManualNote(input: StoreManualMemoryNoteInput): MemoryEntry {
+		const createdAt = now();
+		const factType = input.factType ?? "project_fact";
+		const confidence = clampConfidence(input.confidence ?? 0.78);
+		const metadata: SemanticMemoryMetadata = {
+			schemaVersion: "memory.v1",
+			sourceKind: "manual_note",
+			threadId: input.threadId,
+			intentId: input.intentId,
+			projectRoot: input.scope?.projectRoot,
+			focusedFile: input.scope?.focusedFile,
+			labels: input.scope?.labels ?? [],
+			tags: dedupeStrings(["manual_note", factType, ...(input.tags ?? [])]),
+			factType,
+			confidence,
+			provenance: this.buildProvenance({
+				source: "manual_note",
+				observedAt: createdAt,
+				confidence,
+				parentMemoryIds: input.parentMemoryIds,
+				sourceRefs: compactRefs([
+					input.threadId ? { kind: "thread", id: input.threadId } : undefined,
+					input.intentId ? { kind: "intent", id: input.intentId } : undefined,
+					...(input.sourceRefs ?? []),
+				]),
+			}),
+		};
+
+		return this.store({
+			id: prefixedId("mem"),
+			tier: "semantic",
+			agentId: this.agentId,
+			content: input.content.trim(),
+			metadata,
+			createdAt,
+			lastAccessedAt: createdAt,
+			accessCount: 0,
+			retentionScore: 1.15,
+		});
+	}
+
 	retrieve(input: MemoryContextQuery): RetrievedMemory[] {
 		return this.retriever.retrieve({
 			...input,
@@ -505,6 +558,14 @@ function compactText(text: string, maxLength: number): string {
 	const compact = text.replace(/\s+/g, " ").trim();
 	if (compact.length <= maxLength) return compact;
 	return `${compact.slice(0, maxLength - 3)}...`;
+}
+
+function clampConfidence(value: number): number {
+	return Math.max(0, Math.min(1, value));
+}
+
+function dedupeStrings(values: string[]): string[] {
+	return [...new Set(values.filter(Boolean))];
 }
 
 function compactRefs(

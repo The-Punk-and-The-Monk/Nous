@@ -109,6 +109,7 @@ export class NousDaemon {
 			eventStore: this.backend.events,
 			taskStore: this.backend.tasks,
 			intentStore: this.backend.intents,
+			memoryStore: this.backend.memory,
 		});
 		this.orchestrator.registerAgent(createGeneralAgent());
 		this.threadInputRouter = new ThreadInputRouter(options.llm);

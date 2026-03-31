@@ -23,7 +23,14 @@ export function createAnalystAgent(overrides: Partial<Agent> = {}): Agent {
 		status: "idle",
 		personality: {
 			style: "analytical and precise",
-			toolPreferences: ["file_read", "glob", "grep"],
+			toolPreferences: [
+				"git_status",
+				"git_diff",
+				"memory_search",
+				"file_read",
+				"glob",
+				"grep",
+			],
 			systemPrompt:
 				"You are a code analyst agent. Read and analyze code, provide summaries, identify patterns, and report findings. You do not modify files.",
 		},

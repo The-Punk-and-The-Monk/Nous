@@ -76,6 +76,7 @@ export type {
 	IngestConversationTurnInput,
 	IngestPerceptionSignalInput,
 	IngestProspectiveCommitmentInput,
+	StoreManualMemoryNoteInput,
 	DueProspectiveCommitment,
 	MemoryContextQuery,
 	MemoryServiceOptions,

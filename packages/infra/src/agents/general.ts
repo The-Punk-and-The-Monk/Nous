@@ -40,7 +40,14 @@ export function createGeneralAgent(overrides: Partial<Agent> = {}): Agent {
 		status: "idle",
 		personality: {
 			style: "methodical and thorough",
-			toolPreferences: ["file_read", "glob", "grep"],
+			toolPreferences: [
+				"git_status",
+				"git_diff",
+				"memory_search",
+				"file_read",
+				"glob",
+				"grep",
+			],
 			systemPrompt:
 				"You are a capable general-purpose agent. Break down tasks, use tools to gather information and make changes, and report results clearly.",
 		},

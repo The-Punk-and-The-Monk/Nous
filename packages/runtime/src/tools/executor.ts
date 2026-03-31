@@ -214,6 +214,11 @@ function buildPermissionRequest(
 				String(input.command ?? ""),
 			);
 			break;
+		default:
+			if ((tool.invokesShellCommands?.length ?? 0) > 0) {
+				base.command = tool.invokesShellCommands?.[0];
+			}
+			break;
 	}
 
 	return base;
@@ -260,6 +265,10 @@ function assertToolInputAccess(
 	input: Record<string, unknown>,
 	capabilities: CapabilitySet,
 ): void {
+	for (const command of tool.invokesShellCommands ?? []) {
+		assertShellCommandAccess(capabilities, command);
+	}
+
 	switch (tool.name) {
 		case "shell":
 			assertShellCommandAccess(capabilities, String(input.command ?? ""));

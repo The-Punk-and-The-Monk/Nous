@@ -28,8 +28,8 @@ import {
 	now,
 	prefixedId,
 } from "@nous/core";
-import type { EventStore, IntentStore, TaskStore } from "@nous/persistence";
-import { AgentRuntime } from "@nous/runtime";
+import type { EventStore, IntentStore, MemoryStore, TaskStore } from "@nous/persistence";
+import { AgentRuntime, MemoryService } from "@nous/runtime";
 import type { RuntimeInterruptRequest } from "@nous/runtime";
 import {
 	ToolExecutor,
@@ -46,6 +46,7 @@ export interface OrchestratorConfig {
 	eventStore: EventStore;
 	taskStore: TaskStore;
 	intentStore: IntentStore;
+	memoryStore?: MemoryStore;
 	heartbeatTimeoutMs?: number;
 	pollIntervalMs?: number;
 }
@@ -100,6 +101,7 @@ export class Orchestrator {
 	private eventStore: EventStore;
 	private taskStore: TaskStore;
 	private intentStore: IntentStore;
+	private memory?: MemoryService;
 	private readonly intentExecutionOptions = new Map<
 		string,
 		IntentExecutionOptions
@@ -114,6 +116,12 @@ export class Orchestrator {
 		this.eventStore = config.eventStore;
 		this.taskStore = config.taskStore;
 		this.intentStore = config.intentStore;
+		this.memory = config.memoryStore
+			? new MemoryService({
+					store: config.memoryStore,
+					agentId: "nous",
+				})
+			: undefined;
 
 		this.parser = new IntentParser(config.llm);
 		this.planner = new TaskPlanner(config.llm);
@@ -890,7 +898,9 @@ export class Orchestrator {
 		// Set up tools
 		const toolRegistry = new ToolRegistry();
 		const toolExecutor = new ToolExecutor();
-		registerBuiltinTools(toolRegistry, toolExecutor);
+		registerBuiltinTools(toolRegistry, toolExecutor, {
+			memory: this.memory,
+		});
 
 		// Create runtime and execute
 		const effectiveCapabilities = this.intentExecutionOptions.get(task.intentId)

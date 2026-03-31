@@ -4538,3 +4538,80 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - The script currently relies on `codex exec resume --last`, which is convenient but assumes there is no competing Codex session in the same working context.
   - If the overnight workflow becomes routine, a future improvement could capture an explicit Codex session id and resume that exact session rather than depending on `--last`.
+
+## 2026-04-01
+
+### Session: Add first real Tier 2 developer tools + explicit memory tool contracts
+- Context / Trigger:
+  - After re-reading `ARCHITECTURE.md`, `docs/DEVELOPMENT_LOG.md`, and `docs/PROGRESS_MATRIX.md`, the clearest near-term gap was no longer daemon continuity or base context realism.
+  - The strongest steering signal in the progress matrix was that Sprint 7's remaining gap had shifted toward **tool breadth**, while Sprint 9 still needed more semantically meaningful execution artifacts to learn from.
+- Problem:
+  - Nous still exposed only Tier 1 primitives in code (`file_read`, `file_write`, `glob`, `grep`, `shell`), which meant the agent often had to reach for generic shell usage even for common developer actions that should have had clearer contracts.
+  - Memory was increasingly important to execution quality, but it still entered agent work mostly as implicit substrate or prompt assembly, not as an explicit governed tool surface.
+  - There was also a hidden contract bug: if new shell-backed builtin tools were added naively, they could bypass the existing `shell.exec` allowlist because `ToolExecutor` only checked command-level allowlists for the generic `shell` tool.
+- Options considered:
+  - Option A: keep relying on `shell` for Git and verification workflows.
+    - Rejected because it preserves low-semantic execution traces and weakens future procedural-memory / skill crystallization quality.
+  - Option B: add several shell-backed builtin tools quickly, without changing the tool contract.
+    - Rejected because it would silently weaken the permission boundary by letting tool-specific subprocesses skip allowlist enforcement.
+  - Option C: land a smaller but architecturally honest Tier 2 slice:
+    - explicit Git tools
+    - explicit memory tools
+    - plus a tighter tool contract so shell-backed builtins still respect command allowlists
+    - Chosen because it improves present-day task closure while also creating better future learning material.
+- Decision:
+  - Extend `ToolDef` with explicit shell-command provenance (`invokesShellCommands`) so builtin tools can declare their subprocess dependencies.
+  - Teach `ToolExecutor` to enforce `shell.exec` allowlists against those declared commands, not only against the generic `shell` tool.
+  - Add a first Tier 2 developer-tool slice:
+    - `git_status`
+    - `git_diff`
+    - `memory_search`
+    - `memory_store`
+  - Extend `MemoryService` with a manual semantic-note path so memory storage becomes an explicit contract rather than a hidden side effect.
+  - Wire memory-aware builtins through the orchestrator/daemon path and bias default agent preferences toward the new tools.
+- Changes made:
+  - Updated `packages/core/src/types/tool.ts`
+    - added `invokesShellCommands` to the tool contract
+  - Updated `packages/runtime/src/tools/executor.ts`
+    - enforce allowlists for shell-backed builtin tools
+    - expose generic permission-request metadata for declared shell commands
+  - Added `packages/runtime/src/tools/builtin/command.ts`
+    - shared subprocess helper for bounded builtin command execution
+  - Added `packages/runtime/src/tools/builtin/git-status.ts`
+  - Added `packages/runtime/src/tools/builtin/git-diff.ts`
+  - Added `packages/runtime/src/tools/builtin/memory-search.ts`
+  - Added `packages/runtime/src/tools/builtin/memory-store.ts`
+  - Updated `packages/runtime/src/tools/builtin/index.ts`
+    - register the new Tier 2 tools
+    - register memory tools only when a memory service is available
+  - Updated `packages/runtime/src/memory/service.ts`
+    - added `storeManualNote`
+    - added typed input for manual semantic memory notes
+  - Updated `packages/runtime/src/index.ts`
+    - exported the new memory-service input type
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - accept optional `memoryStore`
+    - instantiate a shared `MemoryService` when available
+    - pass memory dependencies into builtin-tool registration
+  - Updated `packages/infra/src/daemon/server.ts`
+    - pass the daemon memory store into the orchestrator so memory tools are available in the persistent runtime path
+  - Updated `packages/infra/src/agents/general.ts`
+  - Updated `packages/infra/src/agents/analyst.ts`
+    - bias tool preferences toward `git_*` and `memory_search`
+  - Added `packages/runtime/tests/builtin-tools.test.ts`
+    - validates Git tool behavior, allowlist enforcement, and memory-tool round trips
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/runtime/tests/builtin-tools.test.ts packages/runtime/tests/tool-permissions.test.ts` ✅
+- Impact / Result:
+  - Nous now has its first credible Tier 2 developer-tool slice instead of only raw primitives.
+  - Common Git inspection is now available as explicit read-only tools, which gives the model a clearer affordance than generic shell invocation.
+  - Memory can now be searched and explicitly written through governed tools, which better matches the architecture's treatment of memory as a first-class runtime substrate.
+  - Shell-backed builtin tools no longer create a quiet permission-boundary hole; their declared subprocess dependencies are checked against the same allowlist discipline as generic shell usage.
+  - Execution traces will now be able to accumulate more semantically meaningful tool names (`git_status`, `git_diff`, `memory_search`, `memory_store`) rather than collapsing everything into undifferentiated shell calls.
+- Open questions / follow-ups:
+  - This round deliberately targeted a narrow Tier 2 slice; `git_log`, `test_runner`, `diff_patch`, and richer verification-oriented tools are still missing.
+  - `memory_store` currently writes semantic notes only; a richer future path should decide how procedural-memory compilation and tool-result ingestion become explicit tool/runtime contracts rather than ad hoc storage helpers.
+  - The next natural continuation is likely one of:
+    - broaden Tier 2 verification tools (`test_runner`, structured diff/application tools)
+    - or use the richer tool vocabulary to strengthen Sprint 9 procedural-memory / execution-trace compilation.
