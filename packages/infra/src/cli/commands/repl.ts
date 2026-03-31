@@ -7,6 +7,8 @@ import type {
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
 import { DaemonClientSession } from "../../daemon/client.ts";
+import { printReplCommands } from "../help.ts";
+import { resolveReplControlInput } from "../repl-control.ts";
 import { colors } from "../ui/colors.ts";
 import { attachCommand, renderDialogueMessage } from "./attach.ts";
 
@@ -57,7 +59,10 @@ export async function openDaemonRepl(options?: {
 		await attachToThread(session, channel, currentThreadId, true);
 	}
 
-	printReplHelp();
+	printReplCommands({
+		daemonRunning: true,
+		currentThreadId,
+	});
 	rl.prompt();
 
 	await new Promise<void>((resolve) => {
@@ -68,42 +73,72 @@ export async function openDaemonRepl(options?: {
 				return;
 			}
 
-			if (input === "/exit" || input === "/quit") {
-				shuttingDown = true;
-				rl.close();
-				return;
-			}
+			const resolution = resolveReplControlInput(input, {
+				daemonRunning: true,
+				currentThreadId,
+			});
 
-			if (input === "/help") {
-				printReplHelp();
+			if (resolution.kind === "clarify") {
+				console.log(`  ${colors.yellow(resolution.message)}`);
 				rl.prompt();
 				return;
 			}
 
-			if (input === "/status") {
-				await printStatus(session, channel);
-				rl.prompt();
-				return;
-			}
-
-			if (input.startsWith("/attach ")) {
-				currentThreadId = input.slice("/attach ".length).trim() || undefined;
-				if (currentThreadId) {
-					await printThreadSnapshot(session, channel, currentThreadId);
-					await attachToThread(session, channel, currentThreadId, false);
-				} else {
-					await attachToThread(session, channel, currentThreadId, true);
+			if (resolution.kind === "execute") {
+				if (resolution.source === "natural_language") {
+					console.log(
+						`  ${colors.dim(`control → ${resolution.interpretedAs}`)}`,
+					);
 				}
-				rl.setPrompt(promptForThread(currentThreadId));
-				rl.prompt();
-				return;
+				switch (resolution.action) {
+					case "show_commands":
+						printReplCommands({
+							daemonRunning: true,
+							currentThreadId,
+							query: resolution.query,
+						});
+						rl.prompt();
+						return;
+					case "show_status":
+						await printStatus(session, channel);
+						rl.prompt();
+						return;
+					case "attach_thread":
+						currentThreadId = resolution.threadId;
+						if (currentThreadId) {
+							await printThreadSnapshot(session, channel, currentThreadId);
+							await attachToThread(session, channel, currentThreadId, false);
+						}
+						rl.setPrompt(promptForThread(currentThreadId));
+						rl.prompt();
+						return;
+					case "detach_thread":
+						if (!currentThreadId) {
+							console.log(
+								`  ${colors.dim("Already in global REPL mode; no thread is currently attached.")}`,
+							);
+						} else {
+							currentThreadId = undefined;
+							await attachToThread(session, channel, currentThreadId, true);
+							console.log(
+								`  ${colors.dim("Detached from the current thread. The next message can start or discover another thread.")}`,
+							);
+						}
+						rl.setPrompt(promptForThread(currentThreadId));
+						rl.prompt();
+						return;
+					case "exit_repl":
+						shuttingDown = true;
+						rl.close();
+						return;
+				}
 			}
 
 			const response = await session.request({
 				type: currentThreadId ? "send_message" : "submit_intent",
 				channel,
 				payload: {
-					text: input,
+					text: resolution.text,
 					threadId: currentThreadId,
 					scope: channel.scope,
 				},
@@ -216,14 +251,4 @@ function promptForThread(threadId?: string): string {
 	return threadId
 		? `${colors.dim(`[${threadId.slice(0, 12)}]`)} nous> `
 		: "nous> ";
-}
-
-function printReplHelp(): void {
-	console.log(colors.bold("\n  νοῦς — REPL\n"));
-	console.log(
-		`  ${colors.dim("/attach <threadId>")} attach to an existing thread`,
-	);
-	console.log(`  ${colors.dim("/status")} inspect daemon activity`);
-	console.log(`  ${colors.dim("/help")} show commands`);
-	console.log(`  ${colors.dim("/exit")} detach and quit\n`);
 }

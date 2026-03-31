@@ -5148,6 +5148,145 @@ $ nous
   [1] T3: modify manifest.json? (waiting 12m) [a]pprove [d]eny [v]iew
 ```
 
+#### Self-describing CLI control surface
+
+As the CLI grows, a familiar failure mode appears:
+
+- users cannot remember command names
+- `/` menus become long and noisy
+- hidden features stay hidden unless the user already knows they exist
+- natural-language control gets implemented as a parallel ad hoc parser
+- docs, help text, REPL menus, and runtime capability answers drift apart
+
+This is not fundamentally a "menu design" problem. It is a **control-surface modeling** problem.
+
+The real question is:
+
+> can Nous explicitly know what control operations it exposes, in a way that humans, renderers, and the runtime can all query?
+
+The architecture should therefore distinguish two planes:
+
+1. **Task plane**
+   - normal user requests and thread conversation
+   - routed through the task-intake / intent pipeline
+2. **Control plane**
+   - explicit operations over the Nous runtime itself
+   - status, attach, debug, permission changes, network exchange, discovery, REPL session controls
+
+The control plane should not be encoded only in:
+
+- `if (command === "...")` branches
+- hand-written help text
+- a giant slash-command list
+- an LLM prompt that "knows" the commands informally
+
+Instead, Nous should expose a first-class **OperationCatalog**.
+
+```typescript
+interface OperationCatalogEntry {
+  id: string;                          // "daemon.start", "thread.attach", ...
+  title: string;
+  summary: string;
+  category:
+    | "core"
+    | "daemon"
+    | "thread"
+    | "inspect"
+    | "permissions"
+    | "network"
+    | "discovery"
+    | "session";
+  surfaces: Array<"cli" | "repl">;
+  syntax: string[];                    // e.g. ["nous daemon start", "/attach <threadId>"]
+  examples?: string[];
+  tags?: string[];                     // search / discovery keywords
+  requiresDaemon?: boolean;
+  requiresThread?: boolean;
+  foregroundOnly?: boolean;
+  sideEffectClass?: "read_only" | "state_change";
+}
+```
+
+This catalog becomes the single source of truth for:
+
+- `nous --help`
+- `nous help [query]`
+- REPL `/help`
+- REPL `/commands [query]`
+- future IDE/Web command palettes
+- natural-language control routing
+- "what can you do here?" capability discovery
+- CLI documentation
+
+#### Control-intent router
+
+Inside the REPL, not every line should go straight into the task plane.
+
+The system should first run a lightweight **control-intent router**:
+
+```text
+raw REPL input
+   │
+   ├─ slash command? ─────────────► resolve deterministically from OperationCatalog
+   │
+   ├─ high-confidence control intent?
+   │    e.g. "show daemon status", "attach to thread_123", "what can you do here?"
+   │    └─► map to catalog operation
+   │
+   ├─ medium-confidence control intent?
+   │    └─► ask for clarification
+   │
+   └─ otherwise
+        └─► treat as normal thread message / task-plane input
+```
+
+This means natural-language control should map to **structured operations**, not directly to arbitrary shell commands and not directly to free-form prompt behavior.
+
+#### Key invariants
+
+1. **Resolution first, execution second**
+   - natural language may help identify the intended control operation
+   - once resolved, execution should be deterministic and explicit
+2. **Natural-language control is a router, not a replacement runtime**
+   - it chooses an operation from the catalog
+   - it does not invent new hidden control primitives
+3. **Low confidence must fall back safely**
+   - either clarification
+   - or normal task-plane routing
+   - never dangerous silent misexecution
+4. **Discovery must be context-aware**
+   - "what can you do here?" should depend on:
+     - whether the daemon is running
+     - whether a thread is attached
+     - whether an operation is foreground-only
+     - whether the current client surface is CLI or REPL
+5. **Docs/help/menu/discovery must share the same source**
+   - otherwise the control plane fragments immediately
+
+#### Why this is better than a bigger slash menu
+
+A slash menu is still useful, but only as a renderer.  
+It should not be the underlying model.
+
+If the catalog exists, then:
+
+- `/commands` becomes a query UI over the catalog
+- natural-language "what can you do?" becomes another query UI over the same catalog
+- docs become a rendered artifact from the same source
+- future clients can present the same operations differently without redefining them
+
+Without the catalog, every surface grows its own shadow protocol.
+
+#### Recommended v1 rollout
+
+1. Create an initial `OperationCatalog` for the current CLI / REPL control surface
+2. Render CLI help and REPL help from it
+3. Add `/commands [query]` as a richer discovery surface
+4. Add lightweight natural-language control routing in the REPL
+5. Keep execution grounded in explicit handlers rather than free-form LLM action generation
+
+This keeps the command surface learnable without regressing Nous back into a command-only tool. Users can still speak naturally, but the runtime remains architecturally explicit about what control operations exist.
+
 **Why daemon + thin client (not foreground CLI):**
 - Closing the terminal does NOT stop work — Nous is an OS process, not a conversation
 - Multiple terminals = one Nous, shared context, no session isolation

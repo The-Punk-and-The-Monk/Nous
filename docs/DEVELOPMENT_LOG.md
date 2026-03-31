@@ -4133,3 +4133,122 @@ For significant sessions, capture:
     - runtime boundary waiting
     - orchestrator pause/cancel states
     - visible Process Surface interruption artifacts
+
+### Session: Formalize a self-describing CLI control surface and land the first catalog-driven REPL discovery loop
+- Context / Trigger:
+  - After the Process Surface work was committed as a clean baseline, the next user concern shifted from execution visibility to control-surface discoverability:
+    - Nous already has a CLI and REPL
+    - users cannot realistically memorize a growing command set
+    - `/command` menus alone become long, noisy, and still fail to surface unknown capabilities
+    - Codex-like exploratory questions such as "what can you do here?" should ideally work inside the REPL
+  - The deeper architecture question the user raised was exactly the right one:
+    - can Nous itself know what operations its codebase exposes
+    - and can that knowledge drive docs, menus, and natural-language control without each becoming a separate shadow protocol?
+- Problem:
+  - The current CLI command surface was still encoded mainly as:
+    - `if (command === "...")` dispatch branches
+    - hand-written help text
+    - a very thin REPL slash-command layer
+  - That creates several failure modes:
+    - docs drift from code
+    - REPL help drifts from top-level help
+    - natural-language control would be implemented as a second informal parser
+    - capability discovery would become an LLM prompt trick instead of an explicit runtime model
+  - There was also one concrete behavior bug exposed by this reasoning:
+    - with the daemon running, `nous agents` would have fallen through the default "submit intent" path instead of being treated as an explicit CLI control operation
+- Alternatives considered:
+  - Option A: only write `docs/CLI.md` and keep the implementation structure as-is.
+    - Rejected because it improves reference material but does not solve the architectural duplication problem.
+  - Option B: add a larger slash-command menu first, and defer any explicit operation model.
+    - Rejected because the menu would still be just one renderer with no shared source of truth for docs/help/discovery.
+  - Option C: introduce a first executable CLI `OperationCatalog`, then drive:
+    - top-level help
+    - REPL `/commands`
+    - natural-language control routing
+    - CLI docs
+    from that same model
+    - Chosen because it turns discoverability into an explicit control-plane contract rather than ad hoc UI behavior.
+- Decision:
+  - Add a new architecture subsection for a self-describing CLI control surface built around an `OperationCatalog`.
+  - Keep a clean separation between:
+    - task plane
+    - control plane
+  - Treat natural-language REPL control as a **router** onto explicit catalog operations, not as a free-form execution engine.
+  - Implement a first catalog-driven loop immediately:
+    1. catalog
+    2. CLI help
+    3. REPL `/commands`
+    4. natural-language control mapping
+    5. context-aware capability discovery
+- Changes made:
+  - Architecture:
+    - Updated `ARCHITECTURE.md`
+      - added a self-describing CLI control-surface subsection under the human interface area
+      - documented:
+        - task plane vs control plane
+        - `OperationCatalog`
+        - control-intent routing
+        - why slash menus are renderers, not the underlying model
+        - why docs/help/discovery must share one source
+  - Documentation:
+    - Added `docs/CLI.md`
+      - documented:
+        - default interaction model
+        - top-level CLI commands
+        - REPL commands
+        - natural-language REPL control rules
+        - availability constraints
+        - the relationship to the new catalog
+  - CLI control model:
+    - Added `packages/infra/src/cli/catalog.ts`
+      - first `OperationCatalog` draft
+      - operation categories
+      - surface-specific syntax
+      - availability notes
+      - search over command/capability metadata
+    - Added `packages/infra/src/cli/help.ts`
+      - catalog-driven top-level CLI help
+      - catalog-driven REPL `/commands` discovery surface
+      - context-sensitive availability notes
+    - Added `packages/infra/src/cli/repl-control.ts`
+      - slash-command routing
+      - high-confidence natural-language control mapping
+      - medium-confidence clarification
+      - safe fallback back into the task plane
+  - CLI integration:
+    - Updated `packages/infra/src/cli/app.ts`
+      - replaced hand-written usage output with catalog-driven help
+      - added `nous help [query]` / `nous commands [query]`
+      - made explicit control commands win before the default intent path
+      - blocked the misleading daemon-running `nous agents` fallthrough
+    - Updated `packages/infra/src/cli/commands/repl.ts`
+      - replaced hard-coded REPL help with `/commands`-driven discovery
+      - added `/commands [query]`, `/help [query]`, and `/detach`
+      - routed natural-language REPL control through the control router
+      - surfaced `control -> /...` interpretation receipts for natural-language control matches
+  - Tests:
+    - Added `packages/infra/tests/cli-help.test.ts`
+    - Added `packages/infra/tests/repl-control.test.ts`
+      - verified catalog-driven help rendering
+      - verified REPL capability discovery
+      - verified natural-language control routing
+      - verified clarification fallback for ambiguous control phrases
+- Validation:
+  - `bun test packages/infra/tests/cli-help.test.ts packages/infra/tests/repl-control.test.ts packages/infra/tests/process-surface.test.ts packages/infra/tests/dialogue-renderer.test.ts packages/infra/tests/dialogue-service.test.ts packages/infra/tests/daemon-clarification-flow.test.ts packages/infra/tests/decision-queue-flow.test.ts packages/infra/tests/daemon-proactive-reflection.test.ts` ✅
+  - `bun x tsc --noEmit` ✅
+  - `bun bin/nous.ts help network` ✅
+- Impact / Result:
+  - Nous now has a first explicit control-plane substrate instead of treating commands as scattered branch logic.
+  - CLI help, REPL discovery, and natural-language control are now meaningfully closer to a shared source of truth.
+  - REPL capability discovery is materially better:
+    - `/commands` is richer than the old minimal help
+    - it is searchable
+    - it shows contextual availability notes
+    - "what can you do here?"-style prompts can now resolve locally into discovery
+  - The new routing also preserves a critical architectural safety boundary:
+    - ordinary task text still falls back into the task plane
+    - only high-confidence control matches execute immediately
+- Open questions / follow-ups:
+  - The current natural-language control routing is deliberately heuristic and local-first; we may later want a richer semantic control resolver, but only if it still compiles onto explicit catalog operations.
+  - `docs/CLI.md` is now aligned with the catalog conceptually, but not yet generated from it; if drift becomes a problem, the next step should be a catalog-to-doc renderer.
+  - The catalog is currently CLI-local. A later architecture step should consider whether Nous needs a broader cross-channel `ControlSurfaceCatalog` that can also serve future IDE/Web clients.

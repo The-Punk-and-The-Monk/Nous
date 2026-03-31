@@ -29,6 +29,7 @@ import { permissionsCommand } from "./commands/permissions.ts";
 import { openDaemonRepl } from "./commands/repl.ts";
 import { runCommand } from "./commands/run.ts";
 import { statusCommand } from "./commands/status.ts";
+import { printCliHelp } from "./help.ts";
 import { createLLMProviderFromEnv } from "./provider.ts";
 import { createAutoApprovePermissionCallback, createInteractivePermissionCallback } from "./ui/permission-prompt.ts";
 import { colors } from "./ui/colors.ts";
@@ -60,12 +61,20 @@ export async function main(args: string[]): Promise<void> {
 			await openDaemonRepl();
 			return;
 		}
-		printUsage();
+		printCliHelp({ daemonRunning: false });
 		return;
 	}
 
 	if (command === "--help" || command === "-h") {
-		printUsage();
+		printCliHelp({ daemonRunning: isDaemonRunning() });
+		return;
+	}
+
+	if (command === "help" || command === "commands") {
+		printCliHelp({
+			query: args.slice(1).join(" ").trim() || undefined,
+			daemonRunning: isDaemonRunning(),
+		});
 		return;
 	}
 
@@ -200,6 +209,19 @@ export async function main(args: string[]): Promise<void> {
 		return;
 	}
 
+	if (command === "agents") {
+		if (isDaemonRunning()) {
+			console.log(
+				`\n  ${colors.yellow("Agent listing is currently foreground-only and is not wired through the daemon yet.")}`,
+			);
+			console.log(
+				`  ${colors.dim("Stop the daemon or use a foreground run if you want to inspect the local router directly.")}\n`,
+			);
+			backend.close();
+			return;
+		}
+	}
+
 	// Commands that need the orchestrator — select provider
 	const { provider: llm, providerName } = createLLMProviderFromEnv();
 
@@ -318,60 +340,4 @@ export async function main(args: string[]): Promise<void> {
 	orchestrator.stop();
 	supervisor.stop();
 	backend.close();
-}
-
-function printUsage(): void {
-	console.log(`
-  ${colors.bold("νοῦς — Autonomous Agent Framework")}
-
-  ${colors.bold("Usage:")}
-    nous                   Open daemon REPL (when daemon is running)
-    nous <intent>          Execute a natural language intent
-    nous status            Show running tasks and intents
-    nous daemon <action>   Manage the background daemon (start|stop|status)
-    nous attach <thread>   Attach to a persisted dialogue thread
-    nous debug ...        Inspect persisted runtime state
-    nous agents            List registered agents
-    nous events [N]        Show last N events (default: 50)
-    nous memory [search]   View stored memories (optional search term)
-    nous permissions       Show or modify permission rules
-    nous network <action>  Manage inter-Nous seed exchange
-
-  ${colors.bold("Options:")}
-    --log-level <level>    Set log level: debug, info, warn, error, silent
-    --yes, -y              Auto-approve all permission prompts
-    --dangerously-skip-permissions  Alias for --yes
-
-  ${colors.bold("Environment:")}
-    ${colors.dim("Recommended default: direct OpenAI via OPENAI_API_KEY (or ~/.nous/secrets/providers.json).")}
-
-    ANTHROPIC_API_KEY      Direct Anthropic API key
-    ANTHROPIC_AUTH_TOKEN   OAuth token from Claude Pro/Max subscription
-    ANTHROPIC_BASE_URL     Custom Anthropic API endpoint
-    OPENAI_API_KEY         Direct OpenAI API key
-    OPENAI_MODEL           OpenAI / OpenAI-compatible model name
-    OPENAI_API_BASE_URL    Custom base URL for direct OpenAI API
-    OPENAI_BASE_URL        Alias for direct OpenAI base URL
-    OPENAI_COMPAT_BASE_URL OpenAI-compatible endpoint (for proxy / local gateway)
-    OPENAI_ORG_ID          Optional OpenAI organization ID
-    OPENAI_PROJECT_ID      Optional OpenAI project ID
-    NOUS_MODEL             Model for Claude CLI provider (default: sonnet)
-    NOUS_HOME              Nous user home (default: ~/.nous)
-    NOUS_DB                Database path (default: ~/.nous/state/nous.db)
-    NOUS_SECRETS_FILE      Override provider secrets file (default: ~/.nous/secrets/providers.json)
-    NOUS_LOG_LEVEL         Log level: debug, info, warn, error, silent (default: info)
-
-    ${colors.dim("Provider secrets: env vars override ~/.nous/secrets/providers.json")}
-    ${colors.dim("Provider priority default: OpenAI > OpenAI-compatible > Anthropic > Claude CLI")}
-
-  ${colors.bold("Examples:")}
-    nous "Read README.md and summarize what this project is about"
-    nous "Find all TODO comments in the codebase"
-    nous daemon start
-    nous attach thread_abc123
-    nous attach thread_abc123 --once
-    nous network status
-    nous network procedures
-    nous status
-`);
 }
