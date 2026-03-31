@@ -4526,6 +4526,10 @@ For significant sessions, capture:
     - now also hard-codes preflight context rules:
       - re-read `ARCHITECTURE.md`, `docs/DEVELOPMENT_LOG.md`, and `docs/PROGRESS_MATRIX.md` before continuing
       - explicitly ignore writes to the external Obsidian note and any other non-repo diary target
+    - now defaults to safe execution mode rather than dangerous execution:
+      - `--safe-workspace` is the intended default
+      - actual Codex invocation uses `--full-auto --sandbox workspace-write`
+      - `--dangerous` remains available only as an explicit override
 - Validation:
   - `scripts/codex_overnight.sh --help` ✅
 - Impact / Result:

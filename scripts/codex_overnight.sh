@@ -11,12 +11,13 @@ Options:
   --workdir <dir>         Repo/workspace to run in. Default: current directory.
   --session <name>        tmux session name. Default: codex-night-<timestamp>.
   --branch <name>         Git branch to create/switch to. Default: codex-overnight-<timestamp>.
-  --max-runs <n>          Maximum Codex rounds to run. Default: 6.
+  --max-runs <n>          Maximum Codex rounds to run. Default: 999.
   --model <name>          Optional Codex model override.
   --prompt-file <file>    File containing the initial prompt.
   --prompt <text>         Inline initial prompt. If omitted, a Nous-specific default is used.
   --resume-prompt <text>  Prompt used for subsequent resume rounds.
   --search                Enable Codex web search.
+  --safe-workspace        Use Codex workspace-write sandbox with --full-auto (default).
   --dangerous             Use --dangerously-bypass-approvals-and-sandbox instead of --full-auto.
   --foreground            Run in the current shell instead of a detached tmux session.
   --no-branch             Do not create/switch to a new git branch.
@@ -25,7 +26,7 @@ Options:
 Examples:
   scripts/codex_overnight.sh
   scripts/codex_overnight.sh --prompt-file /tmp/night_prompt.txt
-  scripts/codex_overnight.sh --max-runs 3 --model gpt-5.4
+  scripts/codex_overnight.sh --safe-workspace --max-runs 3 --model gpt-5.4
 EOF
 }
 
@@ -45,7 +46,8 @@ model=""
 prompt_file=""
 resume_prompt=""
 enable_search="1"
-dangerous="1"
+safe_workspace="1"
+dangerous="0"
 foreground="0"
 create_branch="1"
 
@@ -88,8 +90,14 @@ while [[ $# -gt 0 ]]; do
 			enable_search="1"
 			shift
 			;;
+		--safe-workspace)
+			safe_workspace="1"
+			dangerous="0"
+			shift
+			;;
 		--dangerous)
 			dangerous="1"
+			safe_workspace="0"
 			shift
 			;;
 		--foreground)
@@ -211,7 +219,7 @@ mode_flags=()
 if [[ "$DANGEROUS" == "1" ]]; then
 	mode_flags+=(--dangerously-bypass-approvals-and-sandbox)
 else
-	mode_flags+=(--full-auto)
+	mode_flags+=(--full-auto --sandbox workspace-write)
 fi
 
 if [[ -n "$MODEL" ]]; then
@@ -263,6 +271,7 @@ export BRANCH_NAME="$branch_name"
 export MAX_RUNS="$max_runs"
 export MODEL="$model"
 export ENABLE_SEARCH="$enable_search"
+export SAFE_WORKSPACE="$safe_workspace"
 export DANGEROUS="$dangerous"
 export PROMPT_PATH="$prompt_path"
 export RESUME_PROMPT_PATH="$resume_prompt_path"
@@ -273,6 +282,7 @@ echo "  branch:  $(git -C "$workdir" rev-parse --abbrev-ref HEAD 2>/dev/null || 
 echo "  session: $session_name"
 echo "  logs:    $run_dir"
 echo "  max runs: $max_runs"
+echo "  mode:    $( [[ "$dangerous" == "1" ]] && echo dangerous || echo safe-workspace )"
 
 if [[ "$foreground" == "1" ]]; then
 	echo "Running in foreground..."
