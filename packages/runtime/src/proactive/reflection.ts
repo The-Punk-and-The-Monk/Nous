@@ -505,7 +505,7 @@ function initiativeLevelAllowsCandidate(input: {
 		input.kind === "check_in" ||
 		input.kind === "celebration"
 	) {
-		return false;
+		return input.valueScore >= 0.8 && input.interruptionCost <= 0.3;
 	}
 	if (input.interruptionCost > 0.35) {
 		return false;

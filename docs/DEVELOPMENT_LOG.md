@@ -139,6 +139,106 @@ For significant sessions, capture:
   - The next refinement is likely agenda/category-aware shaping rather than only kind/score thresholds.
   - Future work can decide whether `balanced` / `high` initiative deserve richer positive behaviors instead of only minimal-mode suppression.
 
+### Session: Soften minimal-initiative shaping so high-value offers can still survive
+
+- Context / Trigger:
+  - Architect review of the initiative-level gate said the direction was correct, but the first implementation was too hard-edged: under minimal initiative, `offer/check_in/celebration` were rejected whenever urgency was not high.
+
+- Problem:
+  - That made the runtime conservative in the right direction, but it also risked silencing unusually high-value, low-friction offers that a minimal-initiative assistant could still reasonably surface.
+
+- Options considered:
+  - Option A: keep the hard gate.
+    - Rejected because it over-suppressed beneficial proactive offers and did not match the intended “low-value low-urgency” design.
+  - Option B: introduce a broad scoring engine across all proactive kinds.
+    - Rejected because it would widen scope beyond a bounded follow-up refinement.
+  - Option C: keep the rule narrow but let high-value, low-interruption offers/check-ins/celebrations survive minimal mode.
+    - Chosen because it preserves restraint while removing the most obvious over-suppression.
+
+- Decision:
+  - Under `initiativeLevel: minimal`, keep suppressing low-value social-style candidates, but allow `offer/check_in/celebration` when:
+    - `valueScore >= 0.8`
+    - `interruptionCost <= 0.3`
+
+- Changes made:
+  - `packages/runtime/src/proactive/reflection.ts`
+    - refined `initiativeLevelAllowsCandidate()` so minimal mode keeps exceptionally high-value, low-friction social-style candidates
+  - `packages/runtime/tests/reflection-service.test.ts`
+    - retained the low-value suppression regression
+    - added a positive regression proving a high-value, normal-urgency offer still survives minimal initiative
+
+- Impact / Result:
+  - Minimal initiative is still conservative, but no longer blindly suppresses every non-urgent offer/check-in/celebration.
+  - The runtime now better matches the intended “restrained, not mute” assistant behavior.
+
+- Open questions / next steps:
+  - Future follow-up can decide whether agenda category should also influence the high-value escape hatch.
+  - If more kinds need positive exceptions, they should be added explicitly rather than through a generic opaque scoring engine.
+
+### Session: Close the remaining initiative-gate verification gap
+
+- Context / Trigger:
+  - Architect review accepted the refined minimal-initiative gate, but called out one remaining proof gap: the positive-path regression only covered `offer`, while the same escape hatch also applied to `check_in` and `celebration`.
+
+- Problem:
+  - The code-level rule was consistent across three social-style candidate kinds, but only one of them had a positive regression test.
+  - That meant the design intent was likely correct, yet the behavior proof was still incomplete.
+
+- Decision:
+  - Keep the runtime logic unchanged.
+  - Close only the verification gap by adding explicit positive-path regressions for `check_in` and `celebration` under minimal initiative.
+
+- Changes made:
+  - `packages/runtime/tests/reflection-service.test.ts`
+    - added positive regression coverage that high-value, low-interruption `check_in` survives minimal initiative
+    - added positive regression coverage that high-value, low-interruption `celebration` survives minimal initiative
+
+- Impact / Result:
+  - The bounded initiative escape hatch is now behaviorally proven across all three kinds it currently covers.
+  - This tightens confidence without widening the runtime policy surface.
+
+- Open questions / next steps:
+  - If more social-style candidate kinds gain positive exceptions later, require the same dual proof: suppression test + survival test.
+
+### Session: Make learned relationship preferences scope-aware inside proactive delivery
+
+- Context / Trigger:
+  - After 1A and 1B landed, the remaining gap was that learned relationship preferences were real but still mostly **global**.
+  - The next natural continuation was to let project/thread-scoped preference memories influence ambient reflection and delivery where the candidate actually belongs.
+
+- Problem:
+  - `deriveRelationshipBoundaryOverrides()` already supported scoped filtering, but `buildAmbientRelationshipBoundary()` was still usually called without scope/thread context.
+  - That meant project-specific proactive preferences could be stored safely in memory but still not consistently affect live reflection or delivery behavior.
+
+- Options considered:
+  - Option A: keep scoped preference support dormant until a larger relationship-policy pass.
+    - Rejected because it would leave the new memory seam only partially connected.
+  - Option B: thread scope/thread context through the live ambient path now, while keeping the rest of the policy model unchanged.
+    - Chosen because it tightens the current seam without widening into a broader policy engine.
+
+- Decision:
+  - Feed `scope` / `threadId` into ambient relationship-boundary construction during:
+    - reflection-time boundary selection
+    - candidate delivery-time digest / auto-execution decisions
+  - Keep quota selection global for now, but make candidate-level delivery behavior honor the scoped boundary.
+
+- Changes made:
+  - `packages/infra/src/daemon/server.ts`
+    - ambient reflection now builds relationship boundaries with agenda scope/thread context
+    - proactive candidate delivery now rebuilds the boundary per candidate so scoped digest / auto-execution preferences can take effect
+  - `packages/runtime/tests/memory-service.test.ts`
+    - added scoped override expectations proving project-specific preference notes are applied when scope is present
+  - `packages/infra/tests/daemon-proactive-reflection.test.ts`
+    - changed the digest-from-memory test to use a project-scoped preference note and proved the runtime still delivers a digest
+
+- Impact / Result:
+  - Learned relationship preferences are no longer only a global assistant setting; they can now shape ambient proactive behavior in the relevant project/thread context.
+  - The current relationship-aware runtime is still intentionally simple, but it is now better aligned with the architecture's “situated personal assistant” direction.
+
+- Open questions / next steps:
+  - Delivery quota (`maxUnpromptedMessagesPerDay`) is still drained from a global boundary pass; future work can decide whether some quotas should stay global while others become scope-aware.
+  - A later iteration can add richer preference producers so scope-aware behavior does not depend only on explicit semantic note tags.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass
