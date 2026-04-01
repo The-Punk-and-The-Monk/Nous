@@ -14,6 +14,16 @@ export interface ReplSlashResolution {
 	interpretedAs?: string;
 }
 
+const NATURAL_LANGUAGE_CONTROL_PATTERNS = [
+	/\bwhat can you do(?: here)?\b/i,
+	/\bshow (?:daemon )?status\b/i,
+	/\bshow commands?\b/i,
+	/\battach(?: to)? thread_[a-z0-9]+\b/i,
+	/\bdetach\b/i,
+	/\b(?:exit|quit)(?: repl)?\b/i,
+	/(?:你现在能做什么|你能做什么|显示命令|查看命令|显示状态|查看状态|守护进程状态|退出)/,
+] as const;
+
 export type ReplResolvedAction =
 	| {
 			kind: "submit";
@@ -108,6 +118,16 @@ export function translateControlResolution(
 	result: ResolveControlInputResult,
 ): ReplResolvedAction {
 	return toResolvedAction(text, result.resolution);
+}
+
+export function shouldAttemptModelControlResolution(input: string): boolean {
+	const text = input.trim();
+	if (!text) {
+		return false;
+	}
+	return NATURAL_LANGUAGE_CONTROL_PATTERNS.some((pattern) =>
+		pattern.test(text),
+	);
 }
 
 function toResolvedAction(

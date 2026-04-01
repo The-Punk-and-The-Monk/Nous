@@ -4862,3 +4862,73 @@ For significant sessions, capture:
   - `test_runner` is explicit-runner-first today. A future step should decide whether Nous wants a governed project-level verification profile so “best default test command” can be chosen without reintroducing hidden shell semantics.
   - `diff_patch`, `git_commit`, `package_install`, and richer verification/reporting tools are still missing from the Tier 2 builtin layer.
   - If Nous later adds tools that choose among more complex multi-step command families, the shell-command contract may need to grow from “single executable chosen from input” toward a richer structured subprocess plan.
+
+### Session: Fix REPL task submission being blocked by control-surface routing
+- Context / Trigger:
+  - The user reported a concrete REPL regression:
+    - normal task input in `bun bin/nous.ts` seemed to require pressing Enter twice
+    - after entering a simple request like “用一句话总结一下 README.md”, Nous appeared to do nothing
+    - daemon inspection showed no corresponding new visible progress
+  - The symptom initially looked like a readline/input-loop bug, but the actual behavior boundary had to be traced through:
+    - REPL line handling
+    - daemon request/response
+    - natural-language control routing
+- Problem:
+  - REPL ordinary text currently flowed through this chain before submission:
+    1. local slash parsing
+    2. daemon `resolve_control_input`
+    3. daemon-side `ControlIntentRouter`
+    4. LLM structured generation
+    5. only then, if classified as `task_plane`, actual `submit_intent` / `send_message`
+  - That meant normal task entry was accidentally **dependent on control-plane LLM responsiveness**.
+  - If the provider/proxy was slow, failing, or timing out, the user saw exactly the reported symptom:
+    - pressing Enter produced no prompt-level evidence of submission
+    - no task was queued yet
+    - the interface felt like it had ignored the message
+  - The REPL also lacked explicit error surfacing around that async line-handling path, so failures were not explained clearly in the terminal.
+- Options considered:
+  - Option A: keep the current daemon-side semantic control routing for every non-slash input and only add better error printing.
+    - Rejected because it would still leave task-plane responsiveness structurally coupled to a non-essential control-plane LLM hop.
+  - Option B: revert entirely to local rule-based natural-language control parsing in the REPL.
+    - Rejected because the recent shared `ControlSurfaceCatalog` / daemon-side routing work solved a real cross-surface consistency problem, and fully undoing it would throw away that architecture direction.
+  - Option C: keep daemon-side semantic control routing for likely control utterances, but make normal repository/task messages bypass it locally and go straight to the task plane; also add explicit timeout/error handling around the remaining control-routing path.
+    - Chosen because it preserves the architectural value of semantic control routing without letting it block ordinary assistant conversation.
+- Decision:
+  - Re-center the REPL contract around:
+    - **task plane first for obvious work requests**
+    - **control routing only for likely control utterances**
+  - Add a local heuristic gate so inputs like:
+    - “用一句话总结一下 README.md”
+    - “Inspect src/app.ts and explain it”
+    bypass daemon-side `resolve_control_input` entirely.
+  - Keep semantic control routing for likely control requests such as:
+    - “show daemon status”
+    - “what can you do here?”
+    - attach/detach/exit-style requests
+  - Add explicit timeout/error handling and in-flight guarding in the REPL input loop so the interface no longer appears dead when an async step fails or overlaps.
+- Changes made:
+  - Updated `packages/infra/src/cli/repl-control.ts`
+    - added a conservative local detector for likely natural-language control requests
+  - Updated `packages/infra/src/cli/commands/repl.ts`
+    - extracted REPL input resolution into a dedicated helper
+    - bypassed daemon-side control routing for obvious task-plane messages
+    - added timeout handling for control-routing requests
+    - added visible REPL error reporting
+    - added in-flight input guarding so the prompt does not silently stack overlapping submissions
+    - prevented background deliveries from re-prompting while an input is still being processed
+  - Updated `packages/infra/tests/repl-control.test.ts`
+    - covered task-plane bypass for obvious work requests
+    - covered preserved detection of likely control utterances
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/repl-control.test.ts packages/infra/tests/control-intent-router.test.ts` ✅
+  - Full daemon REPL E2E could not be re-run inside the current sandbox because daemon listen/readiness still hits the known local socket/port restriction here.
+- Impact / Result:
+  - Normal REPL work requests no longer need a successful control-routing LLM round trip before they are submitted.
+  - The user-visible interaction contract is now closer to what a persistent assistant should feel like:
+    - normal work submits immediately
+    - control routing is additive, not a blocking dependency
+  - Failures in the remaining async path are now surfaced explicitly instead of looking like ignored input.
+- Open questions / follow-ups:
+  - The current control detector is intentionally conservative. Future work may want a richer hybrid policy so more natural-language control phrases can be recognized without reintroducing task-plane latency.
+  - The sandbox still blocks honest daemon listen/readiness validation here, so a true manual REPL confirmation on a normal machine remains worth doing after this patch lands.
