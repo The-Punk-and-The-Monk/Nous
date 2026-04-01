@@ -83,6 +83,9 @@ For significant sessions, capture:
   - Updated `packages/infra/tests/daemon-proactive-reflection.test.ts`
     - added regression coverage that learned memory preferences alter the ambient boundary
     - added runtime proof that memory-backed digest preference changes actual proactive delivery behavior
+  - Deslop pass on changed files
+    - reviewed the milestone-owned diff for dead wrappers / duplicate helpers / over-abstraction
+    - kept the implementation tag-driven and explicit; no extra cleanup changes were needed beyond the landed bounded parser + tests
   - Deslop pass
     - reviewed the milestone-owned files for dead wrappers / over-abstraction and kept the preference seam tag-driven and bounded instead of introducing a broader preference ontology too early
 
