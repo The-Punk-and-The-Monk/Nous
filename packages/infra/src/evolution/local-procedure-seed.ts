@@ -78,8 +78,14 @@ export class LocalProcedureSeedStore {
 
 		writeJson(candidatePath, candidate);
 
+		const successRate =
+			candidate.attemptCount && candidate.attemptCount > 0
+				? candidate.successCount / candidate.attemptCount
+				: 0;
 		const shouldPromote =
-			candidate.validationState === "validated" && candidate.successCount >= 3;
+			candidate.validationState === "validated" &&
+			candidate.successCount >= 3 &&
+			successRate >= 0.8;
 		if (shouldPromote) {
 			writeJson(join(this.proceduresDir, `${fingerprint}.json`), {
 				id: prefixedId("skill"),

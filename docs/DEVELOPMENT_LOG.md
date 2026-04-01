@@ -449,6 +449,33 @@ For significant sessions, capture:
 - Open questions / next steps:
   - A later step can decide whether the promotion threshold should also depend on shadow-validation quality or tool-risk profile, not only repeated success count.
 
+### Session: Add a success-rate floor before local procedure promotion
+
+- Context / Trigger:
+  - After splitting validation from promotion, the remaining evolution gap was obvious: promotion still triggered purely from raw success count, even if the candidate had accumulated too many failures along the way.
+
+- Problem:
+  - A procedure candidate could reach three successes and still have a weak overall success rate.
+  - That would still be more aggressive than the architecture's intent to promote only genuinely reliable repeated behavior.
+
+- Decision:
+  - Keep the current local seed store simple, but add a first quantitative reliability floor:
+    - promotion still needs `successCount >= 3`
+    - and now also requires `successRate >= 0.8`
+
+- Changes made:
+  - `packages/infra/src/evolution/local-procedure-seed.ts`
+    - added success-rate calculation to local promotion gating
+  - `packages/infra/tests/procedure-seed.test.ts`
+    - added regression coverage proving `3 successes / 4 attempts` is validated but still not promoted
+
+- Impact / Result:
+  - Local procedure promotion is now more conservative and closer to the architecture's intended reliability gate.
+  - Nous is less likely to crystallize a brittle procedure just because it barely crossed a raw success-count threshold.
+
+- Open questions / next steps:
+  - Satisfaction / shadow-validation / risk-profile gates are still missing from the local seed store and remain future evolution work.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass

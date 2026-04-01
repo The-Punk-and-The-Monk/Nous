@@ -92,4 +92,72 @@ describe("LocalProcedureSeedStore", () => {
 		expect(procedure.toolNames).toEqual(["git_status", "memory_search"]);
 		expect(procedure.taskSummaries).toContain("Inspect daemon state");
 	});
+
+	test("does not promote when repeated success exists but the success rate is still below threshold", () => {
+		const root = mkdtempSync(join(tmpdir(), "nous-procedure-seed-threshold-"));
+		tempDirs.push(root);
+		const store = new LocalProcedureSeedStore({ baseDir: root });
+		const filesafe = "summarize-daemon-status-and-report-active-intents";
+
+		store.recordTrace({
+			id: "trace_a",
+			intentId: "intent_a",
+			threadId: "thread_a",
+			intentText: "Summarize daemon status and report active intents",
+			status: "achieved",
+			projectRoot: "/repo/app",
+			outputs: ["reported status"],
+			taskSummaries: ["Inspect daemon state"],
+			usedToolNames: ["git_status"],
+			riskyToolNames: [],
+			createdAt: new Date().toISOString(),
+		});
+		store.recordTrace({
+			id: "trace_b",
+			intentId: "intent_b",
+			threadId: "thread_b",
+			intentText: "Summarize daemon status and report active intents",
+			status: "achieved",
+			projectRoot: "/repo/app",
+			outputs: ["reported status again"],
+			taskSummaries: ["Inspect daemon state"],
+			usedToolNames: ["git_status"],
+			riskyToolNames: [],
+			createdAt: new Date().toISOString(),
+		});
+		store.recordTrace({
+			id: "trace_c",
+			intentId: "intent_c",
+			threadId: "thread_c",
+			intentText: "Summarize daemon status and report active intents",
+			status: "escalated",
+			projectRoot: "/repo/app",
+			outputs: ["needed escalation"],
+			taskSummaries: ["Inspect daemon state"],
+			usedToolNames: ["git_status"],
+			riskyToolNames: [],
+			createdAt: new Date().toISOString(),
+		});
+		const fourth = store.recordTrace({
+			id: "trace_d",
+			intentId: "intent_d",
+			threadId: "thread_d",
+			intentText: "Summarize daemon status and report active intents",
+			status: "achieved",
+			projectRoot: "/repo/app",
+			outputs: ["reported status a fourth time"],
+			taskSummaries: ["Inspect daemon state"],
+			usedToolNames: ["git_status"],
+			riskyToolNames: [],
+			createdAt: new Date().toISOString(),
+		});
+
+		expect(fourth.candidate.validationState).toBe("validated");
+		expect(fourth.candidate.successCount).toBe(3);
+		expect(fourth.candidate.attemptCount).toBe(4);
+		expect(fourth.procedurePromoted).toBe(false);
+		expect(existsSync(join(root, "procedures", `${filesafe}.json`))).toBe(
+			false,
+		);
+	});
 });
