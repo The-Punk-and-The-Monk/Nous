@@ -5558,3 +5558,59 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - Debug visibility exists now, but there is still no dedicated operator surface for flow lifecycle actions (`show`, `cancel`, `merge review`, etc.).
   - Once flow semantics stabilize further, Nous should likely grow from “debug visibility” to a first-class `flows` control/discovery surface rather than overloading debug forever.
+
+### Session: Start proposal-only merge governance for overlapping ambient work
+- Context / Trigger:
+  - After `Flow` / `PlanGraph` ownership became real and visible, the next architectural tension moved exactly where the prior design draft predicted:
+    - proactive work can now become real work
+    - but it still needed a first governance answer for “this may duplicate or overlap ongoing work”
+  - The user had explicitly called out that proactive tasks and care/reminder outputs should not blindly repeat themselves, while also noting that true merge is too ambiguous to auto-apply early.
+- Problem:
+  - Before this iteration, a new ambient intent could become a fully tracked work item, but there was no first-class runtime trace of:
+    - “this looks related to already active work”
+    - “we should probably link/merge/supersede later”
+  - Without that slot, Nous would be forced into one of two bad behaviors:
+    - naive duplication
+    - premature implicit merge
+  - Both are wrong for the current maturity stage.
+- Options considered:
+  - Option A: do nothing until full merge semantics exist.
+    - Rejected because overlap reasoning would remain invisible and the architecture slot would stay unused.
+  - Option B: immediately auto-attach or auto-merge overlapping ambient work into an existing flow.
+    - Rejected because the ambiguity is still too high, and that would overstate Nous’s current confidence/governance maturity.
+  - Option C: introduce a **proposal-only** first slice:
+    - detect overlapping ambient work conservatively
+    - persist a `MergeCandidate`
+    - do not change execution behavior yet
+    - Chosen because it honors the architecture direction without pretending the hard semantic problem is solved.
+- Decision:
+  - When a newly tracked **ambient** intent overlaps existing active project work, persist a `MergeCandidate` with:
+    - `proposedAction = link_only`
+    - conservative confidence
+    - no automatic merge or attach behavior
+  - Keep the heuristic intentionally narrow for the first slice:
+    - ambient source only
+    - same project root
+    - different existing active flow
+  - Treat this as governance evidence, not execution policy.
+- Changes made:
+  - Updated `packages/infra/src/daemon/server.ts`
+    - after flow creation/binding, ambient tracked intents now call a merge-candidate proposal helper
+    - added a conservative open-candidate dedupe check
+    - persisted `MergeCandidate` records through `backend.work`
+  - Updated `packages/infra/tests/daemon-work-governance.test.ts`
+    - verifies overlapping ambient work in the same project creates one proposed merge candidate
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/daemon-work-governance.test.ts` ✅
+- Impact / Result:
+  - Nous now has its first real runtime path for **merge governance evidence**.
+  - Overlapping ambient work can be recognized and persisted as a proposal without forcing premature behavioral coupling.
+  - This is the right intermediate state between:
+    - “no overlap reasoning at all”
+    - and
+    - “fully automatic merge/attach semantics”
+- Open questions / follow-ups:
+  - Merge candidates are persisted now, but not yet surfaced in debug/status/control surfaces.
+  - The current overlap heuristic is intentionally conservative and project-scope based; richer semantic merge assessment should likely become its own `CognitiveOperation` later.
+  - The next natural continuation is to expose merge candidates in operator-facing debug/control surfaces before changing runtime behavior any further.

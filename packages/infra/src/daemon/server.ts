@@ -9,6 +9,7 @@ import type {
 	Flow,
 	Intent,
 	LLMProvider,
+	MergeCandidate,
 	ProactiveCandidate,
 	RelationshipBoundary,
 	TurnResolutionSnapshot,
@@ -2447,6 +2448,7 @@ export class NousDaemon {
 		if (intent) {
 			this.ensureFlowForTrackedIntent(intent, threadId, text);
 			this.bindFlowToThread(intent, threadId);
+			this.proposeAmbientFlowMergeCandidate(intent, scope);
 		}
 		this.dialogue.linkIntentToThread(threadId, intentId);
 		this.threadByIntentId.set(intentId, threadId);
@@ -2539,6 +2541,70 @@ export class NousDaemon {
 				intentId: intent.id,
 			},
 		});
+	}
+
+	private proposeAmbientFlowMergeCandidate(
+		intent: Intent,
+		scope: Channel["scope"],
+	): void {
+		if (intent.source !== "ambient" || !intent.flowId || !scope.projectRoot) {
+			return;
+		}
+
+		const overlappingIntent = this.backend.intents
+			.getActive()
+			.find((candidate) => {
+				if (candidate.id === intent.id || !candidate.flowId) {
+					return false;
+				}
+				if (candidate.flowId === intent.flowId) {
+					return false;
+				}
+				const candidateScope = this.intentScopeById.get(candidate.id);
+				return (
+					candidateScope?.projectRoot === scope.projectRoot &&
+					candidate.status !== "achieved" &&
+					candidate.status !== "abandoned"
+				);
+			});
+
+		if (!overlappingIntent) {
+			return;
+		}
+		if (this.hasOpenMergeCandidate(intent.id, overlappingIntent.id)) {
+			return;
+		}
+
+		const candidate: MergeCandidate = {
+			id: prefixedId("merge"),
+			leftKind: "intent",
+			leftId: overlappingIntent.id,
+			rightKind: "intent",
+			rightId: intent.id,
+			proposedAction: "link_only",
+			rationale:
+				"The new ambient intent overlaps an already active flow in the same project scope and may belong to the same larger responsibility.",
+			confidence: 0.68,
+			producedBy: "conflict_analyzer",
+			status: "proposed",
+			createdAt: now(),
+			metadata: {
+				projectRoot: scope.projectRoot,
+				leftFlowId: overlappingIntent.flowId,
+				rightFlowId: intent.flowId,
+			},
+		};
+		this.backend.work.createMergeCandidate(candidate);
+	}
+
+	private hasOpenMergeCandidate(leftId: string, rightId: string): boolean {
+		return this.backend.work
+			.listMergeCandidates({ statuses: ["proposed", "accepted"] })
+			.some(
+				(candidate) =>
+					(candidate.leftId === leftId && candidate.rightId === rightId) ||
+					(candidate.leftId === rightId && candidate.rightId === leftId),
+			);
 	}
 
 	private storeIntentRequestMemory(payload: {

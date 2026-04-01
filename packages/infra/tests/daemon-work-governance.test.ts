@@ -8,6 +8,7 @@ import type {
 	LLMProviderCapabilities,
 	LLMRequest,
 	LLMResponse,
+	MergeCandidate,
 	StreamChunk,
 } from "@nous/core";
 import { NousDaemon } from "../src/daemon/server.ts";
@@ -74,6 +75,53 @@ describe("NousDaemon work-governance integration", () => {
 			await daemon.shutdown();
 		}
 	});
+
+	test("records a merge candidate when an ambient intent overlaps active project work", async () => {
+		const daemon = createDaemon(new NoopProvider());
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			const humanThread = internals.dialogue.ensureThread({
+				threadId: "thread_human",
+				title: "Human thread",
+				channelId: "channel_cli",
+			});
+			internals.backend.intents.create(makeIntent("intent_human"));
+			internals.trackIntentForThread(
+				"intent_human",
+				humanThread.id,
+				"Inspect auth changes",
+				BASE_SCOPE,
+			);
+
+			const ambientThread = internals.dialogue.ensureThread({
+				threadId: "thread_ambient",
+				title: "Ambient thread",
+				channelId: "daemon",
+			});
+			internals.backend.intents.create(
+				makeIntent("intent_ambient", { source: "ambient" }),
+			);
+			internals.trackIntentForThread(
+				"intent_ambient",
+				ambientThread.id,
+				"Follow up on auth migration notes",
+				BASE_SCOPE,
+			);
+
+			const candidates = internals.backend.work.listMergeCandidates({
+				statuses: ["proposed"],
+			});
+			expect(candidates).toHaveLength(1);
+			expect(candidates[0]).toMatchObject({
+				leftId: "intent_human",
+				rightId: "intent_ambient",
+				proposedAction: "link_only",
+			});
+		} finally {
+			await daemon.shutdown();
+		}
+	});
 });
 
 const ORIGINAL_ENV = {
@@ -104,6 +152,9 @@ interface DaemonInternals {
 		};
 		work: {
 			getFlowById(id: string): { ownerThreadId?: string; primaryIntentId?: string; relatedIntentIds: string[] } | undefined;
+			listMergeCandidates(query: {
+				statuses?: MergeCandidate["status"][];
+			}): MergeCandidate[];
 			listFlowThreadBindings(query: { flowId?: string }): Array<{
 				flowId: string;
 				threadId: string;
@@ -130,7 +181,10 @@ function createDaemon(llm: LLMProvider): NousDaemon {
 	return new NousDaemon({ llm });
 }
 
-function makeIntent(id: string): Intent {
+function makeIntent(
+	id: string,
+	overrides: Partial<Intent> = {},
+): Intent {
 	return {
 		id,
 		raw: "Inspect auth changes",
@@ -142,9 +196,9 @@ function makeIntent(id: string): Intent {
 		constraints: [],
 		priority: 1,
 		humanCheckpoints: "always",
-		status: "active",
-		source: "human",
-		createdAt: new Date().toISOString(),
+		status: overrides.status ?? "active",
+		source: overrides.source ?? "human",
+		createdAt: overrides.createdAt ?? new Date().toISOString(),
 	};
 }
 
