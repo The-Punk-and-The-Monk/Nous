@@ -26,6 +26,7 @@ export function createAnalystAgent(overrides: Partial<Agent> = {}): Agent {
 			toolPreferences: [
 				"git_status",
 				"git_diff",
+				"git_log",
 				"memory_search",
 				"file_read",
 				"glob",

@@ -46,9 +46,11 @@ describe("Tier 2 builtin tools", () => {
 		const { registry, executor } = createToolRuntime();
 		const gitStatus = registry.get("git_status");
 		const gitDiff = registry.get("git_diff");
+		const gitLog = registry.get("git_log");
 		expect(gitStatus).toBeDefined();
 		expect(gitDiff).toBeDefined();
-		if (!gitStatus || !gitDiff) {
+		expect(gitLog).toBeDefined();
+		if (!gitStatus || !gitDiff || !gitLog) {
 			throw new Error("Expected git tools to be registered");
 		}
 
@@ -66,11 +68,50 @@ describe("Tier 2 builtin tools", () => {
 			{ cwd: root, path: "app.txt" },
 			capabilities,
 		);
+		const logResult = await executor.execute(
+			gitLog,
+			{ cwd: root, maxCount: 5 },
+			capabilities,
+		);
 
 		expect(statusResult.success).toBe(true);
 		expect(statusResult.output).toContain("app.txt");
 		expect(diffResult.success).toBe(true);
 		expect(diffResult.output).toContain("+beta updated");
+		expect(logResult.success).toBe(true);
+		expect(logResult.output).toContain("init");
+		expect(logResult.output).toContain("[command: git -C");
+	});
+
+	test("test_runner respects explicit runner permissions and executes Bun tests", async () => {
+		const root = createBunTestProject();
+		const { registry, executor } = createToolRuntime();
+		const testRunner = registry.get("test_runner");
+		expect(testRunner).toBeDefined();
+		if (!testRunner) {
+			throw new Error("Expected test_runner tool to be registered");
+		}
+
+		const denied = await executor.execute(
+			testRunner,
+			{ cwd: root, runner: "bun", args: ["sample.test.ts"] },
+			createCapabilities({
+				"shell.exec": { allowlist: ["git"] },
+			}),
+		);
+		expect(denied.success).toBe(false);
+		expect(denied.output).toContain("shell.exec");
+
+		const allowed = await executor.execute(
+			testRunner,
+			{ cwd: root, runner: "bun", args: ["sample.test.ts"] },
+			createCapabilities({
+				"shell.exec": { allowlist: ["bun"] },
+			}),
+		);
+		expect(allowed.success).toBe(true);
+		expect(allowed.output).toContain("[command: bun test sample.test.ts]");
+		expect(allowed.output).toContain("[exit code: 0]");
 	});
 
 	test("memory_store and memory_search round-trip semantic notes", async () => {
@@ -155,6 +196,26 @@ function createGitRepo(): string {
 	runGit(["commit", "-m", "init"], root);
 	writeFileSync(join(root, "app.txt"), "alpha\nbeta updated\n", "utf8");
 
+	return root;
+}
+
+function createBunTestProject(): string {
+	const root = mkdtempSync(join(tmpdir(), "nous-builtin-bun-test-"));
+	tempDirs.push(root);
+	writeFileSync(
+		join(root, "sample.test.ts"),
+		[
+			'import { describe, expect, test } from "bun:test";',
+			"",
+			'describe("sample", () => {',
+			'\ttest("passes", () => {',
+			"\t\texpect(1 + 1).toBe(2);",
+			"\t});",
+			"});",
+			"",
+		].join("\n"),
+		"utf8",
+	);
 	return root;
 }
 

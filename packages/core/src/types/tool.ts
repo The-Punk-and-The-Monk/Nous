@@ -36,6 +36,8 @@ export interface ToolDef {
 	inputSchema: Record<string, unknown>;
 	requiredCapabilities: CapabilityName[];
 	invokesShellCommands?: string[];
+	shellCommandInputKey?: string;
+	shellCommandAllowlist?: string[];
 	timeoutMs: number;
 	sideEffectClass: ToolSideEffectClass;
 	idempotency: ToolIdempotency;

@@ -4788,3 +4788,77 @@ For significant sessions, capture:
   - Iteration-level notifications are less dependent on remembering long command strings.
 - Open questions / follow-ups:
   - The helper currently shells out to `osascript` twice at most. If notification behavior becomes more central, it may be worth adding lightweight logging of notification attempts and failures for auditing.
+
+### Session: Add Git history + bounded test verification tools and generalize shell-tool command contracts
+- Context / Trigger:
+  - Re-checking `docs/PROGRESS_MATRIX.md` made the current asymmetry explicit again:
+    - daemon/dialogue/governance/control-surface work is already relatively strong
+    - Sprint 7’s remaining weak spot is still **tool breadth**
+    - the most valuable next slice is no longer more shell convenience, but more structured developer workflows
+  - The previous Tier 2 slice had already landed `git_status`, `git_diff`, `memory_search`, and `memory_store`, and its follow-up note explicitly called out `git_log` and `test_runner` as the next missing builtins.
+- Problem:
+  - Nous still lacked two very common developer workflow affordances:
+    - repository history inspection with an explicit `git_log` tool
+    - structured verification through a `test_runner` tool instead of generic `shell`
+  - A second design gap appeared immediately when trying to add `test_runner` honestly:
+    - `ToolDef.invokesShellCommands` only supported **static** subprocess declarations
+    - but a bounded verification tool often needs to choose **one command from a governed family** (for example `bun`, `npm`, `cargo`, `python3`) based on structured input
+  - If that case were handled by ad hoc executor special-casing or by dropping command provenance entirely, Nous would regress on its tool-governance contract.
+- Options considered:
+  - Option A: add `git_log` only and defer `test_runner`.
+    - Rejected because verification is the more important user-perceived gap, and deferring it would preserve shell fallback for the most important task-closure step.
+  - Option B: add `test_runner` but bypass the contract by doing per-tool custom permission checks in the handler or executor.
+    - Rejected because it would hide a real contract mismatch under one-off logic and weaken future Tier 2 tool growth.
+  - Option C: first generalize the tool contract so shell-backed tools can declare **input-driven but allowlisted** command selection, then build `git_log` and `test_runner` on top.
+    - Chosen because it fixes the architectural seam once and keeps future verification/package-install style tools on the governed path.
+- Decision:
+  - Extend `ToolDef` with:
+    - `shellCommandInputKey`
+    - `shellCommandAllowlist`
+  - Teach `ToolExecutor` to:
+    - resolve declared shell commands from both static declarations and input-driven declarations
+    - enforce allowlists for those resolved commands before execution
+    - surface the resolved command in permission requests
+  - Add two new Tier 2 builtins:
+    - `git_log` for commit-history inspection
+    - `test_runner` for bounded verification with explicit runner selection
+  - Keep `test_runner` intentionally explicit in v1:
+    - the model must choose a runner such as `bun`, `npm`, `cargo`, `go`, or `python3`
+    - this avoids fake “auto-detect” behavior that would blur governance and permission semantics
+- Changes made:
+  - Updated `packages/core/src/types/tool.ts`
+    - added input-driven shell-command contract fields
+  - Updated `packages/runtime/src/tools/executor.ts`
+    - generalized shell-command resolution
+    - enforced input-driven allowlists
+    - surfaced resolved commands in permission prompts
+  - Added `packages/runtime/src/tools/builtin/git-log.ts`
+  - Added `packages/runtime/src/tools/builtin/test-runner.ts`
+  - Updated `packages/runtime/src/tools/builtin/index.ts`
+    - registered `git_log`
+    - registered `test_runner`
+  - Updated `packages/infra/src/agents/general.ts`
+    - biased general agents toward `git_log` and `test_runner`
+  - Updated `packages/infra/src/agents/analyst.ts`
+    - biased analyst agents toward `git_log`
+  - Updated `packages/runtime/tests/builtin-tools.test.ts`
+    - covered `git_log`
+    - covered `test_runner`
+    - covered permission enforcement for the explicit runner path
+  - Updated `packages/runtime/tests/tool-permissions.test.ts`
+    - added direct coverage for input-driven shell-command contract enforcement
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/runtime/tests/builtin-tools.test.ts packages/runtime/tests/tool-permissions.test.ts` ✅
+- Impact / Result:
+  - Nous now has a better Tier 2 developer-tool surface for both:
+    - **history inspection** (`git_log`)
+    - **verification closure** (`test_runner`)
+  - The shell-governance contract is stronger than before:
+    - tools no longer need to be limited to one static subprocess declaration
+    - but they still cannot silently execute arbitrary commands outside an explicit allowlist
+  - This improves present-day task closure and future procedural learning simultaneously, because execution traces can now preserve semantically meaningful verification/history tool usage instead of collapsing back into `shell`.
+- Open questions / follow-ups:
+  - `test_runner` is explicit-runner-first today. A future step should decide whether Nous wants a governed project-level verification profile so “best default test command” can be chosen without reintroducing hidden shell semantics.
+  - `diff_patch`, `git_commit`, `package_install`, and richer verification/reporting tools are still missing from the Tier 2 builtin layer.
+  - If Nous later adds tools that choose among more complex multi-step command families, the shell-command contract may need to grow from “single executable chosen from input” toward a richer structured subprocess plan.

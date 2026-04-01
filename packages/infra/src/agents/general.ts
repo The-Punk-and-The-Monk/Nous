@@ -43,6 +43,8 @@ export function createGeneralAgent(overrides: Partial<Agent> = {}): Agent {
 			toolPreferences: [
 				"git_status",
 				"git_diff",
+				"git_log",
+				"test_runner",
 				"memory_search",
 				"file_read",
 				"glob",

@@ -215,8 +215,11 @@ function buildPermissionRequest(
 			);
 			break;
 		default:
-			if ((tool.invokesShellCommands?.length ?? 0) > 0) {
-				base.command = tool.invokesShellCommands?.[0];
+			{
+				const commands = resolveDeclaredShellCommands(tool, input);
+				if (commands.length > 0) {
+					base.command = commands[0];
+				}
 			}
 			break;
 	}
@@ -265,7 +268,7 @@ function assertToolInputAccess(
 	input: Record<string, unknown>,
 	capabilities: CapabilitySet,
 ): void {
-	for (const command of tool.invokesShellCommands ?? []) {
+	for (const command of resolveDeclaredShellCommands(tool, input)) {
 		assertShellCommandAccess(capabilities, command);
 	}
 
@@ -296,6 +299,35 @@ function assertToolInputAccess(
 		default:
 			return;
 	}
+}
+
+function resolveDeclaredShellCommands(
+	tool: ToolDef,
+	input: Record<string, unknown>,
+): string[] {
+	const commands = [...(tool.invokesShellCommands ?? [])];
+
+	if (tool.shellCommandInputKey) {
+		const raw = input[tool.shellCommandInputKey];
+		if (typeof raw !== "string" || raw.trim().length === 0) {
+			throw new Error(
+				`Tool '${tool.name}' requires a non-empty string for '${tool.shellCommandInputKey}' to resolve its shell command.`,
+			);
+		}
+		const command = raw.trim();
+		if (
+			tool.shellCommandAllowlist &&
+			tool.shellCommandAllowlist.length > 0 &&
+			!tool.shellCommandAllowlist.includes(command)
+		) {
+			throw new Error(
+				`Tool '${tool.name}' received unsupported shell command '${command}'. Allowed: ${tool.shellCommandAllowlist.join(", ")}`,
+			);
+		}
+		commands.push(command);
+	}
+
+	return [...new Set(commands)];
 }
 
 function timeout(ms: number, toolName: string): Promise<never> {

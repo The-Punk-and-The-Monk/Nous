@@ -3,6 +3,7 @@ import type { ToolRegistry } from "../registry.ts";
 import { fileReadDef, fileReadHandler } from "./file-read.ts";
 import { fileWriteDef, fileWriteHandler } from "./file-write.ts";
 import { gitDiffDef, gitDiffHandler } from "./git-diff.ts";
+import { gitLogDef, gitLogHandler } from "./git-log.ts";
 import { gitStatusDef, gitStatusHandler } from "./git-status.ts";
 import { globDef, globHandler } from "./glob.ts";
 import { grepDef, grepHandler } from "./grep.ts";
@@ -10,6 +11,7 @@ import type { MemoryToolDependencies } from "./memory-search.ts";
 import { memorySearchDef, memorySearchHandler } from "./memory-search.ts";
 import { memoryStoreDef, memoryStoreHandler } from "./memory-store.ts";
 import { shellDef, shellHandler } from "./shell.ts";
+import { testRunnerDef, testRunnerHandler } from "./test-runner.ts";
 
 export interface BuiltinToolDependencies extends MemoryToolDependencies {}
 
@@ -27,6 +29,8 @@ export function registerBuiltinTools(
 		{ def: shellDef, handler: shellHandler },
 		{ def: gitStatusDef, handler: gitStatusHandler },
 		{ def: gitDiffDef, handler: gitDiffHandler },
+		{ def: gitLogDef, handler: gitLogHandler },
+		{ def: testRunnerDef, handler: testRunnerHandler },
 	];
 
 	if (dependencies.memory) {

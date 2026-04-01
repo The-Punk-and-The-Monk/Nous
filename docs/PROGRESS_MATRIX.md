@@ -33,6 +33,58 @@ This file answers a different question:
 
 ---
 
+## 2026-04-01
+
+### Daily snapshot
+
+#### 观察点
+
+| 观察点 | 当前判断 | 说明 |
+|---|---|---|
+| 持续运行体验 | 仍然是当前最稳主链路 | daemon / attach / process surface / control routing 仍是最成熟的一层，没有回退迹象 |
+| 任务闭环能力 | 比昨天更完整，但仍偏开发任务优先 | 现在不仅能计划、执行、解释，还更能在代码任务里做显式历史检查与结构化验证 |
+| 工具广度 | 从“Tier 2 种子”进入更可用的开发工作流层 | `git_status` / `git_diff` / `git_log` / `test_runner` / `memory_*` 已形成第一组更像真实助手而不是原始 shell 包装的 builtin 面 |
+| 记忆与主动性 | 仍然是下一阶段的主要价值增量来源 | procedural seed、prospective lifecycle、agenda/runtime 已有基座，但 relationship-aware proactive runtime 仍早于工具面成熟度 |
+| 架构重心 | 继续保持 personal-assistant first | 当前补的是“更好完成真实任务”的能力，而不是继续向纯控制面便利性漂移 |
+
+#### A. What moved materially today
+
+| Area | Yesterday | Today | What changed |
+|---|---|---|---|
+| Sprint 7 / Tool breadth | first Tier 2 dev slice only | stronger Tier 2 dev slice with history + verification | added `git_log`, added bounded `test_runner`, and tightened the shell-tool contract so structured tools can choose commands from an allowlisted input family without falling back to raw shell semantics |
+| Governance / Tool contract | static shell provenance only | static + input-driven governed shell provenance | `ToolDef` can now express input-selected shell executables, and `ToolExecutor` enforces that path through the same capability boundary |
+| Runtime closure | good planning/execution, weaker explicit verification affordance | better end-of-task verification affordance for coding work | common validation no longer has to collapse immediately back into generic `shell` when a bounded test run is enough |
+
+#### B. Module maturity deltas
+
+| Module | New reading | Why |
+|---|---|---|
+| Runtime / Agent Execution | **Medium-High (~65%) → stronger Medium-High (~71%)** | Not because the loop changed, but because execution now has a more believable builtin surface for code-history inspection and structured verification |
+| Tool System / Sprint 7 slice | **partial Tier 2 seed → materially stronger partial Tier 2 (~68%)** | Tier 2 is still far from complete, but it now covers repo status, diff, history, memory read/write, and bounded verification instead of only a first narrow seed |
+| Governance / Capability Contract | **strong High (~84%) → slightly stronger High (~86%)** | The shell-command provenance model is now less brittle; bounded tools no longer need to choose between static declarations and governance holes |
+
+#### C. Sprint / phase read after today's work
+
+| Sprint / Phase | Current status | Notes |
+|---|---|---|
+| Sprint 7 (context + tools + permission) | **substantially done, but tool layer still incomplete** | context and permission boundaries are solid; Tier 2 builtin coverage is better, but `diff_patch`, package/dependency workflows, richer verification/reporting, and analysis tools still lag |
+| Sprint 8 | **entered runtime territory but still behind tool/governance** | agenda / reflection / candidate delivery exist, but relationship-aware personalization remains earlier-stage than coding-task tool closure |
+| Sprint 9 | **seeded but not yet self-improving in a strong sense** | richer tool semantics now feed better procedure traces, but procedural compilation and validation are still shallow |
+| Phase 0: MVP | **~80%** | the “one continuing assistant for local technical work” story is more credible today, but broader daily usefulness still depends on memory depth, proactive quality, and more Tier 2 tools |
+
+#### D. Steering implication
+
+After this round, the next highest-leverage gaps are:
+
+1. **relationship-aware proactive runtime**
+2. **procedural / prospective memory deepening**
+3. **the next Tier 2 tool wave**:
+   `diff_patch`, richer verification/reporting, package/dependency workflows, and stronger analysis tools
+
+In short:
+
+> **Nous 的治理底座已经足够强，今天的推进说明它正开始把这种治理强度转译成更真实的任务闭环能力；接下来真正拉开产品差异的，仍然是 memory + proactive，而不是继续只加壳层控制便利性。**
+
 ## 2026-03-31
 
 ### Daily snapshot
