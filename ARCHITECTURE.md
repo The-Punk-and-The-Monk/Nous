@@ -1303,6 +1303,20 @@ This distinction matters architecturally. If we pretend the current implementati
 > current state = **memory substrate + first retrieval loop**
 > not yet = **true RAG + metabolism + procedural memory**
 
+Recent clarification/context-loss fixes improve the first retrieval loop materially:
+
+- grounding no longer truncates memory hints or thread messages up front
+- clarification now has a hard retry cap to prevent infinite re-ask loops
+- agent execution now receives a recent thread-context slice
+- the local retriever is stronger for CJK and phrase-level matching than the initial seed
+
+But those are still **partial closures**, not the final architecture.
+The remaining design work is to stop reconstructing understanding separately inside daemon, grounding, routers, and runtime, and instead give Nous explicit contracts for:
+
+- context continuity
+- retrieval / matching
+- clarification state accumulation
+
 ### MemoryService — Runtime Memory Boundary
 
 The runtime needs a **single memory boundary object**, not a growing set of direct calls to:
@@ -1595,11 +1609,33 @@ The storage layer supports all three retrieval paths within a single SQLite data
 ```
 
 ```typescript
-// Embedding provider abstraction
+type EmbeddingPurpose =
+  | "memory_document"
+  | "memory_query"
+  | "clarification_match"
+  | "thread_match"
+  | "task_match"
+  | "flow_match"
+  | "skill_match";
+
+interface EmbeddingRequest {
+  texts: string[];
+  purpose: EmbeddingPurpose;
+  preferredModel?: string;
+}
+
+interface EmbeddingVector {
+  values: number[];
+  provider: string;
+  model: string;
+  dimensions: number;
+  createdAt: string;
+}
+
 interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
-  embedBatch(texts: string[]): Promise<number[][]>;
-  dimensions(): number;  // 1536 for OpenAI, 1024 for Voyage, etc.
+  embed(request: EmbeddingRequest): Promise<EmbeddingVector[]>;
+  dimensions(model?: string): number;
+  supportsPurpose(purpose: EmbeddingPurpose): boolean;
 }
 
 // Graph relation for entity linking
@@ -1617,6 +1653,20 @@ interface MemoryRelation {
   createdAt: string;
 }
 ```
+
+This boundary should exist **before** Nous adopts a true neural embedding backend in production.
+
+Why:
+
+- OpenAI / Voyage / Gemini / local models / future providers should be swappable without changing retrieval policy code
+- different purposes may eventually justify different embedding models
+- re-embedding, dimension drift, and provider provenance must be explicit
+
+So the architecture split should be:
+
+- `EmbeddingProvider` = vectorization slot
+- retrieval / matching policy = candidate scoring and selection
+- memory / routing / proactive systems = consumers of that shared capability
 
 **Why not replace SQLite with a vector database?** For a single-user local application, SQLite + sqlite-vec provides vector ANN search, full-text search, structured queries, graph traversal, and ACID transactions — all in a single file with zero ops overhead. Introducing Qdrant, ChromaDB, or Milvus adds a separate process, network calls, and deployment complexity. The `EmbeddingProvider` and `MemoryStore` interfaces are abstract — if sqlite-vec proves insufficient at scale, swapping the backend is a new implementation, not a redesign.
 
@@ -1910,6 +1960,179 @@ Nous is trying to become a persistent personal assistant, not a workspace-bound 
 
 So the architecture must separate these semantic concerns early, even if some of them temporarily use the same LLM provider under the hood.
 
+### Retrieval / Matching Is Broader Than Memory RAG
+
+RAG is an important pattern in Nous, but it is not the most primitive capability.
+The lower-level capability is:
+
+> **retrieval / matching** = given a live query, partial understanding, or runtime object, find the most relevant existing candidates, score them under policy, and either select, rank, or abstain.
+
+This same capability surface appears across many parts of Nous:
+
+- memory recall / RAG
+- thread reply attachment
+- clarification continuity
+- scope confirmation and conflict resolution support
+- flow / intent / task merge suggestions
+- procedural memory / skill / prompt-asset selection
+- proactive agenda expansion and Memory Rover reflection
+
+So the right layering is:
+
+- **RAG** = one important consumer profile
+- **retrieval / matching** = the shared lower-level capability layer
+
+Why not simply call everything "RAG":
+
+- many consumers do not retrieve context for generation
+- some need to return one selected object or an explicit abstain
+- some compare live runtime objects against each other, not passive memory text
+
+Examples:
+
+- memory recall:
+  - output = ranked memory candidates for context packing
+- clarification continuity:
+  - output = which earlier unresolved question / resolved fact / memory evidence this reply most likely addresses
+- thread routing:
+  - output = whether the message belongs to the current intent / pending decision / a new intent
+- flow merge:
+  - output = overlap candidates plus confidence, not generated prose
+
+This is also where Nous should intentionally differ from OpenClaw-style “keep last N turns” simplifications.
+OpenClaw's history limiter solves a token-budget problem for long-running sessions.
+Codex-style compaction tests solve a **model-visible continuity** problem.
+Nous's clarification/context-loss failures are much closer to the second category:
+
+- the issue is not only long history
+- the issue is that the same understanding state is being reconstructed differently at multiple boundaries
+
+So the target is not “one more truncation rule.”
+The target is a shared retrieval / matching contract with explicit continuity invariants.
+
+#### Retrieval / matching stack
+
+The shared stack should be understood in three layers:
+
+1. **Representation layer**
+   - lexical tokens / FTS
+   - dense embeddings
+   - graph / provenance edges
+   - structured metadata filters
+
+2. **Retrieval / matching policy layer**
+   - query formation
+   - candidate generation
+   - fusion / dedupe
+   - re-ranking
+   - threshold / abstain policy
+   - budget-aware packing when the consumer needs context
+
+3. **Consumer-specific application profiles**
+   - memory RAG
+   - thread / intent routing assist
+   - clarification-state resolution
+   - flow / conflict candidate generation
+   - skill / procedure lookup
+   - proactive reflection recall
+
+Embeddings alone are not retrieval policy.
+Retrieval alone is not equivalent to context packing.
+LLM classification alone is not a replacement for candidate selection.
+
+#### Shared retrieval / matching contract
+
+```typescript
+type RetrievalCorpus =
+  | "memory"
+  | "dialogue"
+  | "intent"
+  | "decision"
+  | "task"
+  | "flow"
+  | "skill"
+  | "procedure"
+  | "artifact";
+
+type MatchMode = "rank_many" | "select_one" | "abstain_or_select";
+
+interface RetrievalMatchRequest {
+  corpus: RetrievalCorpus | RetrievalCorpus[];
+  queryText?: string;
+  referenceObjectId?: string;
+  purpose:
+    | "memory_context"
+    | "clarification_resolution"
+    | "thread_routing"
+    | "flow_merge"
+    | "conflict_analysis"
+    | "skill_lookup"
+    | "proactive_reflection";
+  scope?: ChannelScope;
+  threadId?: string;
+  intentId?: string;
+  hardFilters?: Record<string, unknown>;
+  limit?: number;
+  mode: MatchMode;
+}
+
+interface RetrievalCandidate {
+  id: string;
+  corpus: RetrievalCorpus;
+  title?: string;
+  excerpt?: string;
+  score: number;
+  scoreBreakdown: {
+    lexical?: number;
+    dense?: number;
+    graph?: number;
+    scope?: number;
+    recency?: number;
+    status?: number;
+    provenance?: number;
+    structural?: number;
+  };
+  provenanceRefs?: Array<{ kind: string; id: string }>;
+  metadata?: Record<string, unknown>;
+}
+
+interface RetrievalMatchingService {
+  search(request: RetrievalMatchRequest): Promise<RetrievalCandidate[]>;
+  select(request: RetrievalMatchRequest): Promise<
+    | { outcome: "selected"; candidate: RetrievalCandidate }
+    | { outcome: "ambiguous"; candidates: RetrievalCandidate[] }
+    | { outcome: "no_match" }
+  >;
+}
+```
+
+The important point is not the exact TypeScript shape.
+The important point is that all matching-heavy subsystems should call through the same policy boundary instead of each growing their own half-retriever.
+
+#### How LLM semantics and retrieval / matching cooperate
+
+Retrieval / matching does not replace LLM structured understanding.
+The proper cooperation model is:
+
+1. retrieval / matching proposes bounded candidates or evidence
+2. structured semantics interprets meaning with those candidates in view
+3. governance objects persist the resulting decision / state transition
+
+For example:
+
+- thread routing:
+  - retrieval finds active intent / pending decision / recent thread evidence
+  - structured generation decides `current_intent` vs `new_intent`
+- clarification:
+  - retrieval finds unresolved questions, prior answers, and relevant memory evidence
+  - structured generation updates the current executable understanding
+
+This keeps:
+
+- recall as a retrieval problem
+- meaning as a structured semantic problem
+- safety / blocking as a governance problem
+
 ### Generic DecisionQueue Model
 
 The original clarification flow was the first real blocked-intent path, but it must not remain a one-off exception.
@@ -2082,6 +2305,65 @@ This implies Nous should distinguish between:
 
 - `intent.raw` — the original human request
 - `intent.workingText` — the latest executable understanding after clarification / revision
+
+#### Clarification must accumulate understanding state, not only question text
+
+The current `intent.raw + intent.workingText + clarificationQuestions[]` shape is enough to bootstrap clarification, but it is not the end-state architecture.
+
+If Nous only stores:
+
+- the original request
+- the current rewritten working text
+- the latest question list
+
+then every clarification round risks becoming:
+
+- a partial re-parse from scratch
+- with a new retrieval query
+- and no durable notion of which facts have already been resolved
+
+That is exactly how context-loss loops emerge.
+
+So the architecture should evolve toward an explicit clarification / understanding object:
+
+```typescript
+interface ClarificationState {
+  intentId: string;
+  originalRequest: string;
+  currentUnderstanding: string;
+  attempts: number;
+  unresolvedQuestions: Array<{
+    id: string;
+    text: string;
+    status: "open" | "answered" | "superseded";
+  }>;
+  resolvedFacts: Array<{
+    key: string;
+    value: string;
+    sourceMessageId?: string;
+    confidence?: number;
+  }>;
+  retrievalQueryDocument: string;
+  sourceThreadId: string;
+  sourceMessageIds: string[];
+}
+```
+
+Why this object matters:
+
+- a hard clarification retry cap is only a **safety brake**, not the actual semantic fix
+- memory retrieval should query from the current clarified understanding, not only from the user's latest short reply
+- planner / runtime / delivery should receive the same resolved understanding state
+- Nous should know whether a new reply:
+  - answered an open question
+  - repeated an existing fact
+  - changed scope
+  - or introduced a separate new intent
+
+So the long-term rule is:
+
+> clarification is not “a list of questions.”
+> clarification is an evolving understanding state with explicit unresolved slots and resolved facts.
 
 #### Clarification-resume flow
 
@@ -2604,6 +2886,28 @@ interface AssembledContext {
   };
 }
 ```
+
+#### Context budget ownership rule
+
+One of the easiest ways to hide engineering defects under architecture prose is to let multiple layers independently trim context.
+
+Nous should follow this rule:
+
+> **Context Assembly gathers candidate context; a single downstream budget owner decides what is packed; upstream layers should not each invent their own `slice(-N)` policy.**
+
+Concretely:
+
+- thread routers may request a bounded recent slice for their own classifier input
+- retrieval / matching policy may request bounded candidate sets
+- but daemon, grounding, routers, and runtime should not all silently truncate the same underlying thread in incompatible ways
+
+The architecture target is:
+
+- one canonical thread-history selection boundary
+- one canonical retrieval packing boundary
+- explicit invariants for what remains model-visible after compaction / packing
+
+This is closer to the Codex-style continuity discipline than to “keep the last few messages and hope for the best.”
 
 **Context Assembly is cheap.** Environment and project context are gathered via filesystem reads and shell commands (no LLM calls). User context comes from the RAG pipeline. The permission system also contributes a **human-readable boundary summary**, so Nous can explain why it can or cannot act in the current scope instead of treating permissions as invisible runtime-only state. The total overhead is still kept low enough for every-run assembly.
 

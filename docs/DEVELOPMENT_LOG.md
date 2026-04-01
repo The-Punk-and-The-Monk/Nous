@@ -45,6 +45,92 @@ For significant sessions, capture:
 
 ## 2026-04-01
 
+### Session: Reframe retrieval/matching as a cross-cutting architectural capability
+
+- Context / Trigger:
+  - After reviewing commit `ba76cc7` ("Fix clarification loop and context loss across intake-execution pipeline"), it became clear that the repo had already fixed part of the originally observed problem:
+    - wider thread windows
+    - no grounding-side truncation
+    - clarification retry cap
+    - agent thread-context injection
+    - stronger local heuristic retrieval with better CJK coverage
+  - User then asked for a deeper architecture retrospective focused on the engineering details still being masked by higher-level architecture discussion, especially around retrieval, matching, clarification continuity, and future embedding integration.
+
+- Problem:
+  - The new fixes materially reduced the immediate symptoms, but they did **not** yet establish a single architectural owner for:
+    - retrieval / matching
+    - clarification-state accumulation
+    - context-budget ownership
+  - Multiple subsystems still conceptually need the same capability:
+    - memory recall / RAG
+    - thread / intent / decision routing
+    - clarification reply resolution
+    - flow merge / conflict candidate generation
+    - procedural memory / skill lookup
+    - proactive reflection recall
+  - If Nous keeps treating this as "memory retrieval only", the same matcher logic will keep reappearing as ad hoc local implementations in daemon, routing, grounding, planner, and proactive code.
+  - The architecture doc still described `EmbeddingProvider` mainly as a memory-vector backend concern, not as a general representation slot for a broader retrieval/matching layer.
+
+- Options considered:
+  - **Option A: Keep RAG as the main concept and let other subsystems borrow pieces informally**
+    - Rejected because it would continue to conflate:
+      - memory context retrieval
+      - runtime object matching
+      - clarification continuity
+      - candidate selection / abstention
+  - **Option B: Create separate subsystem-local matchers**
+    - Rejected because it would duplicate query formation, score fusion, thresholding, provenance handling, and budget rules across the stack.
+  - **Option C: Define a shared retrieval/matching capability layer and treat RAG as one application profile**
+    - Chosen because it cleanly separates:
+      - representation (`EmbeddingProvider`, lexical, graph, metadata)
+      - retrieval/matching policy
+      - consumer-specific application profiles
+
+- Decision:
+  - Treat **retrieval / matching** as the lower-level cross-cutting architectural capability.
+  - Treat **memory RAG** as one important consumer profile built on top of that capability, not as the name for the entire capability family.
+  - Expand the architecture doc with:
+    - a shared `RetrievalMatchingService` concept
+    - a richer `EmbeddingProvider` contract with purpose-aware requests and provider/model metadata
+    - an explicit `ClarificationState` direction so clarification becomes accumulated understanding rather than just a regenerated question list
+    - a **single context-budget owner** rule so truncation/packing policy does not fragment across daemon, grounding, routers, and runtime
+
+- Changes made:
+  - `ARCHITECTURE.md`
+    - updated Memory "Current Implementation Reality" to reflect what `ba76cc7` actually improved
+    - added a new section: retrieval/matching is broader than memory RAG
+    - added a shared retrieval/matching contract sketch
+    - expanded the embedding-provider abstraction into a purpose-aware provider slot
+    - added clarification-state direction under the thread/intent/decision section
+    - added context-budget ownership rule under Context Assembly
+  - `docs/DEVELOPMENT_LOG.md`
+
+- Impact:
+  - The repo now has an explicit architectural answer to the question:
+    - "is this a RAG problem or a broader retrieval/matching problem?"
+  - Future work on:
+    - true embeddings
+    - clarification continuity
+    - thread routing
+    - flow matching
+    - proactive reflection
+    can now target a shared capability layer instead of drifting into subsystem-local implementations.
+  - The architecture now more clearly distinguishes:
+    - vectorization slots
+    - retrieval/matching policy
+    - consumer-specific use cases
+
+- Open questions / next steps:
+  - Introduce code-level interfaces for:
+    - `EmbeddingProvider`
+    - retrieval/matching request + candidate objects
+    - clarification-state persistence
+  - Decide whether retrieval/matching should live as:
+    - a runtime service in `packages/runtime`
+    - or a smaller shared substrate consumed by both runtime and orchestrator
+  - Define how abstain / ambiguity thresholds are configured and evaluated per use case.
+  - Add regression tests that check model-visible continuity and repeated-clarification behavior, not just one-round happy paths.
+
 ### Session: Fix clarification loop and context loss across intake-execution pipeline
 
 - Context / Trigger:
