@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("InterNousSeedExchange", () => {
-	test("exports a validated local procedure and imports it into another Nous home", async () => {
+	test("exports a promoted local procedure and imports it into another Nous home", async () => {
 		const exporterRoot = mkdtempSync(join(tmpdir(), "nous-network-exporter-"));
 		const importerRoot = mkdtempSync(join(tmpdir(), "nous-network-importer-"));
 		tempDirs.push(exporterRoot, importerRoot);
@@ -51,6 +51,17 @@ describe("InterNousSeedExchange", () => {
 			status: "achieved",
 			outputs: ["normalized the retry path"],
 			taskSummaries: ["Inspect auth refresh logic", "Summarize retry path"],
+			usedToolNames: ["git_diff"],
+			riskyToolNames: [],
+			createdAt: new Date().toISOString(),
+		});
+		seeds.recordTrace({
+			id: prefixedId("trace"),
+			intentId: prefixedId("intent"),
+			intentText: "Refactor auth token refresh flow",
+			status: "achieved",
+			outputs: ["validated the normalized refresh path a third time"],
+			taskSummaries: ["Inspect auth refresh logic"],
 			usedToolNames: ["git_diff"],
 			riskyToolNames: [],
 			createdAt: new Date().toISOString(),

@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { ExecutionTrace, ProcedureCandidate } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
@@ -82,12 +88,13 @@ export class LocalProcedureSeedStore {
 			candidate.attemptCount && candidate.attemptCount > 0
 				? candidate.successCount / candidate.attemptCount
 				: 0;
+		const procedurePath = join(this.proceduresDir, `${fingerprint}.json`);
 		const shouldPromote =
 			candidate.validationState === "validated" &&
 			candidate.successCount >= 3 &&
 			successRate >= 0.8;
 		if (shouldPromote) {
-			writeJson(join(this.proceduresDir, `${fingerprint}.json`), {
+			writeJson(procedurePath, {
 				id: prefixedId("skill"),
 				fingerprint,
 				title: candidate.title,
@@ -101,6 +108,8 @@ export class LocalProcedureSeedStore {
 				riskyToolNames: candidate.riskyToolNames,
 				lastUpdatedAt: candidate.lastUpdatedAt,
 			});
+		} else if (existsSync(procedurePath)) {
+			rmSync(procedurePath, { force: true });
 		}
 
 		return {

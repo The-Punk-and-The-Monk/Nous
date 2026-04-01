@@ -476,6 +476,55 @@ For significant sessions, capture:
 - Open questions / next steps:
   - Satisfaction / shadow-validation / risk-profile gates are still missing from the local seed store and remain future evolution work.
 
+### Session: De-promote stale local procedures when reliability falls back under the floor
+
+- Context / Trigger:
+  - After adding a success-rate floor before promotion, one obvious integrity gap remained: an already promoted procedure artifact could stay on disk even if later failures dragged the candidate below the same promotion threshold.
+
+- Problem:
+  - That meant export/share paths could keep treating a once-good procedure as valid local knowledge even after its latest evidence had materially degraded.
+
+- Decision:
+  - Keep the local seed store simple and symmetric:
+    - promote when the candidate clears the promotion floor
+    - remove the materialized procedure artifact when later evidence drops it back below that floor
+
+- Changes made:
+  - `packages/infra/src/evolution/local-procedure-seed.ts`
+    - added removal of an existing procedure artifact when the updated candidate no longer satisfies the promotion gate
+  - `packages/infra/tests/procedure-seed.test.ts`
+    - added regression coverage proving a previously promoted procedure is removed after later failures lower its reliability below the gate
+
+- Impact / Result:
+  - Local procedure promotion is now more reversible and better aligned with the idea that reusable procedure knowledge should reflect current evidence, not only historical best moments.
+
+- Open questions / next steps:
+  - Future evolution work still needs a richer distinction between “temporarily degraded”, “deprecated”, and “hard invalidated” procedures instead of a single on-disk present/absent state.
+
+### Session: Reconcile network exchange tests with the stricter local promotion gate
+
+- Context / Trigger:
+  - After tightening local procedure promotion thresholds, the inter-Nous exchange test still assumed two successful traces were enough to produce an exportable local procedure artifact.
+
+- Problem:
+  - The test was asserting against the old promotion threshold rather than the new local reliability gate.
+
+- Decision:
+  - Keep the export contract unchanged: exchange should still export only a promoted local procedure artifact.
+  - Update the fixture to reach the new promotion threshold honestly instead of weakening the export rule.
+
+- Changes made:
+  - `packages/infra/tests/network-exchange.test.ts`
+    - added a third successful trace before exporting the local procedure summary
+    - renamed the test wording from “validated local procedure” to “promoted local procedure”
+
+- Impact / Result:
+  - Network exchange regression now matches the stricter local procedure-promotion contract.
+  - The test suite stops encoding the obsolete two-success assumption.
+
+- Open questions / next steps:
+  - If future exchange wants to share “validated but not yet promoted” procedure candidates, that should become a separate bundle contract rather than weakening the promoted-procedure export path.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass
