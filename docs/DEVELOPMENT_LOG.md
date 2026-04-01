@@ -45,6 +45,90 @@ For significant sessions, capture:
 
 ## 2026-04-01
 
+### Session: Critique unified cross-window conversational continuity and propose a layered retreat
+
+- Context / Trigger:
+  - After multiple rounds of dogfooding thread / intent / clarification / preference-update behavior, a more serious architecture concern surfaced:
+    - the product goal of "in any window, continue talking to Nous like talking to the same person" may itself be overreaching
+    - local fixes around thread routing, clarification, retrieval, and continuity were starting to reveal growing structural tension rather than converging on a stable design
+  - User explicitly asked for a severe architectural critique and for a written retreat plan toward:
+    - **one persistent assistant**
+    - but continuity that is **layered, explicit, and transferable**
+
+- Problem:
+  - The current direction was attempting to unify several different kinds of continuity into one conversational illusion:
+    - dialogue continuity
+    - work continuity
+    - cognitive continuity
+    - cross-window attachment continuity
+  - This pushes more and more burden onto:
+    - thread routers
+    - clarification state
+    - retrieval/matching
+    - thread/intent/decision coordination
+  - The deeper issue is not only implementation incompleteness, but target mismatch:
+    - LLMs do not have native persistent self / thread state
+    - window/surface boundaries are not semantically neutral
+    - many user follow-ups do not have a single objectively correct mapping to thread/intent/state objects
+  - That means complexity grows faster than truth density: more states, more routing, less stable correctness.
+
+- External reference comparison:
+  - **Codex**
+    - useful lesson: separates `thread` and `turn` explicitly
+    - solves persisted history + explicit turn protocol
+    - does not pretend all surfaces magically share human-like continuity
+  - **Claude Code / Sourcemap**
+    - useful lesson: `--continue` / `--resume` are closer to work/session continuity than full human-like conversational continuity
+    - compaction and recovery are explicit mechanisms, not hidden conversational magic
+  - **OpenClaw**
+    - useful lesson: continuity is treated more honestly as session/surface management plus history budgeting
+    - weaker assistant continuity, but also less object-model overreach
+
+- Decision:
+  - Write a new standalone architecture critique / retreat document instead of trying to silently mutate the main architecture doc inline.
+  - The new design direction is:
+    - **Identity continuity**
+    - **Surface continuity**
+    - **Work continuity**
+    - **Transfer continuity**
+    - **Memory continuity**
+  - Explicitly reject the strong goal:
+    - "all windows continue like the same natural human conversation"
+  - Replace it with:
+    - one persistent assistant
+    - multiple continuity layers
+    - explicit handoff / transfer objects
+    - clearer distinction between chat mode and work mode
+
+- Changes made:
+  - Added `docs/gpt54-xhght-layered-continuity-critique.md`
+    - severe critique of the current unified continuity ambition
+    - comparison with Codex / Claude Code / OpenClaw
+    - proposed layered continuity model
+    - concrete architecture and code retreat phases
+  - Updated `docs/DEVELOPMENT_LOG.md`
+
+- Impact:
+  - The repo now contains an explicit written argument for why the current "unified cross-window human-like continuity" ambition is structurally risky.
+  - Future iterations can use this document as a decision anchor instead of continuing to pile local fixes onto thread/intent continuity.
+  - The next architecture discussion can move from:
+    - "how do we make the illusion work better?"
+    - to
+    - "which continuity layer is actually needed here?"
+
+- Open questions / next steps:
+  - Decide whether to:
+    - revise `ARCHITECTURE.md` mainline around this layered continuity model
+    - or keep the new critique document as a parallel decision memo until a larger architecture revision pass
+  - Formalize code-level objects for:
+    - `InteractionMode`
+    - `HandoffCapsule`
+    - chat vs work continuity boundaries
+  - Audit current daemon/router/orchestrator paths and classify which ones belong to:
+    - chat continuity
+    - work continuity
+    - transfer continuity
+
 ### Session: Tighten thread visibility and answer-lane rendering in CLI/REPL
 
 - Context / Trigger:
