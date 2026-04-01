@@ -70,6 +70,9 @@ export class SQLiteIntentStore implements IntentStore {
 
 		for (const [key, value] of Object.entries(fields)) {
 			if (
+				key === "flowId" ||
+				key === "planGraphId" ||
+				key === "sourceEnvelopeId" ||
 				key === "contract" ||
 				key === "executionDepth" ||
 				key === "clarificationQuestions" ||

@@ -5418,3 +5418,86 @@ For significant sessions, capture:
   - The current `WorkStore` is substrate only; no daemon/orchestrator code creates flows or plan graphs yet.
   - `WorkRelation` is intentionally generic. Before scheduler integration, Nous should still decide whether some relation kinds deserve narrower specialized objects or APIs.
   - `ModelCapabilityProfile` exists now as a contract, but no runtime source of truth populates it yet.
+
+### Session: Wire the first real `Flow` / `PlanGraph` ownership path into daemon + orchestrator
+- Context / Trigger:
+  - The previous iteration intentionally stopped at substrate:
+    - core contracts
+    - SQLite tables
+    - round-trip tests
+  - That was the right first move, but it still left the new objects inert:
+    - no runtime path created flows
+    - no planner path created plan graphs
+    - no thread tracking path wrote flow-thread bindings
+- Problem:
+  - Without a first live integration slice, the new governance objects would remain architectural placeholders in code.
+  - The most important missing runtime ownership links were:
+    - when an intent becomes real work, who creates its `Flow`?
+    - when planning happens, who creates its `PlanGraph`?
+    - when a thread owns/continues work, where does that thread-to-flow relationship get persisted?
+  - At the same time, this iteration should stay narrow:
+    - no merge logic yet
+    - no model allocation behavior yet
+    - no flow-aware scheduling policy yet
+- Options considered:
+  - Option A: integrate everything at once, including merge proposals and model-allocation behavior.
+    - Rejected because it would skip the intermediate “ownership only” layer and create too many moving parts at once.
+  - Option B: wire only daemon-side flow creation, leaving planner ownership for later.
+    - Rejected because it would leave `PlanGraph` still inert and break the architecture’s own build order.
+  - Option C: land the minimum honest ownership slice now:
+    - daemon tracks intents into flows + thread bindings
+    - orchestrator planning creates/supersedes plan graphs
+    - tasks receive `flowId`, `planGraphId`, and `cognitiveOperation`
+    - Chosen because it makes the new objects participate in the real execution spine without overcommitting later policy.
+- Decision:
+  - Extend the orchestrator config with optional `workStore`.
+  - In the orchestrator:
+    - create a fallback `Flow` if an intent reaches planning without one
+    - create a new `PlanGraph` for each planning pass
+    - supersede prior active/draft plan graphs for the same intent
+    - attach planned tasks to the resolved `flowId` / `planGraphId`
+    - seed task `cognitiveOperation = execution_main`
+    - mark the current `PlanGraph` completed when the intent reaches a terminal completion/abandon path
+  - In the daemon:
+    - when an intent is tracked to a thread, ensure it has a `Flow`
+    - persist a `FlowThreadBinding`
+    - bind ambient intents as `ambient`, human intents as `primary`
+- Changes made:
+  - Updated `packages/orchestrator/src/orchestrator.ts`
+    - added optional `workStore`
+    - added `ensureFlowForIntent`
+    - added `createPlanGraphForIntent`
+    - added `completePlanGraphForIntent`
+    - updated planning path so planned tasks inherit:
+      - `flowId`
+      - `planGraphId`
+      - `cognitiveOperation = execution_main`
+    - added a first topology inference helper for `PlanGraph`
+  - Updated `packages/infra/src/daemon/server.ts`
+    - passed `backend.work` into the orchestrator
+    - upgraded `trackIntentForThread` to ensure/bind flows during real daemon tracking
+    - ensured `refreshTrackedIntentContext` also preserves flow-thread bindings
+  - Added `packages/orchestrator/tests/orchestrator-work-governance.test.ts`
+    - verifies planning creates a flow + plan graph and attaches the planned tasks to them
+  - Added `packages/infra/tests/daemon-work-governance.test.ts`
+    - verifies daemon thread tracking creates a flow and primary thread binding
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/orchestrator/tests/orchestrator-work-governance.test.ts packages/infra/tests/daemon-work-governance.test.ts packages/persistence/tests/work-store.test.ts` ✅
+- Impact / Result:
+  - `Flow` and `PlanGraph` now participate in the real daemon/orchestrator execution spine.
+  - Nous has crossed the line from:
+    - “architecture slots + persistence substrate”
+    - to
+    - “first runtime-owned work-governance objects”
+  - This gives later iterations a real base for:
+    - merge proposals
+    - flow-aware debug/status surfaces
+    - model/team allocation
+    - proactive attach-vs-create decisions
+- Open questions / follow-ups:
+  - `Flow` status itself is not yet fully managed; current integration mainly guarantees creation/binding, not mature lifecycle semantics.
+  - `PlanGraph.topology` inference is still intentionally heuristic and only meant as a first ownership/observability signal.
+  - The next natural continuation is likely:
+    - surface `flowId` / `planGraphId` in debug/status/process views
+    - or start using `Flow` for proactive attach-vs-create / merge-candidate production.

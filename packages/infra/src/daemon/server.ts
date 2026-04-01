@@ -6,6 +6,8 @@ import type {
 	ClientEnvelope,
 	DaemonEnvelope,
 	Decision,
+	Flow,
+	Intent,
 	LLMProvider,
 	ProactiveCandidate,
 	RelationshipBoundary,
@@ -112,6 +114,7 @@ export class NousDaemon {
 			taskStore: this.backend.tasks,
 			intentStore: this.backend.intents,
 			memoryStore: this.backend.memory,
+			workStore: this.backend.work,
 		});
 		this.orchestrator.registerAgent(createGeneralAgent());
 		this.threadInputRouter = new ThreadInputRouter(options.llm);
@@ -2430,11 +2433,21 @@ export class NousDaemon {
 	}
 
 	private trackIntentForThread(
-		intentId: string,
+		intentOrId: Intent | string,
 		threadId: string,
 		text: string,
 		scope: Channel["scope"],
 	): void {
+		const intent =
+			typeof intentOrId === "string"
+				? this.backend.intents.getById(intentOrId)
+				: intentOrId;
+		const intentId =
+			typeof intentOrId === "string" ? intentOrId : intentOrId.id;
+		if (intent) {
+			this.ensureFlowForTrackedIntent(intent, threadId, text);
+			this.bindFlowToThread(intent, threadId);
+		}
 		this.dialogue.linkIntentToThread(threadId, intentId);
 		this.threadByIntentId.set(intentId, threadId);
 		this.intentTextById.set(intentId, text);
@@ -2465,6 +2478,10 @@ export class NousDaemon {
 		this.dialogue.linkIntentToThread(threadId, intentId);
 		this.threadByIntentId.set(intentId, threadId);
 		this.intentScopeById.set(intentId, scope);
+		const intent = this.backend.intents.getById(intentId);
+		if (intent) {
+			this.bindFlowToThread(intent, threadId);
+		}
 		if (!this.intentOutputsById.has(intentId)) {
 			this.intentOutputsById.set(intentId, []);
 		}
@@ -2477,6 +2494,51 @@ export class NousDaemon {
 		if (!this.intentRiskyToolNamesById.has(intentId)) {
 			this.intentRiskyToolNamesById.set(intentId, []);
 		}
+	}
+
+	private ensureFlowForTrackedIntent(
+		intent: Intent,
+		threadId: string,
+		text: string,
+	): void {
+		if (intent.flowId && this.backend.work.getFlowById(intent.flowId)) {
+			return;
+		}
+
+		const flow: Flow = {
+			id: prefixedId("flow"),
+			kind:
+				intent.source === "ambient" ? "proactive_followup" : "explicit_request",
+			title: intent.goal.summary || text,
+			summary: intent.workingText ?? text,
+			ownerThreadId: threadId,
+			status: "active" as const,
+			source: intent.source === "ambient" ? "ambient" : "human",
+			priority: intent.priority,
+			createdAt: now(),
+			updatedAt: now(),
+			primaryIntentId: intent.id,
+			relatedIntentIds: [intent.id],
+			relatedTaskIds: [],
+		};
+		this.backend.work.createFlow(flow);
+		this.backend.intents.update(intent.id, { flowId: flow.id });
+		intent.flowId = flow.id;
+	}
+
+	private bindFlowToThread(intent: Intent, threadId: string): void {
+		if (!intent.flowId) {
+			return;
+		}
+		this.backend.work.bindFlowThread({
+			flowId: intent.flowId,
+			threadId,
+			role: intent.source === "ambient" ? "ambient" : "primary",
+			createdAt: now(),
+			metadata: {
+				intentId: intent.id,
+			},
+		});
 	}
 
 	private storeIntentRequestMemory(payload: {

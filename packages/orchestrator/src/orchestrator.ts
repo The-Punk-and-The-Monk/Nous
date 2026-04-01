@@ -5,12 +5,14 @@ import type {
 	CapabilitySet,
 	Event,
 	ExecutionDepthDecision,
+	Flow,
 	Intent,
 	IntentExecutionDirective,
 	IntentRevisionApplyMode,
 	IntentRevisionRecord,
 	LLMProvider,
 	Logger,
+	PlanGraph,
 	PauseDirective,
 	PendingIntentCancellation,
 	PendingIntentPause,
@@ -28,7 +30,13 @@ import {
 	now,
 	prefixedId,
 } from "@nous/core";
-import type { EventStore, IntentStore, MemoryStore, TaskStore } from "@nous/persistence";
+import type {
+	EventStore,
+	IntentStore,
+	MemoryStore,
+	TaskStore,
+	WorkStore,
+} from "@nous/persistence";
 import { AgentRuntime, MemoryService } from "@nous/runtime";
 import type { RuntimeInterruptRequest } from "@nous/runtime";
 import {
@@ -47,6 +55,7 @@ export interface OrchestratorConfig {
 	taskStore: TaskStore;
 	intentStore: IntentStore;
 	memoryStore?: MemoryStore;
+	workStore?: WorkStore;
 	heartbeatTimeoutMs?: number;
 	pollIntervalMs?: number;
 }
@@ -102,6 +111,7 @@ export class Orchestrator {
 	private taskStore: TaskStore;
 	private intentStore: IntentStore;
 	private memory?: MemoryService;
+	private work?: WorkStore;
 	private readonly intentExecutionOptions = new Map<
 		string,
 		IntentExecutionOptions
@@ -116,6 +126,7 @@ export class Orchestrator {
 		this.eventStore = config.eventStore;
 		this.taskStore = config.taskStore;
 		this.intentStore = config.intentStore;
+		this.work = config.workStore;
 		this.memory = config.memoryStore
 			? new MemoryService({
 					store: config.memoryStore,
@@ -1027,6 +1038,7 @@ export class Orchestrator {
 		if (allDone) {
 			const intent = this.intentStore.getById(intentId);
 			const delivery = buildIntentDelivery(intent, tasks);
+			this.completePlanGraphForIntent(intentId, "completed");
 			this.intentStore.update(intentId, {
 				status: "achieved",
 				achievedAt: now(),
@@ -1038,6 +1050,7 @@ export class Orchestrator {
 				data: { intentId, delivery },
 			});
 		} else if (anyAbandoned) {
+			this.completePlanGraphForIntent(intentId, "completed");
 			this.intentStore.update(intentId, { status: "abandoned" });
 			this.intentExecutionOptions.delete(intentId);
 			this.emitEvent("intent.abandoned", "intent", intentId, {});
@@ -1053,33 +1066,53 @@ export class Orchestrator {
 	}
 
 	private async planIntent(intent: Intent): Promise<void> {
+		const effectiveIntent = this.intentStore.getById(intent.id) ?? intent;
 		if (
-			intent.status !== "active" ||
-			intent.pendingCancellation ||
-			intent.pendingPause
+			effectiveIntent.status !== "active" ||
+			effectiveIntent.pendingCancellation ||
+			effectiveIntent.pendingPause
 		) {
 			return;
 		}
 		this.emitProgress({
 			type: "intent.parsed",
-			data: { intentId: intent.id, goal: intent.goal },
+			data: { intentId: effectiveIntent.id, goal: effectiveIntent.goal },
 		});
 
-		const tasks = await this.planner.plan(intent, {
-			contract: intent.contract,
-			executionDepth: intent.executionDepth,
+		const flow = this.ensureFlowForIntent(effectiveIntent);
+		const tasks = await this.planner.plan(effectiveIntent, {
+			contract: effectiveIntent.contract,
+			executionDepth: effectiveIntent.executionDepth,
 		});
+		const planGraph = this.createPlanGraphForIntent(
+			effectiveIntent,
+			flow?.id ?? effectiveIntent.flowId,
+			tasks,
+		);
 		for (const task of tasks) {
+			task.flowId = flow?.id ?? effectiveIntent.flowId;
+			task.planGraphId = planGraph?.id;
+			task.cognitiveOperation = task.cognitiveOperation ?? "execution_main";
 			this.taskStore.create(task);
 			this.emitEvent("task.created", "task", task.id, {
-				intentId: intent.id,
+				intentId: effectiveIntent.id,
 				description: task.description,
+			});
+		}
+		if (flow) {
+			const existingTaskIds = flow.relatedTaskIds ?? [];
+			this.work?.updateFlow(flow.id, {
+				relatedTaskIds: dedupeStrings([
+					...existingTaskIds,
+					...tasks.map((task) => task.id),
+				]),
+				updatedAt: now(),
 			});
 		}
 		this.emitProgress({
 			type: "tasks.planned",
 			data: {
-				intentId: intent.id,
+				intentId: effectiveIntent.id,
 				taskCount: tasks.length,
 				tasks: tasks.map((task) => ({
 					id: task.id,
@@ -1161,6 +1194,91 @@ export class Orchestrator {
 			await this.planIntent(revised);
 		}
 		return this.intentStore.getById(intentId) ?? revised;
+	}
+
+	private ensureFlowForIntent(intent: Intent): Flow | undefined {
+		if (!this.work) {
+			return undefined;
+		}
+
+		if (intent.flowId) {
+			const existing = this.work.getFlowById(intent.flowId);
+			if (existing) {
+				return existing;
+			}
+		}
+
+		const flow: Flow = {
+			id: prefixedId("flow"),
+			kind:
+				intent.source === "ambient" ? "proactive_followup" : "explicit_request",
+			title: intent.goal.summary || intent.raw,
+			summary: intent.workingText ?? intent.raw,
+			status: "active",
+			source: intent.source === "ambient" ? "ambient" : "human",
+			priority: intent.priority,
+			createdAt: now(),
+			updatedAt: now(),
+			primaryIntentId: intent.id,
+			relatedIntentIds: [intent.id],
+			relatedTaskIds: [],
+		};
+		this.work.createFlow(flow);
+		this.intentStore.update(intent.id, { flowId: flow.id });
+		intent.flowId = flow.id;
+		return flow;
+	}
+
+	private createPlanGraphForIntent(
+		intent: Intent,
+		flowId: string | undefined,
+		tasks: Task[],
+	): PlanGraph | undefined {
+		if (!this.work || !flowId) {
+			return undefined;
+		}
+
+		const existing = this.work.listPlanGraphs({ intentId: intent.id });
+		for (const graph of existing) {
+			if (graph.status === "draft" || graph.status === "active") {
+				this.work.updatePlanGraph(graph.id, {
+					status: "superseded",
+					updatedAt: now(),
+				});
+			}
+		}
+
+		const planGraph: PlanGraph = {
+			id: prefixedId("plan"),
+			intentId: intent.id,
+			flowId,
+			status: "active",
+			topology: inferPlanGraphTopology(tasks),
+			planningDepth: intent.executionDepth?.planningDepth ?? "full",
+			createdAt: now(),
+			updatedAt: now(),
+		};
+		this.work.createPlanGraph(planGraph);
+		this.intentStore.update(intent.id, { planGraphId: planGraph.id });
+		intent.planGraphId = planGraph.id;
+		return planGraph;
+	}
+
+	private completePlanGraphForIntent(
+		intentId: string,
+		status: PlanGraph["status"],
+	): void {
+		if (!this.work) {
+			return;
+		}
+		const intent = this.intentStore.getById(intentId);
+		if (!intent?.planGraphId) {
+			return;
+		}
+		this.work.updatePlanGraph(intent.planGraphId, {
+			status,
+			updatedAt: now(),
+		});
 	}
 
 	private applyParsedIntentState(
@@ -2198,4 +2316,49 @@ function isIrreversibleRiskyToolResult(
 
 function dedupeStrings(values: string[]): string[] {
 	return [...new Set(values)];
+}
+
+function inferPlanGraphTopology(tasks: Task[]): PlanGraph["topology"] {
+	if (tasks.length <= 1) {
+		return "single";
+	}
+
+	const dependentCount = new Map<string, number>();
+	let multipleDependencyTaskCount = 0;
+	let rootCount = 0;
+
+	for (const task of tasks) {
+		if (task.dependsOn.length === 0) {
+			rootCount += 1;
+		}
+		if (task.dependsOn.length > 1) {
+			multipleDependencyTaskCount += 1;
+		}
+		for (const dependencyId of task.dependsOn) {
+			dependentCount.set(
+				dependencyId,
+				(dependentCount.get(dependencyId) ?? 0) + 1,
+			);
+		}
+	}
+
+	const branchingNodeCount = [...dependentCount.values()].filter(
+		(count) => count > 1,
+	).length;
+
+	if (
+		rootCount === 1 &&
+		multipleDependencyTaskCount === 0 &&
+		branchingNodeCount === 0
+	) {
+		return "serial";
+	}
+	if (
+		rootCount > 1 &&
+		multipleDependencyTaskCount === 0 &&
+		branchingNodeCount === 0
+	) {
+		return "parallel";
+	}
+	return "dag";
 }
