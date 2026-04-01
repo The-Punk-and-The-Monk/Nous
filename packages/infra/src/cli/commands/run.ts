@@ -133,7 +133,10 @@ function renderDelivery(event: ProgressEvent): void {
 	}
 
 	const summary = String(delivery.summary ?? "").trim();
-	const evidence = normalizeLines(delivery.evidence);
+	const evidence = dedupeSummaryFromEvidence(
+		summary,
+		normalizeLines(delivery.evidence),
+	);
 	const risks = normalizeLines(delivery.risks);
 	const nextSteps = normalizeLines(delivery.nextSteps);
 
@@ -164,4 +167,21 @@ function normalizeLines(value: unknown): string[] {
 	return Array.isArray(value)
 		? value.map((item) => String(item).trim()).filter(Boolean)
 		: [];
+}
+
+function dedupeSummaryFromEvidence(
+	summary: string,
+	evidence: string[],
+): string[] {
+	if (!summary || evidence.length === 0) {
+		return evidence;
+	}
+	const summaryKey = comparableText(summary);
+	return evidence.filter((item, index) =>
+		index === 0 ? comparableText(item) !== summaryKey : true,
+	);
+}
+
+function comparableText(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
 }

@@ -1878,9 +1878,11 @@ export class NousDaemon {
 		notes?: string[];
 	}): TurnResolutionSnapshot {
 		const assembledContext = params.executionContext.assembledContext;
+		const threadTitle = this.backend.messages.getThread(params.threadId)?.title;
 		return {
 			turnId: params.turnId,
 			threadId: params.threadId,
+			threadTitle,
 			intentId: params.intentId,
 			intentSummary: params.intentSummary,
 			route: params.route,

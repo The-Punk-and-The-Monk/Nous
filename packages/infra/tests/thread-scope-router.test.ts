@@ -73,6 +73,25 @@ describe("ThreadScopeRouter", () => {
 
 		expect(result.disposition).toBe("resume_current_intent");
 	});
+
+	test("classifies explicit new-topic markers as new intent", async () => {
+		const provider = new MockProvider(
+			'{"disposition":"new_intent","rationale":"The user explicitly says they want to start a new topic and asks for a separate dinner recommendation task."}',
+		);
+		const router = new ThreadScopeRouter(provider);
+		const result = await router.route({
+			text: "让我们开一个新的话题，帮我建议一下今天晚上吃什么。",
+			intent: makeIntent(),
+			recentThreadMessages: [
+				{
+					role: "assistant",
+					content: "I can keep expanding the positive psychology outline.",
+				},
+			],
+		});
+
+		expect(result.disposition).toBe("new_intent");
+	});
 });
 
 function makeIntent(status: Intent["status"] = "active"): Intent {

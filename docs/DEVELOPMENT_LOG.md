@@ -45,6 +45,84 @@ For significant sessions, capture:
 
 ## 2026-04-01
 
+### Session: Tighten thread visibility and answer-lane rendering in CLI/REPL
+
+- Context / Trigger:
+  - User dogfooded daemon/REPL dialogue and reported three interaction issues:
+    - topic switches still appeared under the same thread
+    - final answers duplicated content between the main reply and the `Evidence` section
+    - REPL prompt only showed a very short thread id prefix (`[thread_01KN4]`), making it hard to know which thread was currently attached without scrolling back
+
+- Problem:
+  - The current REPL prompt exposed only a 12-character thread prefix and ignored the already-persisted `DialogueThread.title`.
+  - Trust receipts also ignored the thread title even though the dialogue layer already stores one.
+  - Final answer rendering treated `summary` and `evidence[0]` independently, so structured deliveries often repeated the same sentence twice in the answer lane.
+  - The topic-switch report revealed an important distinction:
+    - current behavior is largely **by design**
+    - a thread in REPL is currently closer to a conversation container than a hard topic boundary
+    - but the routing prompt still under-signaled explicit "start a new topic" markers, so intent-level disambiguation could be improved even if thread auto-forking was not changed in this iteration
+
+- Options considered:
+  - **Option A: Auto-create a new thread whenever the user says "new topic"**
+    - Rejected for this iteration because it changes the thread/intent boundary contract and needs a more explicit architecture decision.
+  - **Option B: Leave thread behavior unchanged but improve visibility + reduce answer-lane duplication**
+    - Chosen because it directly fixes the user-facing confusion with low architectural risk.
+  - **Option C: Also tighten the thread-scope router prompt around explicit topic-switch markers**
+    - Chosen as a bounded improvement at the intent-routing layer, without changing the higher-level thread container semantics.
+
+- Decision:
+  - Keep the current thread container model for now.
+  - Improve REPL prompt/thread visibility by:
+    - showing a longer thread badge
+    - including thread title when available
+  - Improve trust receipts by displaying thread title when present.
+  - Deduplicate answer-lane evidence when it simply repeats the summary.
+  - Strengthen thread-scope routing instructions so phrases like:
+    - "开一个新的话题"
+    - "换个话题"
+    - "另一个问题"
+    are more likely to resolve to `new_intent`.
+
+- Changes made:
+  - `packages/core/src/types/interaction.ts`
+    - added optional `threadTitle` to `TurnResolutionSnapshot`
+  - `packages/infra/src/daemon/server.ts`
+    - populated `threadTitle` in turn trust receipts from the message store
+  - `packages/infra/src/cli/commands/repl.ts`
+    - REPL now tracks current thread title
+    - prompt badge uses title when available and a longer id slice otherwise
+    - submission line also uses the richer thread badge
+    - exported `formatThreadBadge()` for testable prompt formatting
+  - `packages/infra/src/cli/renderers/dialogue.ts`
+    - deduplicates evidence if it repeats the summary
+    - trust receipt now shows thread title when present
+  - `packages/infra/src/daemon/process-surface.ts`
+    - deduplicates repeated summary/evidence in daemon answer artifacts
+  - `packages/infra/src/cli/commands/run.ts`
+    - deduplicates repeated summary/evidence in foreground CLI rendering
+  - `packages/infra/src/intake/thread-scope-router.ts`
+    - added stronger prompt guidance for explicit topic-switch markers
+  - tests:
+    - `packages/infra/tests/dialogue-renderer.test.ts`
+    - `packages/infra/tests/repl-thread-badge.test.ts`
+    - `packages/infra/tests/thread-scope-router.test.ts`
+
+- Impact:
+  - Users can now see a much more identifiable current thread in REPL without scrolling.
+  - Existing thread titles become visible in both attach snapshots and turn-context receipts.
+  - Final answers no longer repeat the same sentence in both the main answer and the first evidence row.
+  - Intent-level routing is slightly more robust for explicit topic-switch phrasing, while preserving the current thread-container model.
+
+- Open questions / next steps:
+  - Decide whether explicit topic-switch requests should:
+    - create a new intent in the same thread
+    - or auto-fork a new thread
+  - If thread titles remain visible in the prompt, decide whether they should stay as first-message titles or evolve with the dominant/latest intent.
+  - Add a clearer surfaced distinction between:
+    - "same thread, new intent"
+    - "same thread, current-intent follow-up"
+  - Global `bun x tsc --noEmit` still reports unrelated pre-existing errors in `packages/runtime/src/llm/openai-shared.ts`; this iteration did not touch those files.
+
 ### Session: Define how Nous should treat user files in permissions, memory, and RAG
 
 - Context / Trigger:

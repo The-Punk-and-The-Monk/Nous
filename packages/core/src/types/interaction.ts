@@ -21,6 +21,7 @@ export type ThreadResolutionKind = "created" | "continued" | "ambient";
 export interface TurnResolutionSnapshot {
 	turnId: string;
 	threadId: string;
+	threadTitle?: string;
 	intentId?: string;
 	intentSummary?: string;
 	route: TurnRouteKind;

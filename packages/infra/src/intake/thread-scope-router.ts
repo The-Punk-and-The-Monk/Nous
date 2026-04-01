@@ -60,6 +60,7 @@ Important:
 - messages like "先暂停", "pause this", "hold off for now", or "we can come back later" usually mean pause_current_intent
 - messages like "继续刚才那个", "resume that", or "pick it back up" usually mean resume_current_intent when the existing intent is paused
 - messages like "stop", "never mind", "cancel that", or "don't continue" usually mean cancel_current_intent
+- explicit topic-switch markers like "let's start a new topic", "换个话题", "开一个新的话题", "另一个问题", or "separately" should usually be new_intent unless the rest of the message clearly keeps refining the current task
 - messages that clearly introduce a distinct deliverable or unrelated goal are new_intent
 - if the message could reasonably be interpreted either way, choose ambiguous
 - prefer ambiguous over guessing when scope would materially change execution`;

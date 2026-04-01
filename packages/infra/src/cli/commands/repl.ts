@@ -1,5 +1,6 @@
 import readline from "node:readline";
 import type {
+	AttachAckPayload,
 	DialogueMessage,
 	ResolveControlInputResult,
 	StatusSnapshot,
@@ -33,13 +34,14 @@ export async function openDaemonRepl(options?: {
 	await session.connect();
 
 	let currentThreadId = options?.initialThreadId;
+	let currentThreadTitle: string | undefined;
 	let shuttingDown = false;
 	let inputInFlight = false;
 
 	const rl = readline.createInterface({
 		input: process.stdin,
 		output: process.stdout,
-		prompt: promptForThread(currentThreadId),
+		prompt: promptForThread(currentThreadId, currentThreadTitle),
 	});
 
 	const stopListening = session.onMessage((message) => {
@@ -59,20 +61,36 @@ export async function openDaemonRepl(options?: {
 			currentThreadId &&
 			message.threadId &&
 			message.threadId !== currentThreadId
-				? `[${message.threadId.slice(0, 12)}]`
+				? `[${formatThreadBadge(message.threadId)}]`
 				: undefined;
 		renderDialogueMessage(dialogue, prefix ? { prefix } : undefined);
-		rl.setPrompt(promptForThread(currentThreadId));
+		rl.setPrompt(promptForThread(currentThreadId, currentThreadTitle));
 		if (!inputInFlight) {
 			rl.prompt();
 		}
 	});
 
 	if (currentThreadId) {
-		await printThreadSnapshot(session, channel, currentThreadId);
-		await attachToThread(session, channel, currentThreadId, false);
+		currentThreadTitle = await printThreadSnapshot(
+			session,
+			channel,
+			currentThreadId,
+		);
+		const attachedThread = await attachToThread(
+			session,
+			channel,
+			currentThreadId,
+			false,
+		);
+		currentThreadTitle = attachedThread?.title ?? currentThreadTitle;
 	} else {
-		await attachToThread(session, channel, currentThreadId, true);
+		const attachedThread = await attachToThread(
+			session,
+			channel,
+			currentThreadId,
+			true,
+		);
+		currentThreadTitle = attachedThread?.title;
 	}
 
 	printReplCommands({
@@ -105,7 +123,13 @@ export async function openDaemonRepl(options?: {
 			rl.pause();
 
 			try {
-				await attachToThread(session, channel, currentThreadId, true);
+				const attachedThread = await attachToThread(
+					session,
+					channel,
+					currentThreadId,
+					true,
+				);
+				currentThreadTitle = attachedThread?.title ?? currentThreadTitle;
 				const resolved = await resolveReplInput(
 					input,
 					session,
@@ -202,13 +226,19 @@ export async function openDaemonRepl(options?: {
 						case "attach_thread":
 							currentThreadId = resolved.threadId;
 							if (currentThreadId) {
-								await printThreadSnapshot(session, channel, currentThreadId);
-								await attachToThread(
+								currentThreadTitle = await printThreadSnapshot(
+									session,
+									channel,
+									currentThreadId,
+								);
+								const attached = await attachToThread(
 									session,
 									channel,
 									currentThreadId,
 									false,
 								);
+								currentThreadTitle =
+									attached?.title ?? currentThreadTitle;
 							}
 							return;
 						case "detach_thread":
@@ -218,6 +248,7 @@ export async function openDaemonRepl(options?: {
 								);
 							} else {
 								currentThreadId = undefined;
+								currentThreadTitle = undefined;
 								await attachToThread(session, channel, currentThreadId, true);
 								console.log(
 									`  ${colors.dim("Detached from the current thread. The next message can start or discover another thread.")}`,
@@ -246,10 +277,16 @@ export async function openDaemonRepl(options?: {
 				};
 				if (payload.threadId !== currentThreadId) {
 					currentThreadId = payload.threadId;
-					await attachToThread(session, channel, currentThreadId, true);
+					const attached = await attachToThread(
+						session,
+						channel,
+						currentThreadId,
+						true,
+					);
+					currentThreadTitle = attached?.title;
 				}
 				console.log(
-					`  ${colors.dim("submitted")} ${payload.threadId} ${colors.dim(payload.messageId)}`,
+					`  ${colors.dim("submitted")} ${formatThreadBadge(payload.threadId, currentThreadTitle)} ${colors.dim(payload.messageId)}`,
 				);
 			} catch (error) {
 				console.log(
@@ -258,7 +295,7 @@ export async function openDaemonRepl(options?: {
 			} finally {
 				inputInFlight = false;
 				rl.resume();
-				rl.setPrompt(promptForThread(currentThreadId));
+				rl.setPrompt(promptForThread(currentThreadId, currentThreadTitle));
 				if (!shuttingDown) {
 					rl.prompt();
 				}
@@ -298,8 +335,8 @@ async function attachToThread(
 	channel: ReturnType<typeof createChannel>,
 	threadId?: string,
 	replayPending = true,
-): Promise<void> {
-	await session.request({
+): Promise<AttachAckPayload["thread"] | undefined> {
+	const response = await session.request({
 		type: "attach",
 		channel,
 		payload: {
@@ -319,13 +356,15 @@ async function attachToThread(
 			},
 		},
 	});
+	const payload = response.payload as AttachAckPayload;
+	return payload.thread;
 }
 
 async function printThreadSnapshot(
 	session: DaemonClientSession,
 	channel: ReturnType<typeof createChannel>,
 	threadId: string,
-): Promise<void> {
+): Promise<string | undefined> {
 	const response = await session.request({
 		type: "get_thread",
 		channel,
@@ -333,9 +372,11 @@ async function printThreadSnapshot(
 	});
 	if (response.type !== "response") {
 		console.log(`\n  ${colors.red("Thread not found.")}\n`);
-		return;
+		return undefined;
 	}
-	attachCommand(response.payload as ThreadSnapshot);
+	const snapshot = response.payload as ThreadSnapshot;
+	attachCommand(snapshot);
+	return snapshot.thread.title;
 }
 
 async function printStatus(
@@ -354,10 +395,26 @@ async function printStatus(
 	);
 }
 
-function promptForThread(threadId?: string): string {
+function promptForThread(threadId?: string, threadTitle?: string): string {
 	return threadId
-		? `${colors.dim(`[${threadId.slice(0, 12)}]`)} nous> `
+		? `${colors.dim(`[${formatThreadBadge(threadId, threadTitle)}]`)} nous> `
 		: "nous> ";
+}
+
+export function formatThreadBadge(
+	threadId: string,
+	threadTitle?: string,
+): string {
+	const normalizedTitle = threadTitle?.trim();
+	const shortId = threadId.slice(0, 16);
+	if (!normalizedTitle) {
+		return shortId;
+	}
+	const compactTitle =
+		normalizedTitle.length <= 24
+			? normalizedTitle
+			: `${normalizedTitle.slice(0, 21)}...`;
+	return `${compactTitle} · ${shortId}`;
 }
 
 async function resolveReplInput(

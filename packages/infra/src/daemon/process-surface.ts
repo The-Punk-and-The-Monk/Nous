@@ -453,10 +453,11 @@ function buildAnswerArtifact(event: ProgressEvent): AnswerArtifact {
 	if (!delivery) {
 		return { summary: "Completed successfully." };
 	}
+	const summary = readString(delivery.summary) ?? "Completed successfully.";
 	return {
 		mode: readString(delivery.mode),
-		summary: readString(delivery.summary) ?? "Completed successfully.",
-		evidence: normalizeStringArray(delivery.evidence),
+		summary,
+		evidence: dedupeSummaryFromItems(summary, normalizeStringArray(delivery.evidence)),
 		risks: normalizeStringArray(delivery.risks),
 		nextSteps: normalizeStringArray(delivery.nextSteps),
 	};
@@ -481,6 +482,24 @@ function appendLabeledLines(
 	}
 	lines.push(`${label}:`);
 	lines.push(...normalized.map((item) => `- ${item}`));
+}
+
+function dedupeSummaryFromItems(
+	summary: string | undefined,
+	items: string[] | undefined,
+): string[] | undefined {
+	const normalized = (items ?? []).map((item) => item.trim()).filter(Boolean);
+	if (!summary || normalized.length === 0) {
+		return normalized;
+	}
+	const summaryKey = comparableText(summary);
+	return normalized.filter((item, index) =>
+		index === 0 ? comparableText(item) !== summaryKey : true,
+	);
+}
+
+function comparableText(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
 }
 
 function buildTaskContractDetails(event: ProgressEvent): string[] {

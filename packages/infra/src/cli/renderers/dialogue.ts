@@ -106,7 +106,12 @@ function renderAnswerLines(
 		if (summary) {
 			lines.push(`${prefix}  ${summary}`);
 		}
-		pushLabeledList(lines, prefix, "Evidence", artifact.evidence);
+		pushLabeledList(
+			lines,
+			prefix,
+			"Evidence",
+			dedupeSummaryFromItems(summary, artifact.evidence),
+		);
 		pushLabeledList(lines, prefix, "Risks", artifact.risks);
 		pushLabeledList(lines, prefix, "Next", artifact.nextSteps);
 		if (lines.length > 1) {
@@ -167,6 +172,24 @@ function splitParagraphs(content: string): string[] {
 		.filter((line) => line.length > 0);
 }
 
+function dedupeSummaryFromItems(
+	summary: string | undefined,
+	items: string[] | undefined,
+): string[] | undefined {
+	const normalized = (items ?? []).map((item) => item.trim()).filter(Boolean);
+	if (!summary || normalized.length === 0) {
+		return normalized;
+	}
+	const summaryKey = comparableText(summary);
+	return normalized.filter((item, index) =>
+		index === 0 ? comparableText(item) !== summaryKey : true,
+	);
+}
+
+function comparableText(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
 function colorizeProcessTitle(status: ProcessItem["status"], title: string): string {
 	switch (status) {
 		case "running":
@@ -183,12 +206,15 @@ function colorizeProcessTitle(status: ProcessItem["status"], title: string): str
 }
 
 function trustReceiptDetails(snapshot: TurnResolutionSnapshot): string[] {
+	const threadTarget = snapshot.threadTitle?.trim()
+		? `${snapshot.threadTitle} (${snapshot.threadId})`
+		: snapshot.threadId;
 	const threadLine =
 		snapshot.threadResolution === "created"
-			? `Thread: started a new thread (${snapshot.threadId})`
+			? `Thread: started a new thread (${threadTarget})`
 			: snapshot.threadResolution === "ambient"
-				? `Thread: routed through ambient thread (${snapshot.threadId})`
-				: `Thread: continued existing thread (${snapshot.threadId})`;
+				? `Thread: routed through ambient thread (${threadTarget})`
+				: `Thread: continued existing thread (${threadTarget})`;
 	const intentLine = snapshot.intentSummary
 		? `Intent: ${routeLabel(snapshot.route)} → ${snapshot.intentSummary}`
 		: `Route: ${routeLabel(snapshot.route)}`;
