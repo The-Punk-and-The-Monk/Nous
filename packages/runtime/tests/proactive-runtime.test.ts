@@ -180,6 +180,95 @@ describe("ProactiveRuntimeService", () => {
 		expect(secondBatch).toHaveLength(0);
 		expect(store.getCandidateById("cand_2")?.status).toBe("dismissed");
 	});
+
+	test("applies delivery quotas per scoped boundary when a resolver is provided", () => {
+		const db = initDatabase();
+		const memory = new MemoryService({
+			store: new SQLiteMemoryStore(db),
+			agentId: "nous",
+		});
+		const store = new SQLiteProactiveStore(db);
+		const service = new ProactiveRuntimeService({
+			store,
+			memory,
+			now: () => "2026-03-31T08:00:00.000Z",
+		});
+		const globalBoundary: RelationshipBoundary = {
+			assistantStyle: {
+				warmth: "balanced",
+				directness: "balanced",
+			},
+			proactivityPolicy: {
+				initiativeLevel: "balanced",
+				allowedKinds: ["suggestion", "offer", "reminder", "ambient_intent"],
+				blockedKinds: [],
+				requireApprovalForKinds: ["ambient_intent"],
+			},
+			interruptionPolicy: {
+				maxUnpromptedMessagesPerDay: 5,
+				preferredDelivery: "thread",
+			},
+			autonomyPolicy: {
+				allowOffersWithoutPrompt: true,
+				allowAmbientAutoExecution: false,
+			},
+		};
+
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_project_a_delivered",
+				status: "delivered",
+				deliveredAt: "2026-03-31T07:30:00.000Z",
+				sourceThreadIds: ["thread_a"],
+				scope: {
+					projectRoot: "/repo/a",
+					workingDirectory: "/repo/a",
+				},
+				cooldownKey: "cand_project_a_delivered",
+			}),
+		);
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_project_a_queued",
+				status: "queued",
+				sourceThreadIds: ["thread_a"],
+				scope: {
+					projectRoot: "/repo/a",
+					workingDirectory: "/repo/a",
+				},
+				cooldownKey: "cand_project_a_queued",
+			}),
+		);
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_project_b_queued",
+				status: "queued",
+				sourceThreadIds: ["thread_b"],
+				scope: {
+					projectRoot: "/repo/b",
+					workingDirectory: "/repo/b",
+				},
+				cooldownKey: "cand_project_b_queued",
+			}),
+		);
+
+		const deliverable = service.drainDeliverableCandidates(
+			globalBoundary,
+			4,
+			(candidate) => ({
+				...globalBoundary,
+				interruptionPolicy: {
+					...globalBoundary.interruptionPolicy,
+					maxUnpromptedMessagesPerDay:
+						candidate.scope?.projectRoot === "/repo/a" ? 1 : 2,
+				},
+			}),
+		);
+
+		expect(deliverable.map((candidate) => candidate.id)).toEqual([
+			"cand_project_b_queued",
+		]);
+	});
 });
 
 function makeAgenda(

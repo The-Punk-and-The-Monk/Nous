@@ -3316,6 +3316,11 @@ export class NousDaemon {
 			const deliverable = this.proactive.drainDeliverableCandidates(
 				boundary,
 				4,
+				(candidate) =>
+					this.buildAmbientRelationshipBoundary({
+						scope: candidate.scope,
+						threadId: candidate.sourceThreadIds[0],
+					}),
 			);
 			await this.deliverProactiveCandidates(boundary, deliverable);
 		} catch (error) {

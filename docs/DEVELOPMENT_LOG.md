@@ -239,6 +239,42 @@ For significant sessions, capture:
   - Delivery quota (`maxUnpromptedMessagesPerDay`) is still drained from a global boundary pass; future work can decide whether some quotas should stay global while others become scope-aware.
   - A later iteration can add richer preference producers so scope-aware behavior does not depend only on explicit semantic note tags.
 
+### Session: Let scoped relationship preferences influence proactive delivery quotas
+
+- Context / Trigger:
+  - After making reflection and delivery consult scoped relationship boundaries, the remaining behavior gap was quota selection: candidate draining still used one global boundary before any per-candidate scope checks.
+
+- Problem:
+  - Project- or thread-scoped `maxUnpromptedMessagesPerDay` preferences could exist in memory, yet queued candidate selection still drained through a single global quota.
+  - That meant scope-aware relationship preferences were real for digest/auto-execute decisions but still incomplete for daily proactive volume control.
+
+- Options considered:
+  - Option A: leave quota semantics global for now.
+    - Rejected because it would leave the scoped-boundary work only partially true at the most visible delivery choke point.
+  - Option B: make draining optionally boundary-resolver aware while keeping the default global path for existing callers.
+    - Chosen because it closes the gap without forcing a broad redesign of proactive storage or quota policy.
+
+- Decision:
+  - Extend proactive candidate draining with an optional scoped boundary resolver.
+  - Keep the default global behavior when no resolver is supplied.
+  - Use the scoped resolver from the daemon's ambient reflection tick so per-scope quota preferences can participate in delivery selection.
+
+- Changes made:
+  - `packages/runtime/src/proactive/agenda.ts`
+    - made `drainDeliverableCandidates()` support scoped quota counting via an optional boundary resolver
+  - `packages/infra/src/daemon/server.ts`
+    - ambient reflection tick now passes a scoped relationship-boundary resolver into proactive candidate draining
+  - `packages/runtime/tests/proactive-runtime.test.ts`
+    - added regression coverage proving a full quota in one scope does not block deliverable candidates from another scope
+
+- Impact / Result:
+  - Scoped relationship preferences now affect not only candidate shaping and delivery mode, but also proactive delivery-volume gating.
+  - The relationship-aware proactive runtime is more internally consistent without abandoning the existing global-default behavior.
+
+- Open questions / next steps:
+  - The quota key is still a simple thread/project/global derivation; future work can decide whether some relationship policies should aggregate differently.
+  - A later pass may want explicit observability around which scoped boundary suppressed or allowed each candidate.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass

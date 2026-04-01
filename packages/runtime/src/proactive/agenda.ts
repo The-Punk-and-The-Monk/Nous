@@ -192,12 +192,20 @@ export class ProactiveRuntimeService {
 	drainDeliverableCandidates(
 		boundary: RelationshipBoundary,
 		limit = 4,
+		resolveBoundary?: (candidate: ProactiveCandidate) => RelationshipBoundary,
 	): ProactiveCandidate[] {
 		const referenceTime = this.clock();
-		let deliveredToday = this.options.store.listCandidates({
+		const deliveredTodayByQuotaKey = new Map<string, number>();
+		for (const candidate of this.options.store.listCandidates({
 			statuses: ["delivered", "converted"],
 			createdAfter: startOfDay(referenceTime),
-		}).length;
+		})) {
+			const quotaKey = buildCandidateQuotaKey(candidate, resolveBoundary);
+			deliveredTodayByQuotaKey.set(
+				quotaKey,
+				(deliveredTodayByQuotaKey.get(quotaKey) ?? 0) + 1,
+			);
+		}
 
 		const queued = this.options.store.listCandidates({
 			statuses: ["queued"],
@@ -238,15 +246,18 @@ export class ProactiveRuntimeService {
 				}
 			}
 
+			const candidateBoundary = resolveBoundary?.(candidate) ?? boundary;
+			const quotaKey = buildCandidateQuotaKey(candidate, resolveBoundary);
+			const deliveredToday = deliveredTodayByQuotaKey.get(quotaKey) ?? 0;
 			if (
 				deliveredToday >=
-				boundary.interruptionPolicy.maxUnpromptedMessagesPerDay
+				candidateBoundary.interruptionPolicy.maxUnpromptedMessagesPerDay
 			) {
-				break;
+				continue;
 			}
 
 			deliverable.push(candidate);
-			deliveredToday += 1;
+			deliveredTodayByQuotaKey.set(quotaKey, deliveredToday + 1);
 			if (deliverable.length >= limit) {
 				break;
 			}
@@ -436,6 +447,23 @@ function readAgendaMetadata(
 
 function addMilliseconds(timestamp: string, deltaMs: number): string {
 	return new Date(Date.parse(timestamp) + deltaMs).toISOString();
+}
+
+function buildCandidateQuotaKey(
+	candidate: ProactiveCandidate,
+	hasScopedResolver:
+		| ((candidate: ProactiveCandidate) => RelationshipBoundary)
+		| undefined,
+): string {
+	if (!hasScopedResolver) {
+		return "global";
+	}
+	return (
+		candidate.sourceThreadIds[0] ??
+		(candidate.scope?.projectRoot
+			? `project:${candidate.scope.projectRoot}`
+			: "global")
+	);
 }
 
 function startOfDay(timestamp: string): string {
