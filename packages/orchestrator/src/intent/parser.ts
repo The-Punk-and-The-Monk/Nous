@@ -147,7 +147,7 @@ const INTENT_PARSE_SPEC = {
 							],
 						},
 						description: { type: "string" },
-						value: {},
+						value: { type: ["string", "null"] },
 					},
 				},
 			},
