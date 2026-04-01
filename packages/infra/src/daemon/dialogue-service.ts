@@ -427,10 +427,6 @@ export class DialogueService {
 		});
 	}
 
-	linkWorkItemToThread(threadId: string, workItemId: string): void {
-		this.linkIntentToThread(threadId, workItemId);
-	}
-
 	setHandoffCapsuleForThread(threadId: string, capsuleId: string): void {
 		const thread = this.requireThread(threadId);
 		const metadata = {

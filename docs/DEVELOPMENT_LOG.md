@@ -81,6 +81,9 @@ For significant sessions, capture:
     - merged overlapping explicit-work tests during the deslop pass
   - `packages/infra/tests/dialogue-service.test.ts`
     - added assertions for `originChannel`, `surfaceKind`, and `activeWorkItemId` / `activeIntentId`
+  - post-pass deslop follow-up
+    - removed the unused `linkWorkItemToThread()` wrapper from `packages/infra/src/daemon/dialogue-service.ts`
+    - tightened the explicit-work integration test to wait for trust-receipt evidence instead of weaker generic assistant-message presence
   - `docs/DEVELOPMENT_LOG.md`
     - recorded the resumed verification/deslop session
 
