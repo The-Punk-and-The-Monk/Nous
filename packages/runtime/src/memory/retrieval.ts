@@ -23,9 +23,9 @@ export interface RetrievedMemory {
 	chunkCount: number;
 }
 
-const EMBEDDING_DIMENSIONS = 64;
-const DEFAULT_LIMIT = 5;
-const DEFAULT_CANDIDATE_LIMIT = 100;
+const EMBEDDING_DIMENSIONS = 256;
+const DEFAULT_LIMIT = 12;
+const DEFAULT_CANDIDATE_LIMIT = 200;
 const CHUNK_TOKEN_LIMIT = 96;
 const CHUNK_TOKEN_OVERLAP = 24;
 
@@ -35,11 +35,37 @@ export class LocalEmbeddingModel {
 		const tokens = tokenize(text);
 		if (tokens.length === 0) return vector;
 
+		// Unigrams
 		for (const token of tokens) {
 			const hash = hashToken(token);
 			const index = Math.abs(hash) % EMBEDDING_DIMENSIONS;
 			const sign = hash % 2 === 0 ? 1 : -1;
 			vector[index] += sign;
+		}
+
+		// Bigrams — capture phrase-level signal
+		for (let i = 0; i < tokens.length - 1; i++) {
+			const bigram = `${tokens[i]}__${tokens[i + 1]}`;
+			const hash = hashToken(bigram);
+			const index = Math.abs(hash) % EMBEDDING_DIMENSIONS;
+			const sign = hash % 2 === 0 ? 1 : -1;
+			vector[index] += sign * 0.7;
+		}
+
+		// CJK character-level n-grams (Chinese/Japanese/Korean)
+		const cjkChars = text.replace(/[^\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, "");
+		for (let i = 0; i < cjkChars.length; i++) {
+			const ch = cjkChars[i];
+			const hash = hashToken(ch);
+			const index = Math.abs(hash) % EMBEDDING_DIMENSIONS;
+			vector[index] += 1;
+			// CJK bigrams
+			if (i < cjkChars.length - 1) {
+				const cjkBigram = cjkChars.slice(i, i + 2);
+				const biHash = hashToken(cjkBigram);
+				const biIndex = Math.abs(biHash) % EMBEDDING_DIMENSIONS;
+				vector[biIndex] += 0.8;
+			}
 		}
 
 		return normalizeVector(vector);
@@ -134,7 +160,10 @@ export class HybridMemoryRetriever {
 	}
 
 	private ensureEmbedding(entry: MemoryEntry): MemoryEntry {
-		if (entry.embedding && entry.embedding.length > 0) {
+		if (
+			entry.embedding &&
+			entry.embedding.length === EMBEDDING_DIMENSIONS
+		) {
 			return entry;
 		}
 
@@ -299,13 +328,18 @@ function clamp01(value: number): number {
 }
 
 function buildLexicalSearchQuery(query: string): string | undefined {
-	const tokens = [...new Set(tokenize(query))]
+	const latinTokens = [...new Set(tokenize(query))]
 		.map((token) => token.replace(/[^a-z0-9_]+/g, ""))
 		.filter((token) => token.length > 1)
 		.slice(0, 8);
-	return tokens.length > 0
-		? tokens.map((token) => `"${token}"`).join(" OR ")
-		: undefined;
+	// Include CJK segments (multi-char) for FTS matching
+	const cjkSegments = (query.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]{2,}/g) ?? [])
+		.slice(0, 4);
+	const allTerms = [
+		...latinTokens.map((token) => `"${token}"`),
+		...cjkSegments.map((seg) => `"${seg}"`),
+	];
+	return allTerms.length > 0 ? allTerms.join(" OR ") : undefined;
 }
 
 interface ChunkSelectionInput {
@@ -417,11 +451,16 @@ function buildMemoryChunks(content: string): MemoryChunk[] {
 }
 
 function tokenize(text: string): string[] {
-	return text
-		.toLowerCase()
+	const lower = text.toLowerCase();
+	// Split Latin/numeric tokens
+	const latinTokens = lower
 		.split(/[^a-z0-9_./-]+/g)
 		.map((token) => normalizeToken(token))
 		.filter((token): token is string => Boolean(token));
+	// Extract CJK characters as individual tokens
+	const cjkTokens = (lower.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g) ?? [])
+		.flatMap((segment) => segment.split(""));
+	return [...latinTokens, ...cjkTokens];
 }
 
 function normalizeToken(token: string): string | undefined {

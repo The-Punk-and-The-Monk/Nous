@@ -628,7 +628,7 @@ export class NousDaemon {
 			decision,
 			recentThreadMessages: this.backend.messages
 				.getMessagesByThread(payload.threadId)
-				.slice(-8)
+				.slice(-30)
 				.map((message) => ({
 					role: message.role,
 					content: message.content,
@@ -687,7 +687,7 @@ export class NousDaemon {
 			intent: controllableIntent,
 			recentThreadMessages: this.backend.messages
 				.getMessagesByThread(payload.threadId)
-				.slice(-8)
+				.slice(-30)
 				.map((message) => ({
 					role: message.role,
 					content: message.content,
@@ -802,6 +802,7 @@ export class NousDaemon {
 				systemPrompt: executionContext.systemPrompt,
 				capabilities: executionContext.permissionCapabilities,
 				grounding: executionContext.grounding,
+				threadContext: executionContext.threadContext,
 				deferExecution: true,
 				onIntentCreated: (intent) => {
 					this.trackIntentForThread(
@@ -922,6 +923,7 @@ export class NousDaemon {
 				systemPrompt: executionContext.systemPrompt,
 				capabilities: executionContext.permissionCapabilities,
 				grounding: executionContext.grounding,
+				threadContext: executionContext.threadContext,
 			},
 		);
 
@@ -1827,16 +1829,20 @@ export class NousDaemon {
 			}),
 		});
 		const systemPrompt = renderContextForSystemPrompt(assembledContext);
+		const recentThreadMessages = this.backend.messages
+			.getMessagesByThread(params.threadId)
+			.slice(-30)
+			.map((message) => ({
+				role: message.role,
+				content: message.content,
+			}));
 		const grounding = buildUserStateGrounding({
 			context: assembledContext,
-			recentThreadMessages: this.backend.messages
-				.getMessagesByThread(params.threadId)
-				.slice(-8)
-				.map((message) => ({
-					role: message.role,
-					content: message.content,
-				})),
+			recentThreadMessages,
 		});
+		const threadContext = recentThreadMessages
+			.slice(-10)
+			.map((m) => `${m.role}: ${m.content.replace(/\s+/g, " ").trim().slice(0, 300)}`);
 		const permissionCapabilities = resolvePermissionCapabilities(
 			permissionPolicy,
 			{ projectRoot: params.scope.projectRoot },
@@ -1845,6 +1851,7 @@ export class NousDaemon {
 			assembledContext,
 			systemPrompt,
 			grounding,
+			threadContext,
 			permissionCapabilities,
 		};
 	}

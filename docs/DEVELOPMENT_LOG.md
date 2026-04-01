@@ -45,6 +45,42 @@ For significant sessions, capture:
 
 ## 2026-04-01
 
+### Session: Fix clarification loop and context loss across intake-execution pipeline
+
+- Context / Trigger:
+  - User observed Nous repeatedly asking for clarification ("让我 input") even when keywords like "积极心理学的思维导图" were clearly provided. The system failed to retrieve relevant past conversation memory and kept looping through clarification rounds.
+
+- Problem:
+  - **Grounding truncation**: `grounding.ts` hard-truncated thread messages to last 6 at 180 chars/each, and memory hints to 5 — stripping context before the LLM could reason over it.
+  - **Shallow thread window**: `server.ts` only fetched last 8 thread messages, losing multi-turn clarification context.
+  - **Clarification loop**: `respondToClarification()` re-ran full intake analysis on each user reply, which could generate new clarification questions indefinitely with no attempt counter or break mechanism.
+  - **Weak memory retrieval**: 64-dim hash-based embeddings with no CJK support couldn't match Chinese queries to Chinese memory entries. Default limit of 5 results was too low.
+  - **Blind agent execution**: Agent runtime received only task contract + execution depth — no thread history, no memory hints, no conversation context.
+
+- Decision:
+  - **P0 — Clarification loop break**: Add attempt counter per intent (max 2 rounds), force proceed to execution after that. Log when loop is broken. Clean up counter on successful resume.
+  - **P1 — Remove grounding truncation**: Grounding layer now passes through all memory hints and full thread messages without truncation. Context budget management is downstream's responsibility. Thread fetch window increased from 8 to 30 messages.
+  - **P2 — Memory retrieval upgrade**: Embedding dimensions 64→256, default limit 5→12, candidate pool 100→200. Added bigram features and CJK character/bigram n-gram support. Tokenizer now handles Chinese/Japanese/Korean. Lexical FTS search includes CJK multi-char segments. Old embeddings auto-recomputed on dimension mismatch.
+  - **P3 — Agent thread context injection**: `IntentExecutionOptions` gains `threadContext: string[]`. `server.ts` populates it from recent thread messages. `mergeSystemPrompt` includes last 10 thread messages in agent's system prompt so agents can see conversation context.
+
+- Changes made:
+  - `packages/infra/src/intake/grounding.ts` — Removed `.slice(0, 5)` on memory hints, removed `.slice(-6)` and `compact(…, 180)` on thread messages
+  - `packages/infra/src/daemon/server.ts` — Thread fetch `.slice(-8)` → `.slice(-30)` (3 locations), `buildExecutionContextForScope` now returns `threadContext`, passed to orchestrator in both `submitIntentBackground` and `respondToClarification`
+  - `packages/orchestrator/src/orchestrator.ts` — Added `MAX_CLARIFICATION_ATTEMPTS = 2`, `clarificationAttempts` tracking map, force-proceed logic in `respondToClarification`, `threadContext` in `IntentExecutionOptions`, `mergeSystemPrompt` includes thread context for agents
+  - `packages/runtime/src/memory/retrieval.ts` — Embedding 64→256 dims, limit 5→12, candidates 100→200, bigram + CJK n-gram embedding, CJK tokenization, CJK-aware FTS query building, dimension-mismatch auto-recompute
+
+- Impact:
+  - Clarification loops capped at 2 rounds max — user will never get stuck in infinite clarification.
+  - Full thread context flows to LLM for intent analysis — better disambiguation from conversation history.
+  - Memory retrieval significantly improved for Chinese/CJK queries (character-level + bigram matching).
+  - Agents now see conversation context — can reference what user discussed in thread.
+  - 0 new type errors, 0 new test failures.
+
+- Open questions / next steps:
+  - Context budget layer needed to handle the larger grounding payloads (grounding no longer truncates, but intent parser prompt has finite context).
+  - True neural embedding model (e.g. via local inference or API) would further improve semantic matching beyond hash-based approach.
+  - Memory retrieval could be called again at agent execution time, not just at grounding assembly time.
+
 ### Session: Add thinking/reasoning capture across all LLM providers
 
 - Context / Trigger:

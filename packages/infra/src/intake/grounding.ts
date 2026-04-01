@@ -15,7 +15,8 @@ export function buildUserStateGrounding(
 	const activeIntentSummaries = input.context.user.activeIntents.map(
 		(intent) => `${intent.goal.summary} (${intent.status})`,
 	);
-	const recentMemoryHints = input.context.user.recentMemoryHints.slice(0, 5);
+	// Pass through all memory hints — context budget trimming happens downstream
+	const recentMemoryHints = input.context.user.recentMemoryHints;
 	const permissionSummary = [
 		...input.context.permissions.autoAllowed
 			.slice(0, 2)
@@ -27,11 +28,11 @@ export function buildUserStateGrounding(
 			.slice(0, 2)
 			.map((line) => `deny: ${line}`),
 	];
+	// Pass through full thread messages — context budget trimming happens downstream
 	const recentThreadMessages = (input.recentThreadMessages ?? [])
-		.slice(-6)
 		.map(
 			(message) =>
-				`${message.role}: ${compact(message.content.replace(/\s+/g, " ").trim(), 180)}`,
+				`${message.role}: ${message.content.replace(/\s+/g, " ").trim()}`,
 		)
 		.filter(Boolean);
 

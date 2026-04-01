@@ -46,6 +46,9 @@ import {
 } from "@nous/runtime";
 import { IntentParser } from "./intent/parser.ts";
 import { TaskPlanner } from "./planner/planner.ts";
+
+/** Max clarification round-trips before forcing execution with available context */
+const MAX_CLARIFICATION_ATTEMPTS = 2;
 import { AgentRouter } from "./router/router.ts";
 import { TaskScheduler } from "./scheduler/scheduler.ts";
 
@@ -91,6 +94,8 @@ export interface IntentExecutionOptions {
 	source?: Intent["source"];
 	capabilities?: CapabilitySet;
 	grounding?: UserStateGrounding;
+	/** Recent thread messages for agent execution context */
+	threadContext?: string[];
 	deferExecution?: boolean;
 	onIntentCreated?: (intent: Intent) => void;
 	onPermissionNeeded?: PermissionCallback;
@@ -117,6 +122,7 @@ export class Orchestrator {
 		IntentExecutionOptions
 	>();
 	private readonly runningRuntimes = new Map<string, AgentRuntime>();
+	private readonly clarificationAttempts = new Map<string, number>();
 	private progressListeners: ((event: ProgressEvent) => void)[] = [];
 	private log: Logger;
 
@@ -245,13 +251,29 @@ export class Orchestrator {
 			throw new Error(`Intent ${intentId} is not awaiting clarification`);
 		}
 
+		// Track clarification attempts — break the loop after MAX_CLARIFICATION_ATTEMPTS
+		const attemptCount =
+			(this.clarificationAttempts.get(intentId) ?? 0) + 1;
+		this.clarificationAttempts.set(intentId, attemptCount);
+
 		const workingText = composeClarifiedWorkingText(existing, responseText);
 		const intake = await this.parser.analyze(workingText, {
 			grounding: options?.grounding,
 			source: existing.source,
 		});
+
+		// Force proceed if the user has already responded enough times
+		const forceProceed =
+			intake.clarificationQuestions.length > 0 &&
+			attemptCount >= MAX_CLARIFICATION_ATTEMPTS;
+		if (forceProceed) {
+			this.log.info(
+				"Clarification loop broken — proceeding with available context",
+				{ intentId, attemptCount },
+			);
+		}
 		const nextStatus =
-			intake.clarificationQuestions.length > 0
+			intake.clarificationQuestions.length > 0 && !forceProceed
 				? "awaiting_clarification"
 				: "active";
 
@@ -291,6 +313,7 @@ export class Orchestrator {
 			return revised;
 		}
 
+		this.clarificationAttempts.delete(intentId);
 		this.emitEvent("intent.resumed", "intent", intentId, {
 			responseText,
 		});
@@ -935,6 +958,7 @@ export class Orchestrator {
 				this.intentExecutionOptions.get(task.intentId)?.systemPrompt,
 				this.intentStore.getById(task.intentId)?.contract,
 				this.intentStore.getById(task.intentId)?.executionDepth,
+				this.intentExecutionOptions.get(task.intentId)?.threadContext,
 			),
 			onPermissionNeeded: this.intentExecutionOptions.get(task.intentId)
 				?.onPermissionNeeded,
@@ -1635,6 +1659,7 @@ function mergeSystemPrompt(
 	basePrompt: string | undefined,
 	contract: TaskContract | undefined,
 	executionDepth: ExecutionDepthDecision | undefined,
+	threadContext?: string[],
 ): string | undefined {
 	const segments = [basePrompt?.trim()].filter((value): value is string =>
 		Boolean(value),
@@ -1662,6 +1687,16 @@ function mergeSystemPrompt(
 				`- Organization depth: ${executionDepth.organizationDepth}`,
 				`- Initiative mode: ${executionDepth.initiativeMode}`,
 				`- Rationale: ${executionDepth.rationale}`,
+			].join("\n"),
+		);
+	}
+
+	if (threadContext && threadContext.length > 0) {
+		const recent = threadContext.slice(-10);
+		segments.push(
+			[
+				"Recent conversation context (use to understand user intent, do not repeat verbatim):",
+				...recent.map((line) => `- ${line}`),
 			].join("\n"),
 		);
 	}
