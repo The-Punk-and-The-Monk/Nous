@@ -2743,9 +2743,7 @@ export class NousDaemon {
 				boundary,
 				4,
 			);
-			for (const candidate of deliverable) {
-				await this.deliverProactiveCandidate(candidate);
-			}
+			await this.deliverProactiveCandidates(boundary, deliverable);
 		} catch (error) {
 			this.log.warn("Proactive reflection tick failed", {
 				errorName:
@@ -2770,11 +2768,7 @@ export class NousDaemon {
 		}
 
 		const scope = candidate.scope;
-		const threadId =
-			candidate.sourceThreadIds[0] ??
-			(scope?.projectRoot
-				? this.getAmbientThreadId(scope.projectRoot)
-				: undefined);
+		const threadId = this.resolveProactiveDeliveryThreadId(candidate);
 		if (!threadId) {
 			this.proactive.markCandidateDismissed(
 				candidate.id,
@@ -2851,6 +2845,112 @@ export class NousDaemon {
 
 		this.proactive.markCandidateDelivered(candidate.id);
 		await this.flushPendingDeliveriesForThread(threadId);
+	}
+
+	private async deliverProactiveCandidates(
+		boundary: RelationshipBoundary,
+		candidates: ProactiveCandidate[],
+	): Promise<void> {
+		if (candidates.length === 0) {
+			return;
+		}
+
+		const digestGroups = new Map<string, ProactiveCandidate[]>();
+		const individual: ProactiveCandidate[] = [];
+
+		for (const candidate of candidates) {
+			if (!this.shouldDeliverAsDigest(boundary, candidate)) {
+				individual.push(candidate);
+				continue;
+			}
+			const threadId = this.resolveProactiveDeliveryThreadId(candidate);
+			if (!threadId) {
+				individual.push(candidate);
+				continue;
+			}
+			const existing = digestGroups.get(threadId) ?? [];
+			existing.push(candidate);
+			digestGroups.set(threadId, existing);
+		}
+
+		for (const candidate of individual) {
+			await this.deliverProactiveCandidate(candidate);
+		}
+
+		for (const [threadId, grouped] of digestGroups) {
+			if (grouped.length < 2) {
+				await this.deliverProactiveCandidate(grouped[0] as ProactiveCandidate);
+				continue;
+			}
+			await this.deliverProactiveDigest(threadId, grouped);
+		}
+	}
+
+	private async deliverProactiveDigest(
+		threadId: string,
+		candidates: ProactiveCandidate[],
+	): Promise<void> {
+		const scope = candidates[0]?.scope;
+		if (scope?.projectRoot) {
+			this.dialogue.ensureThread({
+				threadId,
+				title: this.getAmbientThreadTitle(scope.projectRoot),
+				channelId: "daemon",
+			});
+		}
+
+		const candidateIds = candidates.map((candidate) => candidate.id);
+		const sourceAgendaItemIds = dedupeStrings(
+			candidates.flatMap((candidate) => candidate.sourceAgendaItemIds),
+		);
+		const summaries = candidates.map((candidate) => candidate.summary.trim());
+		const content = [
+			"Proactive digest:",
+			...summaries.map((summary) => `- ${summary}`),
+		].join("\n");
+
+		this.dialogue.enqueueAssistantMessage({
+			threadId,
+			content,
+			kind: "notification",
+			metadata: {
+				source: "proactive_digest",
+				presentation: "process",
+				candidateIds,
+				sourceAgendaItemIds,
+				deliveryPreference: "digest",
+			},
+		});
+
+		for (const candidate of candidates) {
+			this.proactive.markCandidateDelivered(candidate.id);
+		}
+		await this.flushPendingDeliveriesForThread(threadId);
+	}
+
+	private shouldDeliverAsDigest(
+		boundary: RelationshipBoundary,
+		candidate: ProactiveCandidate,
+	): boolean {
+		return (
+			boundary.interruptionPolicy.preferredDelivery === "digest" &&
+			candidate.recommendedMode === "async_notify" &&
+			candidate.kind !== "ambient_intent" &&
+			candidate.kind !== "protective_intervention" &&
+			candidate.requiresApproval === false
+		);
+	}
+
+	private resolveProactiveDeliveryThreadId(
+		candidate: ProactiveCandidate,
+	): string | undefined {
+		const scope = candidate.scope;
+		return (
+			candidate.sourceThreadIds[0] ??
+			(scope?.projectRoot
+				? this.getAmbientThreadId(scope.projectRoot)
+				: undefined)
+		);
 	}
 
 	private getAmbientThreadId(rootDir: string): string {

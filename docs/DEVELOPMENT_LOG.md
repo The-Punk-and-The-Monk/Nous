@@ -5102,3 +5102,57 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - In the current Codex sandbox, honest daemon restart may still fail because local socket/port listening has known restrictions.
   - If that happens, the helper/instruction remains correct for the user’s real machine, but the failure should still be surfaced explicitly in the log/response.
+
+### Session: Make `preferredDelivery = digest` change proactive runtime behavior for low-risk candidates
+- Context / Trigger:
+  - After landing `relationship.json` as a real private config surface, the next obvious gap remained:
+    - `RelationshipBoundary` was now configurable
+    - but one of its key fields, `interruptionPolicy.preferredDelivery`, still did not materially change runtime behavior
+  - The most honest next slice was not full delivery-policy redesign, but making at least one configured delivery preference actually affect how proactive candidates surface.
+- Problem:
+  - Before this iteration, all low-risk proactive candidates were effectively delivered one-by-one as normal notifications, regardless of whether the relationship boundary preferred:
+    - `thread`
+    - `notification`
+    - `digest`
+  - That meant the config had real shape but incomplete behavioral force.
+  - In particular, `digest` should reduce interruption pressure, yet there was no batching path at all.
+- Options considered:
+  - Option A: leave `preferredDelivery` purely informational until a larger multi-channel delivery system exists.
+    - Rejected because it would keep the new relationship config surface partly hollow.
+  - Option B: fully implement thread / notification / digest as a broad delivery-layer refactor now.
+    - Rejected because that would sprawl into channel/fallback semantics and go beyond the smallest honest continuation.
+  - Option C: land a bounded first behavior slice:
+    - when `preferredDelivery = "digest"`
+    - and the proactive candidates are low-risk `async_notify`
+    - batch multiple same-thread candidates from the same reflection tick into a single digest message
+    - Chosen because it makes the boundary operational while keeping the change narrow and safe.
+- Decision:
+  - Add a daemon-side grouped delivery path for digest-friendly proactive candidates.
+  - Keep these constraints for the first slice:
+    - only `recommendedMode = "async_notify"`
+    - no required approval
+    - exclude `ambient_intent`
+    - exclude `protective_intervention`
+  - Keep actionable/approval-bearing candidates on the existing individual path.
+- Changes made:
+  - Updated `packages/infra/src/daemon/server.ts`
+    - replaced the per-candidate proactive delivery loop with a grouped delivery coordinator
+    - added digest grouping by resolved delivery thread
+    - added `proactive_digest` delivery messages that summarize multiple low-risk candidates into one message
+    - factored delivery-thread resolution into a reusable helper
+  - Updated `packages/infra/tests/daemon-proactive-reflection.test.ts`
+    - added coverage showing two low-risk candidates on the same thread become one digest message when the relationship boundary prefers digest delivery
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/daemon-proactive-reflection.test.ts` ✅
+- Impact / Result:
+  - `RelationshipBoundary.interruptionPolicy.preferredDelivery` now has real runtime effect for the first time.
+  - Nous can now reduce interruption noise for low-risk proactive suggestions by summarizing them into one digest instead of emitting several separate nudges.
+  - This is still a bounded slice, but it moves the system from “configurable in theory” toward “relationship policy changes actual delivery behavior.”
+- Open questions / follow-ups:
+  - `thread` vs `notification` still do not yet diverge materially in runtime behavior.
+  - Digesting currently batches only within one reflection tick and one thread; a richer future path may want:
+    - time-window batching
+    - explicit digest threads/summaries
+    - user-facing digest acknowledgement / expansion controls
+  - Approval-bearing ambient intents still bypass digesting, which is correct for now but leaves room for a richer medium-priority delivery design later.
