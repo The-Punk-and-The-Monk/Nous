@@ -146,6 +146,159 @@ describe("NousDaemon interaction-mode handling", () => {
 		}
 	});
 
+	test("stores relationship preference memory from direct quoted preference wording", async () => {
+		const daemon = createDaemon(
+			new ScriptedProvider([
+				"Understood — I'll treat that quoted wording as your direct preference.",
+			]),
+		);
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			const thread = internals.dialogue.ensureThread({
+				threadId: "thread_pref_direct_quoted",
+				title: "Direct quoted preference thread",
+				channelId: "channel_cli",
+			});
+
+			const reply = await internals.controller.handle(
+				makeEnvelope({
+					id: "req_pref_direct_quoted",
+					type: "send_message",
+					payload: {
+						threadId: thread.id,
+						text: 'I prefer "digest delivery" for low-risk proactive reminders, and don\'t auto-execute them.',
+					},
+				}),
+			);
+			expect(reply?.type).toBe("ack");
+
+			await waitFor(() => {
+				const snapshot = internals.dialogue.getThreadSnapshot({
+					threadId: thread.id,
+				});
+				return Boolean(
+					snapshot?.messages.some(
+						(message) => message.metadata?.interactionMode === "chat",
+					),
+				);
+			});
+
+			const overrides = internals.memory.deriveRelationshipBoundaryOverrides({
+				scope: DEMO_SCOPE,
+				threadId: thread.id,
+			});
+			expect(overrides.interruptionPolicy?.preferredDelivery).toBe("digest");
+			expect(overrides.autonomyPolicy?.allowAmbientAutoExecution).toBe(false);
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
+	test("does not store relationship preference memory from hypothetical preference phrasing", async () => {
+		const daemon = createDaemon(
+			new ScriptedProvider([
+				"Understood — I won't treat hypothetical examples as a real preference change.",
+			]),
+		);
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			const thread = internals.dialogue.ensureThread({
+				threadId: "thread_pref_hypothetical",
+				title: "Hypothetical preference thread",
+				channelId: "channel_cli",
+			});
+
+			const reply = await internals.controller.handle(
+				makeEnvelope({
+					id: "req_pref_hypothetical",
+					type: "send_message",
+					payload: {
+						threadId: thread.id,
+						text: "For example, if I say 'prefer digest delivery' later, that should not change anything yet.",
+					},
+				}),
+			);
+			expect(reply?.type).toBe("ack");
+
+			await waitFor(() => {
+				const snapshot = internals.dialogue.getThreadSnapshot({
+					threadId: thread.id,
+				});
+				return Boolean(
+					snapshot?.messages.some(
+						(message) => message.metadata?.interactionMode === "chat",
+					),
+				);
+			});
+
+			const overrides = internals.memory.deriveRelationshipBoundaryOverrides({
+				scope: DEMO_SCOPE,
+				threadId: thread.id,
+			});
+			expect(overrides.interruptionPolicy?.preferredDelivery).toBeUndefined();
+			expect(
+				overrides.autonomyPolicy?.allowAmbientAutoExecution,
+			).toBeUndefined();
+			expect(overrides.proactivityPolicy?.initiativeLevel).toBeUndefined();
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
+	test("does not store relationship preference memory from quoted preference examples", async () => {
+		const daemon = createDaemon(
+			new ScriptedProvider([
+				"Understood — I won't treat quoted example phrasing as a real preference change.",
+			]),
+		);
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			const thread = internals.dialogue.ensureThread({
+				threadId: "thread_pref_quoted",
+				title: "Quoted preference thread",
+				channelId: "channel_cli",
+			});
+
+			const reply = await internals.controller.handle(
+				makeEnvelope({
+					id: "req_pref_quoted",
+					type: "send_message",
+					payload: {
+						threadId: thread.id,
+						text: "Don't store the quoted phrase 'prefer digest delivery' as my real preference yet.",
+					},
+				}),
+			);
+			expect(reply?.type).toBe("ack");
+
+			await waitFor(() => {
+				const snapshot = internals.dialogue.getThreadSnapshot({
+					threadId: thread.id,
+				});
+				return Boolean(
+					snapshot?.messages.some(
+						(message) => message.metadata?.interactionMode === "chat",
+					),
+				);
+			});
+
+			const overrides = internals.memory.deriveRelationshipBoundaryOverrides({
+				scope: DEMO_SCOPE,
+				threadId: thread.id,
+			});
+			expect(overrides.interruptionPolicy?.preferredDelivery).toBeUndefined();
+			expect(
+				overrides.autonomyPolicy?.allowAmbientAutoExecution,
+			).toBeUndefined();
+			expect(overrides.proactivityPolicy?.initiativeLevel).toBeUndefined();
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
 	test("creates a handoff capsule without starting new work", async () => {
 		const daemon = createDaemon(new ScriptedProvider([]));
 

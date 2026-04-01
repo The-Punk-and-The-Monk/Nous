@@ -3806,6 +3806,9 @@ function hasGrantedCapabilitySet(capabilities: CapabilitySet): boolean {
 
 function parseRelationshipPreferenceTags(text: string): string[] {
 	const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+	if (!looksLikeDirectRelationshipPreference(text, normalized)) {
+		return [];
+	}
 	const tags = new Set<string>();
 
 	if (
@@ -3869,4 +3872,66 @@ function parseRelationshipPreferenceTags(text: string): string[] {
 	}
 
 	return [...tags];
+}
+
+function looksLikeDirectRelationshipPreference(
+	originalText: string,
+	normalizedText: string,
+): boolean {
+	const directMarkers = [
+		"prefer ",
+		"please ",
+		"i prefer",
+		"i want",
+		"don't ",
+		"do not ",
+		"别",
+		"请",
+		"我希望",
+		"我更喜欢",
+		"不要",
+	];
+	if (
+		!directMarkers.some(
+			(marker) =>
+				originalText.includes(marker) || normalizedText.includes(marker),
+		)
+	) {
+		return false;
+	}
+
+	const hypotheticalOrQuotedMarkers = [
+		"for example",
+		"for instance",
+		"if i say",
+		"if someone says",
+		"someone else's preference",
+		"what if",
+		"quoted phrase",
+		"quoted example",
+		"quote this",
+		"the phrase",
+		"the wording",
+		"the words",
+		"比如",
+		"例如",
+		"如果我说",
+		"如果有人说",
+		"别人说",
+		"他说",
+		"她说",
+		"引号",
+		"这句话",
+		"这个说法",
+	];
+	if (
+		hypotheticalOrQuotedMarkers.some(
+			(marker) =>
+				originalText.includes(marker) || normalizedText.includes(marker),
+		)
+	) {
+		return false;
+	}
+
+	return true;
 }

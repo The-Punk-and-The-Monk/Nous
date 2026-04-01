@@ -392,6 +392,34 @@ For significant sessions, capture:
 - Open questions / next steps:
   - If Nous later learns richer tone/intimacy preferences, that should likely become a dedicated preference interpreter rather than accumulating ad hoc string heuristics in the daemon.
 
+### Session: Guard chat preference capture against hypothetical or quoted examples
+
+- Context / Trigger:
+  - Architect review accepted the chat-preference producer, but called out the main risk: plain substring matching could treat hypothetical or quoted examples as real user preferences.
+
+- Problem:
+  - A sentence like “for example, if I say ‘prefer digest delivery’ later...” contains the same keywords as a real preference statement, but it is not itself a committed preference.
+
+- Decision:
+  - Keep the producer heuristic and lightweight, but require direct preference framing before capturing memory.
+  - Reject capture when the message reads like an example, hypothetical, or quoted demonstration instead of a direct preference statement.
+  - Preserve direct quoted preference wording when the surrounding sentence is still clearly first-person and preference-setting.
+
+- Changes made:
+  - `packages/infra/src/daemon/server.ts`
+    - added a direct-preference guard before extracting relationship preference tags
+    - added hypothetical/example + quoted-phrase markers to suppress accidental preference writes while preserving direct quoted preference wording
+  - `packages/infra/tests/daemon-interaction-mode.test.ts`
+    - added regression coverage proving hypothetical and quoted-example phrasing do not produce relationship-boundary overrides
+    - added positive regression coverage proving direct quoted preference wording still produces relationship-boundary overrides
+
+- Impact / Result:
+  - The chat preference producer is still lightweight, but less likely to silently learn the wrong thing from examples or quoted phrases.
+  - This keeps the relationship-memory seam usable without letting it become too trigger-happy.
+
+- Open questions / next steps:
+  - If preference capture broadens further, the heuristic guard should likely be replaced by a dedicated bounded interpreter instead of endlessly growing substring rules.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass
