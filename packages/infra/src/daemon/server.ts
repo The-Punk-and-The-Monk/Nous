@@ -21,7 +21,6 @@ import {
 	MemoryService,
 	ProactiveRuntimeService,
 	ReflectionService,
-	createDefaultRelationshipBoundary,
 	renderContextForSystemPrompt,
 } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
@@ -2865,31 +2864,27 @@ export class NousDaemon {
 	}
 
 	private buildAmbientRelationshipBoundary(): RelationshipBoundary {
-		return createDefaultRelationshipBoundary({
+		const relationship = this.nousConfig.relationship;
+		return {
+			assistantStyle: {
+				...relationship.assistantStyle,
+			},
 			proactivityPolicy: {
+				...relationship.proactivityPolicy,
 				initiativeLevel: this.nousConfig.ambient.enabled
-					? "balanced"
+					? relationship.proactivityPolicy.initiativeLevel
 					: "minimal",
-				allowedKinds: [
-					"suggestion",
-					"offer",
-					"reminder",
-					"ambient_intent",
-					"silent_watchpoint",
-					"protective_intervention",
-				],
-				blockedKinds: [],
-				requireApprovalForKinds: ["ambient_intent", "protective_intervention"],
 			},
 			interruptionPolicy: {
-				maxUnpromptedMessagesPerDay: 6,
-				preferredDelivery: "thread",
+				...relationship.interruptionPolicy,
 			},
 			autonomyPolicy: {
-				allowOffersWithoutPrompt: true,
-				allowAmbientAutoExecution: this.nousConfig.ambient.autoSubmit,
+				...relationship.autonomyPolicy,
+				allowAmbientAutoExecution:
+					relationship.autonomyPolicy.allowAmbientAutoExecution &&
+					this.nousConfig.ambient.autoSubmit,
 			},
-		});
+		};
 	}
 }
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -7,8 +7,10 @@ import type {
 	LLMProviderCapabilities,
 	LLMRequest,
 	LLMResponse,
+	RelationshipBoundary,
 	StreamChunk,
 } from "@nous/core";
+import { ensureNousHome } from "../src/config/home.ts";
 import { NousDaemon } from "../src/daemon/server.ts";
 
 const tempDirs: string[] = [];
@@ -90,6 +92,55 @@ describe("NousDaemon proactive reflection isolation", () => {
 
 			await expect(internals.runProactiveReflectionTick()).resolves.toBeUndefined();
 			expect(internals.isReflectionTickRunning).toBe(false);
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
+	test("builds ambient relationship boundary from private config overrides", async () => {
+		const root = mkdtempSync(join(tmpdir(), "nous-daemon-relationship-"));
+		tempDirs.push(root);
+		process.env.NOUS_HOME = join(root, ".nous");
+		process.env.NOUS_DB = undefined;
+		process.env.NOUS_SOCKET = undefined;
+		process.env.NOUS_PID_FILE = undefined;
+		process.env.NOUS_STATE_FILE = undefined;
+
+		const paths = ensureNousHome({ env: process.env, cwd: root });
+		writeFileSync(
+			join(paths.configDir, "relationship.json"),
+			JSON.stringify(
+				{
+					relationship: {
+						assistantStyle: {
+							warmth: "high",
+						},
+						interruptionPolicy: {
+							maxUnpromptedMessagesPerDay: 2,
+						},
+						autonomyPolicy: {
+							allowAmbientAutoExecution: false,
+						},
+					},
+				},
+				null,
+				2,
+			),
+		);
+
+		const daemon = new NousDaemon({
+			llm: new ThrowingProvider(new Error("unused in this test")),
+		});
+
+		try {
+			const internals = daemon as unknown as {
+				buildAmbientRelationshipBoundary(): RelationshipBoundary;
+			};
+			const boundary = internals.buildAmbientRelationshipBoundary();
+
+			expect(boundary.assistantStyle.warmth).toBe("high");
+			expect(boundary.interruptionPolicy.maxUnpromptedMessagesPerDay).toBe(2);
+			expect(boundary.autonomyPolicy.allowAmbientAutoExecution).toBe(false);
 		} finally {
 			await daemon.shutdown();
 		}

@@ -4932,3 +4932,66 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - The current control detector is intentionally conservative. Future work may want a richer hybrid policy so more natural-language control phrases can be recognized without reintroducing task-plane latency.
   - The sandbox still blocks honest daemon listen/readiness validation here, so a true manual REPL confirmation on a normal machine remains worth doing after this patch lands.
+
+### Session: Materialize `RelationshipBoundary` as private config instead of daemon hardcoding
+- Context / Trigger:
+  - After the REPL fix, the next highest-leverage continuation still matched the current `docs/PROGRESS_MATRIX.md` steering:
+    - tool breadth had moved forward
+    - but **relationship-aware proactive runtime** was still lagging behind the rest of the personal-assistant substrate
+  - The concrete gap was visible in daemon code:
+    - `RelationshipBoundary` existed as an architecture object
+    - reflection/runtime already consumed it
+    - but the daemon still built it from hardcoded defaults instead of any real user/private preference layer
+- Problem:
+  - As long as the daemon’s proactive boundary lived only in code constants, Nous still was not truly operating on a private per-user relationship contract.
+  - That weakened the architecture in three ways:
+    - proactive behavior could not be tuned through the existing `~/.nous/config` surface
+    - project-local/private overrides could not shape interruption or autonomy policy
+    - `RelationshipBoundary` remained more conceptual than operational even though the runtime was already ready to consume it
+- Options considered:
+  - Option A: leave relationship policy hardcoded until a future learned/personalized system exists.
+    - Rejected because that would keep the most important private-core policy object out of the actual configuration surface for too long.
+  - Option B: store relationship preferences in memory only.
+    - Rejected because this boundary is not just recollection material; it is a durable runtime policy surface and should have a first-class config representation now.
+  - Option C: add a dedicated private config file and wire the daemon boundary builder to it, while still preserving runtime safety gates like `ambient.autoSubmit`.
+    - Chosen because it turns the architecture object into a real operational boundary without pretending that relationship learning is already solved.
+- Decision:
+  - Add `relationship.json` under `~/.nous/config/`.
+  - Extend `NousConfig` and config loading so relationship policy can be:
+    - bootstrapped with defaults
+    - overridden project-locally from `.nous/relationship.json`
+  - Replace daemon hardcoded ambient-boundary construction with config-backed policy.
+  - Preserve one runtime safety invariant:
+    - even if the relationship boundary allows ambient auto-execution, actual auto-execution still requires `ambient.autoSubmit=true`
+- Changes made:
+  - Updated `packages/infra/src/config/home.ts`
+    - added `relationship` to `NousConfig`
+    - added default `relationship.json` bootstrapping
+    - added config merge support for home-level and project-level `relationship.json`
+  - Updated `packages/infra/src/daemon/server.ts`
+    - removed the hardcoded relationship boundary literal
+    - now builds the ambient relationship boundary from loaded config
+    - keeps `ambient.autoSubmit` as a runtime gate on top of the configured autonomy policy
+  - Updated `packages/infra/tests/home-config.test.ts`
+    - verifies default `relationship.json` creation
+    - verifies project-local relationship overrides load correctly
+  - Updated `packages/infra/tests/daemon-proactive-reflection.test.ts`
+    - verifies daemon ambient boundary construction honors private config overrides
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/home-config.test.ts packages/infra/tests/daemon-proactive-reflection.test.ts` ✅
+- Impact / Result:
+  - `RelationshipBoundary` is now a real private config surface rather than a daemon-only constant.
+  - Nous’s proactive runtime is one step closer to genuine relationship-aware behavior:
+    - interruption budget
+    - assistant warmth/directness
+    - proactive/autonomy policy
+    can now come from private config rather than hardcoded defaults
+  - This creates a cleaner path for future evolution:
+    - learned relationship preferences can later update a real config-backed boundary instead of replacing opaque code literals
+- Open questions / follow-ups:
+  - The boundary is still configured manually; there is no learned adaptation or memory-driven preference synthesis yet.
+  - The next natural continuation is likely to connect this config-backed boundary to richer producer logic, e.g.:
+    - reminder kinds
+    - relationship-specific delivery modes
+    - memory-derived preference hints that propose safe config updates rather than silently changing behavior.

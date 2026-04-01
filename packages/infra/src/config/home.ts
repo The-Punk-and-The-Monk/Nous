@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { RelationshipBoundary } from "@nous/core";
 
 export interface NousPaths {
 	homeDir: string;
@@ -51,6 +52,7 @@ export interface NousConfig {
 		reflectionIntervalMs: number;
 		prospectiveLookaheadMs: number;
 	};
+	relationship: RelationshipBoundary;
 }
 
 type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
@@ -144,6 +146,9 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 			reflectionIntervalMs: 60000,
 			prospectiveLookaheadMs: 900000,
 		},
+	});
+	writeDefaultJsonIfMissing(join(paths.configDir, "relationship.json"), {
+		relationship: DEFAULT_RELATIONSHIP_BOUNDARY as unknown as JsonValue,
 	});
 	writeDefaultJsonIfMissing(join(paths.configDir, "network.json"), {
 		networkEnabled: false,
@@ -276,6 +281,7 @@ export function loadNousConfig(
 		readJson(join(paths.configDir, "providers.json")),
 		readJson(join(paths.configDir, "sensors.json")),
 		readJson(join(paths.configDir, "ambient.json")),
+		readJson(join(paths.configDir, "relationship.json")),
 		paths.projectDir
 			? readJson(join(paths.projectDir, "config.json"))
 			: undefined,
@@ -287,6 +293,9 @@ export function loadNousConfig(
 			: undefined,
 		paths.projectDir
 			? readJson(join(paths.projectDir, "ambient.json"))
+			: undefined,
+		paths.projectDir
+			? readJson(join(paths.projectDir, "relationship.json"))
 			: undefined,
 	);
 	const config = merged as unknown as NousConfig;
@@ -358,6 +367,34 @@ function asJsonObject(value: unknown): JsonObject | undefined {
 	return value as JsonObject;
 }
 
+const DEFAULT_RELATIONSHIP_BOUNDARY: RelationshipBoundary = {
+	assistantStyle: {
+		warmth: "balanced",
+		directness: "balanced",
+	},
+	proactivityPolicy: {
+		initiativeLevel: "balanced",
+		allowedKinds: [
+			"suggestion",
+			"offer",
+			"reminder",
+			"ambient_intent",
+			"silent_watchpoint",
+			"protective_intervention",
+		],
+		blockedKinds: [],
+		requireApprovalForKinds: ["ambient_intent", "protective_intervention"],
+	},
+	interruptionPolicy: {
+		maxUnpromptedMessagesPerDay: 6,
+		preferredDelivery: "thread",
+	},
+	autonomyPolicy: {
+		allowOffersWithoutPrompt: true,
+		allowAmbientAutoExecution: true,
+	},
+};
+
 const DEFAULT_NOUS_CONFIG: NousConfig = {
 	daemon: {
 		host: "127.0.0.1",
@@ -385,4 +422,5 @@ const DEFAULT_NOUS_CONFIG: NousConfig = {
 		reflectionIntervalMs: 60000,
 		prospectiveLookaheadMs: 900000,
 	},
+	relationship: DEFAULT_RELATIONSHIP_BOUNDARY,
 };

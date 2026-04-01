@@ -68,6 +68,18 @@ describe("Nous home config", () => {
 			readFileSync(join(paths.configDir, "network.json"), "utf8"),
 		) as { networkEnabled: boolean };
 		expect(network.networkEnabled).toBe(false);
+		const relationship = JSON.parse(
+			readFileSync(join(paths.configDir, "relationship.json"), "utf8"),
+		) as {
+			relationship: {
+				assistantStyle: { warmth: string };
+				interruptionPolicy: { maxUnpromptedMessagesPerDay: number };
+			};
+		};
+		expect(relationship.relationship.assistantStyle.warmth).toBe("balanced");
+		expect(
+			relationship.relationship.interruptionPolicy.maxUnpromptedMessagesPerDay,
+		).toBe(6);
 	});
 
 	test("loads project-local overrides from nearest .nous directory", () => {
@@ -82,11 +94,28 @@ describe("Nous home config", () => {
 			join(projectRoot, ".nous", "sensors.json"),
 			JSON.stringify({ sensors: { pollIntervalMs: 1234 } }),
 		);
+		writeFileSync(
+			join(projectRoot, ".nous", "relationship.json"),
+			JSON.stringify({
+				relationship: {
+					assistantStyle: {
+						warmth: "high",
+					},
+					interruptionPolicy: {
+						maxUnpromptedMessagesPerDay: 2,
+					},
+				},
+			}),
+		);
 
 		const paths = getNousPaths({ env, cwd: nested });
 		expect(paths.projectDir).toBe(join(projectRoot, ".nous"));
 
 		const config = loadNousConfig({ env, cwd: nested });
 		expect(config.sensors.pollIntervalMs).toBe(1234);
+		expect(config.relationship.assistantStyle.warmth).toBe("high");
+		expect(config.relationship.interruptionPolicy.maxUnpromptedMessagesPerDay).toBe(
+			2,
+		);
 	});
 });
