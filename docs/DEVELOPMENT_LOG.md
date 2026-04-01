@@ -5994,3 +5994,31 @@ For significant sessions, capture:
   - Official OpenAI endpoints are unaffected — they still receive the full SDK header set.
 - Open questions / follow-ups:
   - If a future compatible gateway requires a specific User-Agent, the fetch wrapper could be extended to set a custom value rather than omitting it entirely.
+
+### Session: Fix structured output schemas for OpenAI strict json_schema mode
+- Context / Trigger:
+  - REPL `chat` command failed with `400 Invalid schema for response_format 'control_intent_routing': ... 'required' is required to be supplied and to be an array including every key in properties. Missing 'operationId'.`
+- Problem:
+  - OpenAI's strict `json_schema` response format requires **all** properties in a schema's `properties` to also appear in the `required` array.
+  - Several structured output schemas had optional properties not listed in `required`:
+    - `control_intent_routing`: `operationId`, `query`, `threadId`
+    - `decision_response_interpretation`: `selectedOptionId`
+    - `proactive_candidate`: 12 out of 13 properties
+    - `intent_parse` (nested `constraints` items): `value`
+- Decision:
+  - Add all missing properties to each schema's `required` array.
+  - For semantically optional fields, change their `type` from `"string"` to `["string", "null"]` (or `["number", "null"]`, `["boolean", "null"]`) so the model can emit `null` when the field is not applicable.
+  - For `enum` fields that are now nullable, add `null` to the enum array.
+  - Validate functions already handle null gracefully (they check `typeof value === "string"` which is false for null).
+- Changes made:
+  - Updated `packages/infra/src/control/control-intent-router.ts`
+  - Updated `packages/infra/src/intake/decision-response-interpreter.ts`
+  - Updated `packages/runtime/src/proactive/reflection.ts`
+  - Updated `packages/orchestrator/src/intent/parser.ts`
+- Validation:
+  - `bun test` on all affected test files: 15 pass, 0 fail.
+- Impact / Result:
+  - All structured output schemas are now compatible with OpenAI's strict json_schema validation.
+  - REPL chat commands no longer fail with 400 schema errors.
+- Open questions / follow-ups:
+  - Any new structured output schema must list all properties in `required`. Could add a build-time or test-time check to enforce this.

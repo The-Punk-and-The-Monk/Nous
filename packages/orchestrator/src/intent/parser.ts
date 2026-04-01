@@ -135,7 +135,7 @@ const INTENT_PARSE_SPEC = {
 				items: {
 					type: "object",
 					additionalProperties: false,
-					required: ["type", "description"],
+					required: ["type", "description", "value"],
 					properties: {
 						type: {
 							type: "string",

@@ -51,13 +51,13 @@ const DECISION_RESPONSE_SPEC = {
 	schema: {
 		type: "object",
 		additionalProperties: false,
-		required: ["resolution", "rationale"],
+		required: ["resolution", "selectedOptionId", "rationale"],
 		properties: {
 			resolution: {
 				type: "string",
 				enum: ["approved", "rejected", "selected", "free_text", "unclear"],
 			},
-			selectedOptionId: { type: "string" },
+			selectedOptionId: { type: ["string", "null"] },
 			rationale: { type: "string" },
 		},
 	},

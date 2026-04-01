@@ -69,20 +69,20 @@ const CONTROL_INTENT_ROUTING_SPEC = {
 	schema: {
 		type: "object",
 		additionalProperties: false,
-		required: ["kind", "confidence", "rationale"],
+		required: ["kind", "confidence", "rationale", "operationId", "query", "threadId"],
 		properties: {
 			kind: {
 				type: "string",
 				enum: ["invoke_operation", "task_plane", "clarify"],
 			},
-			operationId: { type: "string" },
+			operationId: { type: ["string", "null"] },
 			confidence: {
 				type: "string",
 				enum: ["high", "medium", "low"],
 			},
 			rationale: { type: "string" },
-			query: { type: "string" },
-			threadId: { type: "string" },
+			query: { type: ["string", "null"] },
+			threadId: { type: ["string", "null"] },
 		},
 	},
 	validate(value: unknown): ControlIntentResolution {
