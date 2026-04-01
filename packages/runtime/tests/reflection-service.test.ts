@@ -149,6 +149,61 @@ describe("ReflectionService", () => {
 		expect(outcome.candidate).toBeUndefined();
 		expect(outcome.run.outcome).toBe("no_action");
 	});
+
+	test("suppresses low-value offers when initiative level is minimal", async () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const memory = new MemoryService({ store, agentId: "nous" });
+		const llm = new MockProvider({
+			emit: true,
+			kind: "offer",
+			summary: "Offer a friendly nudge",
+			messageDraft: "I can gently remind you about this.",
+			rationale: "A low-stakes nudge might help.",
+			confidence: 0.72,
+			valueScore: 0.58,
+			interruptionCost: 0.22,
+			urgency: "low",
+			recommendedMode: "async_notify",
+			requiresApproval: false,
+		});
+		const service = new ReflectionService({ llm, memory });
+		const boundary: RelationshipBoundary = {
+			assistantStyle: {
+				warmth: "balanced",
+				directness: "balanced",
+			},
+			proactivityPolicy: {
+				initiativeLevel: "minimal",
+				allowedKinds: ["suggestion", "offer", "silent_watchpoint"],
+				blockedKinds: [],
+				requireApprovalForKinds: [],
+			},
+			interruptionPolicy: {
+				maxUnpromptedMessagesPerDay: 1,
+				preferredDelivery: "thread",
+			},
+			autonomyPolicy: {
+				allowOffersWithoutPrompt: true,
+				allowAmbientAutoExecution: false,
+			},
+		};
+
+		const outcome = await service.reflectSignal({
+			signalId: "sig_3",
+			signalType: "git.status_changed",
+			summary:
+				"Ambient notice: workspace git status changed from clean to dirty in /repo/app.",
+			confidence: 0.7,
+			scope: {
+				projectRoot: "/repo/app",
+				workingDirectory: "/repo/app",
+			},
+			relationshipBoundary: boundary,
+		});
+
+		expect(outcome.candidate).toBeUndefined();
+		expect(outcome.run.outcome).toBe("no_action");
+	});
 });
 
 class MockProvider implements LLMProvider {

@@ -98,6 +98,44 @@ For significant sessions, capture:
     - procedural / prospective memory deepening
     - the next Tier 2 tool wave
 
+### Session: Make initiative-level preference affect proactive candidate shaping
+
+- Context / Trigger:
+  - After landing memory-backed relationship-boundary overrides, the next natural continuation was to ensure those learned preferences changed **candidate formation**, not only downstream delivery policy.
+
+- Problem:
+  - `initiativeLevel` existed in relationship boundaries, but reflective candidate shaping still treated it mostly as prompt context rather than an executable runtime rule.
+  - That meant learned preference for lower initiative could still allow low-value offers to be formed, even if later delivery became more conservative.
+
+- Options considered:
+  - Option A: leave initiative handling prompt-only for now.
+    - Rejected because the new relationship-preference seam would remain only partially real.
+  - Option B: build a large scoring framework for all initiative levels and candidate kinds.
+    - Rejected because it would widen scope beyond a safe follow-up slice.
+  - Option C: add a narrow executable rule for the most obvious unwanted case under minimal initiative.
+    - Chosen because it gives initiative level real behavioral force without overfitting a premature policy engine.
+
+- Decision:
+  - Keep the rule conservative and bounded:
+    - under `initiativeLevel: minimal`, suppress low-value low-urgency offers / check-ins / celebrations and other overly interruptive candidates.
+
+- Changes made:
+  - `packages/runtime/src/proactive/reflection.ts`
+    - added a bounded `initiativeLevelAllowsCandidate()` gate inside candidate construction
+    - made low-initiative preference suppress low-value offer/check-in/celebration style outputs unless urgency is high
+  - `packages/runtime/tests/reflection-service.test.ts`
+    - added regression coverage that minimal initiative suppresses a low-value proactive offer
+
+- Impact / Result:
+  - Relationship preferences now affect both:
+    - proactive delivery policy
+    - proactive candidate shaping
+  - This makes the relationship-aware runtime meaningfully more real without committing to a broad policy engine too early.
+
+- Open questions / next steps:
+  - The next refinement is likely agenda/category-aware shaping rather than only kind/score thresholds.
+  - Future work can decide whether `balanced` / `high` initiative deserve richer positive behaviors instead of only minimal-mode suppression.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass

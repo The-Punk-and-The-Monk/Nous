@@ -330,7 +330,21 @@ const proactiveCandidateSpec: StructuredOutputSpec<ProactiveCandidateDecision> =
 				requiresApproval: { type: ["boolean", "null"] },
 				cooldownKey: { type: ["string", "null"] },
 			},
-			required: ["emit", "kind", "summary", "messageDraft", "rationale", "proposedIntentText", "confidence", "valueScore", "interruptionCost", "urgency", "recommendedMode", "requiresApproval", "cooldownKey"],
+			required: [
+				"emit",
+				"kind",
+				"summary",
+				"messageDraft",
+				"rationale",
+				"proposedIntentText",
+				"confidence",
+				"valueScore",
+				"interruptionCost",
+				"urgency",
+				"recommendedMode",
+				"requiresApproval",
+				"cooldownKey",
+			],
 			additionalProperties: false,
 		},
 		validate(value: unknown): ProactiveCandidateDecision {
@@ -388,6 +402,23 @@ function buildCandidateFromDecision(input: {
 		return undefined;
 	}
 
+	const valueScore = clampScore(
+		input.decision.valueScore ?? metadata.signalConfidence ?? 0.7,
+	);
+	const interruptionCost = clampScore(input.decision.interruptionCost ?? 0.35);
+	const urgency = input.decision.urgency ?? "normal";
+	if (
+		!initiativeLevelAllowsCandidate({
+			initiativeLevel: input.boundary.proactivityPolicy.initiativeLevel,
+			kind,
+			valueScore,
+			interruptionCost,
+			urgency,
+		})
+	) {
+		return undefined;
+	}
+
 	let recommendedMode = input.decision.recommendedMode;
 	if (!recommendedMode) {
 		recommendedMode =
@@ -433,11 +464,9 @@ function buildCandidateFromDecision(input: {
 		confidence: clampScore(
 			input.decision.confidence ?? metadata.signalConfidence ?? 0.7,
 		),
-		valueScore: clampScore(
-			input.decision.valueScore ?? metadata.signalConfidence ?? 0.7,
-		),
-		interruptionCost: clampScore(input.decision.interruptionCost ?? 0.35),
-		urgency: input.decision.urgency ?? "normal",
+		valueScore,
+		interruptionCost,
+		urgency,
 		recommendedMode,
 		requiresApproval,
 		cooldownKey: input.decision.cooldownKey ?? input.agendaItem.dedupeKey,
@@ -456,6 +485,35 @@ function buildCandidateFromDecision(input: {
 			prospectiveMemoryId: metadata.prospectiveMemoryId,
 		},
 	};
+}
+
+function initiativeLevelAllowsCandidate(input: {
+	initiativeLevel: RelationshipBoundary["proactivityPolicy"]["initiativeLevel"];
+	kind: ProactiveCandidateKind;
+	valueScore: number;
+	interruptionCost: number;
+	urgency: ProactiveCandidateUrgency;
+}): boolean {
+	if (input.initiativeLevel !== "minimal") {
+		return true;
+	}
+	if (input.urgency === "high") {
+		return true;
+	}
+	if (
+		input.kind === "offer" ||
+		input.kind === "check_in" ||
+		input.kind === "celebration"
+	) {
+		return false;
+	}
+	if (input.interruptionCost > 0.35) {
+		return false;
+	}
+	if (input.valueScore < 0.65 && input.urgency === "low") {
+		return false;
+	}
+	return true;
 }
 
 function readAgendaMetadata(
