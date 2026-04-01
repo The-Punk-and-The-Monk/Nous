@@ -3533,23 +3533,29 @@ export class NousDaemon {
 
 	private buildAmbientRelationshipBoundary(): RelationshipBoundary {
 		const relationship = this.nousConfig.relationship;
+		const learned = this.memory.deriveRelationshipBoundaryOverrides();
 		return {
 			assistantStyle: {
 				...relationship.assistantStyle,
+				...(learned.assistantStyle ?? {}),
 			},
 			proactivityPolicy: {
 				...relationship.proactivityPolicy,
 				initiativeLevel: this.nousConfig.ambient.enabled
-					? relationship.proactivityPolicy.initiativeLevel
+					? (learned.proactivityPolicy?.initiativeLevel ??
+						relationship.proactivityPolicy.initiativeLevel)
 					: "minimal",
 			},
 			interruptionPolicy: {
 				...relationship.interruptionPolicy,
+				...(learned.interruptionPolicy ?? {}),
 			},
 			autonomyPolicy: {
 				...relationship.autonomyPolicy,
+				...(learned.autonomyPolicy ?? {}),
 				allowAmbientAutoExecution:
-					relationship.autonomyPolicy.allowAmbientAutoExecution &&
+					(learned.autonomyPolicy?.allowAmbientAutoExecution ??
+						relationship.autonomyPolicy.allowAmbientAutoExecution) &&
 					this.nousConfig.ambient.autoSubmit,
 			},
 		};

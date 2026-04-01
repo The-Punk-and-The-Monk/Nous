@@ -43,6 +43,61 @@ For significant sessions, capture:
 
 ---
 
+## 2026-04-02
+
+### Session: Start the ideal-state program with memory-backed relationship-aware proactivity
+
+- Context / Trigger:
+  - User explicitly asked Ralph to stop treating Nous work as isolated feature patches and instead define a program that iterates toward the repo's ideal state, then immediately execute that plan without waiting for further confirmation.
+  - The repo's own steering documents already said the next highest-leverage gap is **relationship-aware proactive runtime** ahead of broader memory/tool/evolution follow-ups.
+
+- Problem:
+  - Nous already has a governed proactive substrate, but ambient relationship boundaries were still driven only by static config.
+  - That meant the assistant could be policy-governed, but not yet meaningfully **relationship-aware** in the learned/memory-backed sense the architecture calls for.
+  - The broad user request also needed a concrete plan artifact so Ralph would not devolve into endless ad hoc implementation.
+
+- Options considered:
+  - Option A: treat “ideal state” as too broad and only write a roadmap.
+    - Rejected because the user explicitly asked for planning **and** execution in one uninterrupted lane.
+  - Option B: jump straight to the next Tier 2 tool wave.
+    - Rejected because the repo's own current steering says relationship-aware proactive runtime is the top value gap.
+  - Option C: define a staged ideal-state program, then execute the first slice as a memory-backed relationship-preference loop.
+    - Chosen because it converts the broad ask into a durable execution surface and advances the assistant's felt quality rather than only shell convenience.
+
+- Decision:
+  - Create a long-horizon Ralph program under `.omx/plans/` that translates the North Star into staged milestones.
+  - Choose **Milestone 1A — memory-backed relationship-aware proactive runtime** as the first execution slice.
+  - Implement a bounded preference-memory seam that lets governed `user_preference` semantic memories override proactive relationship boundary settings.
+
+- Changes made:
+  - Added Ralph planning/context artifacts under `.omx/`
+    - context snapshot for the ideal-state program
+    - PRD + test spec for the staged roadmap and current milestone
+  - Updated `packages/runtime/src/memory/service.ts`
+    - added `deriveRelationshipBoundaryOverrides()`
+    - added bounded parsing for structured `relationship:*` user-preference tags stored in semantic memory
+  - Updated `packages/infra/src/daemon/server.ts`
+    - ambient relationship-boundary construction now merges learned preference overrides from memory on top of static config
+  - Updated `packages/runtime/tests/memory-service.test.ts`
+    - added regression coverage for preference-memory parsing and scoped override behavior
+  - Updated `packages/infra/tests/daemon-proactive-reflection.test.ts`
+    - added regression coverage that learned memory preferences alter the ambient boundary
+    - added runtime proof that memory-backed digest preference changes actual proactive delivery behavior
+  - Deslop pass
+    - reviewed the milestone-owned files for dead wrappers / over-abstraction and kept the preference seam tag-driven and bounded instead of introducing a broader preference ontology too early
+
+- Impact / Result:
+  - Ralph now has a durable ideal-state roadmap instead of an unbounded verbal goal.
+  - Nous gained its first executable **memory-backed relationship-preference loop** for proactive behavior.
+  - Proactive delivery can now be shaped by governed user-preference memory, not only by static config files.
+
+- Open questions / next steps:
+  - The current preference seam is intentionally narrow and tag-driven; future work can add richer preference producers and more nuanced relationship signals.
+  - The program's next likely follow-ups remain:
+    - richer relationship-aware reflective candidate shaping
+    - procedural / prospective memory deepening
+    - the next Tier 2 tool wave
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass

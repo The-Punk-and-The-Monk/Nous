@@ -7,6 +7,7 @@ import type {
 	MemorySourceKind,
 	MemorySourceRef,
 	MemoryTier,
+	RelationshipBoundary,
 	SemanticMemoryMetadata,
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
@@ -117,6 +118,27 @@ export interface DueProspectiveCommitment {
 	dueAt?: string;
 	remindAt?: string;
 	reminderKind: "remind_at" | "due_at" | "overdue";
+}
+
+export interface RelationshipBoundaryMemoryOverrides {
+	assistantStyle?: Partial<RelationshipBoundary["assistantStyle"]>;
+	proactivityPolicy?: Pick<
+		RelationshipBoundary["proactivityPolicy"],
+		"initiativeLevel"
+	>;
+	interruptionPolicy?: Partial<
+		Pick<
+			RelationshipBoundary["interruptionPolicy"],
+			"preferredDelivery" | "maxUnpromptedMessagesPerDay"
+		>
+	>;
+	autonomyPolicy?: Partial<
+		Pick<
+			RelationshipBoundary["autonomyPolicy"],
+			"allowOffersWithoutPrompt" | "allowAmbientAutoExecution"
+		>
+	>;
+	sourceMemoryIds: string[];
 }
 
 export class MemoryService {
@@ -440,6 +462,128 @@ export class MemoryService {
 		});
 	}
 
+	deriveRelationshipBoundaryOverrides(
+		input: {
+			scope?: ChannelScope;
+			threadId?: string;
+		} = {},
+	): RelationshipBoundaryMemoryOverrides {
+		const overrides: RelationshipBoundaryMemoryOverrides = {
+			sourceMemoryIds: [],
+		};
+		const entries = this.options.store
+			.getByTier(this.agentId, "semantic")
+			.filter((entry) => isRelationshipPreferenceMemory(entry))
+			.filter((entry) => matchesRelationshipPreferenceContext(entry, input))
+			.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+		for (const entry of entries) {
+			const tags = readMemoryTags(entry);
+			let applied = false;
+			for (const tag of tags) {
+				if (tag.startsWith("relationship:warmth:")) {
+					const warmth = tag.slice("relationship:warmth:".length);
+					if (warmth === "low" || warmth === "balanced" || warmth === "high") {
+						overrides.assistantStyle = {
+							...(overrides.assistantStyle ?? {}),
+							warmth,
+						};
+						applied = true;
+					}
+					continue;
+				}
+				if (tag.startsWith("relationship:directness:")) {
+					const directness = tag.slice("relationship:directness:".length);
+					if (
+						directness === "low" ||
+						directness === "balanced" ||
+						directness === "high"
+					) {
+						overrides.assistantStyle = {
+							...(overrides.assistantStyle ?? {}),
+							directness,
+						};
+						applied = true;
+					}
+					continue;
+				}
+				if (tag.startsWith("relationship:initiative:")) {
+					const initiativeLevel = tag.slice("relationship:initiative:".length);
+					if (
+						initiativeLevel === "minimal" ||
+						initiativeLevel === "balanced" ||
+						initiativeLevel === "high"
+					) {
+						overrides.proactivityPolicy = {
+							initiativeLevel,
+						};
+						applied = true;
+					}
+					continue;
+				}
+				if (tag.startsWith("relationship:delivery:")) {
+					const preferredDelivery = tag.slice("relationship:delivery:".length);
+					if (
+						preferredDelivery === "thread" ||
+						preferredDelivery === "notification" ||
+						preferredDelivery === "digest"
+					) {
+						overrides.interruptionPolicy = {
+							...(overrides.interruptionPolicy ?? {}),
+							preferredDelivery,
+						};
+						applied = true;
+					}
+					continue;
+				}
+				if (tag.startsWith("relationship:max_unprompted_messages_per_day:")) {
+					const rawValue = tag.slice(
+						"relationship:max_unprompted_messages_per_day:".length,
+					);
+					const parsed = Number.parseInt(rawValue, 10);
+					if (Number.isFinite(parsed) && parsed >= 0) {
+						overrides.interruptionPolicy = {
+							...(overrides.interruptionPolicy ?? {}),
+							maxUnpromptedMessagesPerDay: parsed,
+						};
+						applied = true;
+					}
+					continue;
+				}
+				if (tag.startsWith("relationship:auto_execute:")) {
+					const parsed = parseBooleanPreferenceTag(
+						tag.slice("relationship:auto_execute:".length),
+					);
+					if (parsed !== undefined) {
+						overrides.autonomyPolicy = {
+							...(overrides.autonomyPolicy ?? {}),
+							allowAmbientAutoExecution: parsed,
+						};
+						applied = true;
+					}
+					continue;
+				}
+				if (tag.startsWith("relationship:offers_without_prompt:")) {
+					const parsed = parseBooleanPreferenceTag(
+						tag.slice("relationship:offers_without_prompt:".length),
+					);
+					if (parsed !== undefined) {
+						overrides.autonomyPolicy = {
+							...(overrides.autonomyPolicy ?? {}),
+							allowOffersWithoutPrompt: parsed,
+						};
+						applied = true;
+					}
+				}
+			}
+			if (applied) {
+				overrides.sourceMemoryIds.push(entry.id);
+			}
+		}
+
+		return overrides;
+	}
+
 	retrieve(input: MemoryContextQuery): RetrievedMemory[] {
 		return this.retriever.retrieve({
 			...input,
@@ -623,6 +767,21 @@ function dedupeStrings(values: string[]): string[] {
 	return [...new Set(values.filter(Boolean))];
 }
 
+function readMemoryTags(entry: MemoryEntry): string[] {
+	const tags = entry.metadata?.tags;
+	return Array.isArray(tags)
+		? tags.filter((value): value is string => typeof value === "string")
+		: [];
+}
+
+function isRelationshipPreferenceMemory(entry: MemoryEntry): boolean {
+	const metadata = entry.metadata as Record<string, unknown>;
+	if (metadata.factType !== "user_preference") {
+		return false;
+	}
+	return readMemoryTags(entry).some((tag) => tag.startsWith("relationship:"));
+}
+
 function compactRefs(
 	refs: Array<MemorySourceRef | undefined>,
 ): MemorySourceRef[] | undefined {
@@ -697,4 +856,47 @@ function matchesScope(
 ): boolean {
 	if (!expectedProjectRoot) return true;
 	return projectRoot === expectedProjectRoot;
+}
+
+function matchesRelationshipPreferenceContext(
+	entry: MemoryEntry,
+	input: {
+		scope?: ChannelScope;
+		threadId?: string;
+	},
+): boolean {
+	const metadata = entry.metadata as Record<string, unknown>;
+	const entryProjectRoot =
+		typeof metadata.projectRoot === "string" ? metadata.projectRoot : undefined;
+	if (
+		entryProjectRoot &&
+		input.scope?.projectRoot &&
+		entryProjectRoot !== input.scope.projectRoot
+	) {
+		return false;
+	}
+	if (entryProjectRoot && !input.scope?.projectRoot) {
+		return false;
+	}
+
+	const entryThreadId =
+		typeof metadata.threadId === "string" ? metadata.threadId : undefined;
+	if (entryThreadId && input.threadId && entryThreadId !== input.threadId) {
+		return false;
+	}
+	if (entryThreadId && !input.threadId) {
+		return false;
+	}
+
+	return true;
+}
+
+function parseBooleanPreferenceTag(value: string): boolean | undefined {
+	if (value === "true" || value === "allow" || value === "enabled") {
+		return true;
+	}
+	if (value === "false" || value === "deny" || value === "disabled") {
+		return false;
+	}
+	return undefined;
 }

@@ -88,10 +88,14 @@ describe("NousDaemon proactive reflection isolation", () => {
 					"Inspect the package.json change and report advisable follow-up checks. Do not modify files.",
 			});
 
-			await expect(internals.runProactiveReflectionTick()).resolves.toBeUndefined();
+			await expect(
+				internals.runProactiveReflectionTick(),
+			).resolves.toBeUndefined();
 			expect(internals.isReflectionTickRunning).toBe(false);
 
-			await expect(internals.runProactiveReflectionTick()).resolves.toBeUndefined();
+			await expect(
+				internals.runProactiveReflectionTick(),
+			).resolves.toBeUndefined();
 			expect(internals.isReflectionTickRunning).toBe(false);
 		} finally {
 			await daemon.shutdown();
@@ -147,6 +151,52 @@ describe("NousDaemon proactive reflection isolation", () => {
 		}
 	});
 
+	test("builds ambient relationship boundary from user preference memory overrides", async () => {
+		const root = mkdtempSync(
+			join(tmpdir(), "nous-daemon-relationship-memory-"),
+		);
+		tempDirs.push(root);
+		process.env.NOUS_HOME = join(root, ".nous");
+		process.env.NOUS_DB = undefined;
+		process.env.NOUS_SOCKET = undefined;
+		process.env.NOUS_PID_FILE = undefined;
+		process.env.NOUS_STATE_FILE = undefined;
+
+		const daemon = new NousDaemon({
+			llm: new ThrowingProvider(new Error("unused in this test")),
+		});
+
+		try {
+			const internals = daemon as unknown as {
+				memory: {
+					storeManualNote(input: {
+						content: string;
+						factType?: string;
+						tags?: string[];
+					}): void;
+				};
+				buildAmbientRelationshipBoundary(): RelationshipBoundary;
+			};
+			internals.memory.storeManualNote({
+				content: "Please batch low-risk proactive nudges into digests.",
+				factType: "user_preference",
+				tags: [
+					"relationship:delivery:digest",
+					"relationship:initiative:minimal",
+					"relationship:auto_execute:false",
+				],
+			});
+
+			const boundary = internals.buildAmbientRelationshipBoundary();
+
+			expect(boundary.interruptionPolicy.preferredDelivery).toBe("digest");
+			expect(boundary.proactivityPolicy.initiativeLevel).toBe("minimal");
+			expect(boundary.autonomyPolicy.allowAmbientAutoExecution).toBe(false);
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
 	test("batches low-risk proactive notifications into a digest when configured", async () => {
 		const root = mkdtempSync(join(tmpdir(), "nous-daemon-digest-"));
 		tempDirs.push(root);
@@ -187,9 +237,14 @@ describe("NousDaemon proactive reflection isolation", () => {
 				dialogue: {
 					getThreadSnapshot(payload: {
 						threadId: string;
-					}): {
-						messages: Array<{ content: string; metadata?: Record<string, unknown> }>;
-					} | undefined;
+					}):
+						| {
+								messages: Array<{
+									content: string;
+									metadata?: Record<string, unknown>;
+								}>;
+						  }
+						| undefined;
 				};
 				buildAmbientRelationshipBoundary(): RelationshipBoundary;
 				deliverProactiveCandidates(
@@ -227,12 +282,105 @@ describe("NousDaemon proactive reflection isolation", () => {
 			expect(assistantMessages[0]?.content).toContain("Proactive digest:");
 			expect(assistantMessages[0]?.content).toContain("package.json change");
 			expect(assistantMessages[0]?.content).toContain("auth migration notes");
-			expect(internals.backend.proactive.getCandidateById("cand_digest_1")?.status).toBe(
-				"delivered",
-			);
-			expect(internals.backend.proactive.getCandidateById("cand_digest_2")?.status).toBe(
-				"delivered",
-			);
+			expect(
+				internals.backend.proactive.getCandidateById("cand_digest_1")?.status,
+			).toBe("delivered");
+			expect(
+				internals.backend.proactive.getCandidateById("cand_digest_2")?.status,
+			).toBe("delivered");
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
+	test("batches low-risk proactive notifications into a digest from memory preferences", async () => {
+		const root = mkdtempSync(join(tmpdir(), "nous-daemon-memory-digest-"));
+		tempDirs.push(root);
+		process.env.NOUS_HOME = join(root, ".nous");
+		process.env.NOUS_DB = undefined;
+		process.env.NOUS_SOCKET = undefined;
+		process.env.NOUS_PID_FILE = undefined;
+		process.env.NOUS_STATE_FILE = undefined;
+
+		const daemon = new NousDaemon({
+			llm: new ThrowingProvider(new Error("unused in this test")),
+		});
+
+		try {
+			const internals = daemon as unknown as {
+				memory: {
+					storeManualNote(input: {
+						content: string;
+						factType?: string;
+						tags?: string[];
+					}): void;
+				};
+				backend: {
+					proactive: {
+						createCandidate(candidate: ProactiveCandidate): void;
+						getCandidateById(id: string): ProactiveCandidate | undefined;
+					};
+				};
+				dialogue: {
+					getThreadSnapshot(payload: {
+						threadId: string;
+					}):
+						| {
+								messages: Array<{
+									content: string;
+									metadata?: Record<string, unknown>;
+								}>;
+						  }
+						| undefined;
+				};
+				buildAmbientRelationshipBoundary(): RelationshipBoundary;
+				deliverProactiveCandidates(
+					boundary: RelationshipBoundary,
+					candidates: ProactiveCandidate[],
+				): Promise<void>;
+			};
+
+			internals.memory.storeManualNote({
+				content: "Use digests for low-risk proactive notices.",
+				factType: "user_preference",
+				tags: ["relationship:delivery:digest"],
+			});
+
+			const boundary = internals.buildAmbientRelationshipBoundary();
+			const candidates = [
+				makeCandidate({
+					id: "cand_memory_digest_1",
+					summary: "Review the recent package.json change when convenient.",
+				}),
+				makeCandidate({
+					id: "cand_memory_digest_2",
+					summary: "A follow-up reminder is due for the auth migration notes.",
+				}),
+			];
+			for (const candidate of candidates) {
+				internals.backend.proactive.createCandidate(candidate);
+			}
+
+			await internals.deliverProactiveCandidates(boundary, candidates);
+
+			const snapshot = internals.dialogue.getThreadSnapshot({
+				threadId: "thread_digest",
+			});
+			expect(snapshot).toBeDefined();
+			const assistantMessages =
+				snapshot?.messages.filter((message) =>
+					String(message.metadata?.source).startsWith("proactive_"),
+				) ?? [];
+			expect(assistantMessages).toHaveLength(1);
+			expect(assistantMessages[0]?.content).toContain("Proactive digest:");
+			expect(
+				internals.backend.proactive.getCandidateById("cand_memory_digest_1")
+					?.status,
+			).toBe("delivered");
+			expect(
+				internals.backend.proactive.getCandidateById("cand_memory_digest_2")
+					?.status,
+			).toBe("delivered");
 		} finally {
 			await daemon.shutdown();
 		}
@@ -280,7 +428,8 @@ function makeCandidate(
 		id: overrides.id ?? "cand_1",
 		kind: overrides.kind ?? "suggestion",
 		summary: overrides.summary ?? "Digest me later",
-		messageDraft: overrides.messageDraft ?? overrides.summary ?? "Digest me later",
+		messageDraft:
+			overrides.messageDraft ?? overrides.summary ?? "Digest me later",
 		rationale: overrides.rationale ?? "Low-risk proactive follow-up.",
 		confidence: overrides.confidence ?? 0.72,
 		valueScore: overrides.valueScore ?? 0.68,

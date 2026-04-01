@@ -238,4 +238,37 @@ describe("MemoryService", () => {
 				.fulfillmentStatus,
 		).toBe("done");
 	});
+
+	test("derives relationship-boundary overrides from user preference memory tags", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		const service = new MemoryService({ store, agentId: "nous" });
+
+		service.storeManualNote({
+			content: "Please batch low-risk proactive nudges into digests.",
+			factType: "user_preference",
+			tags: [
+				"relationship:delivery:digest",
+				"relationship:initiative:minimal",
+				"relationship:auto_execute:false",
+			],
+		});
+		service.storeManualNote({
+			content:
+				"Project-specific note that should not affect the global boundary.",
+			factType: "user_preference",
+			scope: {
+				projectRoot: "/repo/other",
+				workingDirectory: "/repo/other",
+			},
+			tags: ["relationship:warmth:high"],
+		});
+
+		const overrides = service.deriveRelationshipBoundaryOverrides();
+
+		expect(overrides.interruptionPolicy?.preferredDelivery).toBe("digest");
+		expect(overrides.proactivityPolicy?.initiativeLevel).toBe("minimal");
+		expect(overrides.autonomyPolicy?.allowAmbientAutoExecution).toBe(false);
+		expect(overrides.assistantStyle?.warmth).toBeUndefined();
+		expect(overrides.sourceMemoryIds).toHaveLength(1);
+	});
 });
