@@ -4732,3 +4732,30 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - The repo-level contract is now much clearer, but future overnight wrappers or automation scripts should eventually align their control loop directly with this iteration model instead of relying only on prompt text.
   - The macOS notification command still needs a live re-check in this environment after the contract update, because prior attempts returned AppleScript parsing errors.
+
+### Session: Add working JXA notification fallback to AGENTS contract
+- Context / Trigger:
+  - After the consolidated `AGENTS.md` iteration was committed, the standard AppleScript notification form was tried again exactly in the preferred `display notification ... with title "Nous"` shape.
+  - It still failed in this environment with AppleScript parser error `-2740`, while a JXA + Cocoa fallback path succeeded.
+- Problem:
+  - Leaving `AGENTS.md` with only the preferred AppleScript form would preserve a known operational gap:
+    - the notification rule would exist
+    - but the documented path could still fail on this machine
+  - That would be especially harmful because the user explicitly tightened notification behavior to happen after every iteration commit and on final stop.
+- Options considered:
+  - Option A: keep only the AppleScript form in `AGENTS.md` and mention the environment quirk in chat only.
+    - Rejected because the repo instruction itself should capture the working operational fallback.
+  - Option B: keep the AppleScript form as the preferred path, but add the JXA/Cocoa fallback directly into `AGENTS.md`.
+    - Chosen because it preserves the simpler preferred form while making the contract operationally robust.
+- Decision:
+  - Keep the one-line AppleScript command as the preferred notification path.
+  - Add a documented fallback using `osascript -l JavaScript` with `NSUserNotificationCenter`.
+- Changes made:
+  - Updated `AGENTS.md`
+    - expanded the Notifications section
+    - added the working JXA/Cocoa fallback command
+- Impact / Result:
+  - The repo-level notification contract now reflects both the intended primary path and a known-good fallback path for this environment.
+  - Future iterations are less likely to miss notifications because of the same parser failure.
+- Open questions / follow-ups:
+  - `NSUserNotificationCenter` is a legacy API. It works here, but if macOS behavior changes later, Nous may eventually want a more durable local notification helper script rather than embedding raw one-liners in instructions.

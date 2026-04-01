@@ -180,13 +180,20 @@ If requested:
 - Notifications should be short and state what iteration landed or why execution stopped.
 - The title must include `Nous`.
 - Preferred command form:
+  - first try:
 
 ```bash
 osascript -e 'display notification "Your message here" with title "Nous"'
 ```
 
-- Keep the AppleScript on one logical command string when possible.
-- If notification delivery fails, mention that explicitly in the response/log rather than silently skipping it.
+- If that parser path fails in the current environment, fall back to JXA + Cocoa:
+
+```bash
+osascript -l JavaScript -e 'ObjC.import("Foundation"); ObjC.import("AppKit"); var notification = $.NSUserNotification.alloc.init; notification.title = "Nous"; notification.informativeText = "Your message here"; $.NSUserNotificationCenter.defaultUserNotificationCenter.deliverNotification(notification);'
+```
+
+- Keep the AppleScript or JXA on one logical command string when possible.
+- If notification delivery still fails, mention that explicitly in the response/log rather than silently skipping it.
 
 ## Historical Context
 
