@@ -84,6 +84,8 @@ For significant sessions, capture:
   - `packages/infra/src/{intake/interaction-mode-classifier.ts,daemon/server.ts}`
     - classifier now accepts restoration-gate results as an explicit promotion signal
     - daemon now feeds promoted structured-memory restoration back into the interaction-mode path before work execution starts
+  - `packages/runtime/src/llm/openai-shared.ts`
+    - normalized the compat fetch wrapper typing and removed parameter reassignment so the changed-file lint gate stays green after the verification pass
   - `packages/infra/tests/dialogue-service.test.ts`
     - added assertions for `originChannel`, `surfaceKind`, and `activeWorkItemId` / `activeIntentId`
   - post-pass deslop follow-up
@@ -99,7 +101,7 @@ For significant sessions, capture:
   - Governed structured-memory restoration is now part of the inbound interaction-mode path instead of only a standalone runtime helper.
 
 - Open questions / next steps:
-  - Repo-wide `bun run lint` still reports unrelated/pre-existing issues in generated/session-owned files under `.omx/`, `.claude/`, and an unrelated worktree change in `packages/runtime/src/llm/openai-shared.ts`; this lane therefore verified Biome on the layered-continuity-owned files instead of the whole tree.
+  - Repo-wide `bun run lint` still reports unrelated/pre-existing issues in generated/session-owned files under `.omx/` and `.claude/`; this lane therefore verified Biome on the changed repo files rather than the whole tree.
   - The broader repo-wide `Intent -> WorkItem` terminology migration remains intentionally incomplete and should be handled as a separate bounded follow-up.
 
 ### Session: Land interaction-mode routing and the first structured work-restoration gate
