@@ -269,6 +269,81 @@ describe("ProactiveRuntimeService", () => {
 			"cand_project_b_queued",
 		]);
 	});
+
+	test("shares scoped delivery quotas across threads in the same project", () => {
+		const db = initDatabase();
+		const memory = new MemoryService({
+			store: new SQLiteMemoryStore(db),
+			agentId: "nous",
+		});
+		const store = new SQLiteProactiveStore(db);
+		const service = new ProactiveRuntimeService({
+			store,
+			memory,
+			now: () => "2026-03-31T08:00:00.000Z",
+		});
+		const globalBoundary: RelationshipBoundary = {
+			assistantStyle: {
+				warmth: "balanced",
+				directness: "balanced",
+			},
+			proactivityPolicy: {
+				initiativeLevel: "balanced",
+				allowedKinds: ["suggestion", "offer", "reminder", "ambient_intent"],
+				blockedKinds: [],
+				requireApprovalForKinds: ["ambient_intent"],
+			},
+			interruptionPolicy: {
+				maxUnpromptedMessagesPerDay: 5,
+				preferredDelivery: "thread",
+			},
+			autonomyPolicy: {
+				allowOffersWithoutPrompt: true,
+				allowAmbientAutoExecution: false,
+			},
+		};
+
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_project_shared_delivered",
+				status: "delivered",
+				deliveredAt: "2026-03-31T07:30:00.000Z",
+				sourceThreadIds: ["thread_a"],
+				scope: {
+					projectRoot: "/repo/a",
+					workingDirectory: "/repo/a",
+				},
+				cooldownKey: "cand_project_shared_delivered",
+			}),
+		);
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_project_shared_queued",
+				status: "queued",
+				sourceThreadIds: ["thread_b"],
+				scope: {
+					projectRoot: "/repo/a",
+					workingDirectory: "/repo/a",
+				},
+				cooldownKey: "cand_project_shared_queued",
+			}),
+		);
+
+		const deliverable = service.drainDeliverableCandidates(
+			globalBoundary,
+			4,
+			(candidate) => ({
+				...globalBoundary,
+				interruptionPolicy: {
+					...globalBoundary.interruptionPolicy,
+					maxUnpromptedMessagesPerDay:
+						candidate.scope?.projectRoot === "/repo/a" ? 1 : 2,
+				},
+			}),
+		);
+
+		expect(deliverable).toHaveLength(0);
+	});
 });
 
 function makeAgenda(

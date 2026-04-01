@@ -459,10 +459,11 @@ function buildCandidateQuotaKey(
 		return "global";
 	}
 	return (
-		candidate.sourceThreadIds[0] ??
 		(candidate.scope?.projectRoot
 			? `project:${candidate.scope.projectRoot}`
-			: "global")
+			: undefined) ??
+		candidate.sourceThreadIds[0] ??
+		"global"
 	);
 }
 

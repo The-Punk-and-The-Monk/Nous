@@ -275,6 +275,35 @@ For significant sessions, capture:
   - The quota key is still a simple thread/project/global derivation; future work can decide whether some relationship policies should aggregate differently.
   - A later pass may want explicit observability around which scoped boundary suppressed or allowed each candidate.
 
+### Session: Make scoped proactive quotas aggregate by project before thread
+
+- Context / Trigger:
+  - After scoped quota draining landed, architect review pointed out one remaining mismatch: the quota bucket still preferred `threadId` over `projectRoot`, so multiple proactive threads inside one project could evade a project-scoped delivery limit.
+
+- Problem:
+  - Scoped delivery preference was real, but quota aggregation still split the same project into multiple buckets whenever candidate threads differed.
+  - That weakened the intended meaning of a project-scoped relationship preference.
+
+- Decision:
+  - Keep the quota-key model simple, but change its precedence to:
+    - `projectRoot`
+    - then `threadId`
+    - then `global`
+  - Add regression proof that two different threads in the same project share one scoped quota.
+
+- Changes made:
+  - `packages/runtime/src/proactive/agenda.ts`
+    - changed scoped quota keys to prefer project buckets over thread buckets
+  - `packages/runtime/tests/proactive-runtime.test.ts`
+    - added regression coverage proving one delivered candidate in project A suppresses another queued candidate from a different thread in the same project when the scoped quota is 1
+
+- Impact / Result:
+  - Project-scoped proactive quotas now behave more like real project-scoped policies rather than thread-local loopholes.
+  - The scoped relationship-aware runtime is more semantically consistent without adding a larger policy engine.
+
+- Open questions / next steps:
+  - If future behavior needs per-thread exceptions inside one project, it should be modeled explicitly rather than reusing the quota key precedence as an implicit contract.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass
