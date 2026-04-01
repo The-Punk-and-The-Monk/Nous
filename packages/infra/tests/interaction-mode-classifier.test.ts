@@ -50,6 +50,17 @@ describe("InteractionModeClassifier", () => {
 		expect(result.confidence).toBe("high");
 	});
 
+	test("classifies restoration-approved continuity language as work", async () => {
+		const classifier = new InteractionModeClassifier();
+		const result = await classifier.classify({
+			text: "Continue that auth thing from yesterday.",
+			restorationAllowed: true,
+		});
+
+		expect(result.mode).toBe("work");
+		expect(result.confidence).toBe("medium");
+	});
+
 	test("keeps inferred continuity language in chat mode without active work", async () => {
 		const classifier = new InteractionModeClassifier();
 		const result = await classifier.classify({

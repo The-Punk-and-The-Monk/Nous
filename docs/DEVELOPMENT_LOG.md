@@ -55,6 +55,7 @@ For significant sessions, capture:
     - **doc drift**: early `ARCHITECTURE.md` glossary/dialogue-layer text still described `DialogueThread` too much like topic/work truth
     - **evidence drift**: tests around explicit `send_message` work entry and thread-container metadata were still thinner than the PRD/test-spec boundary required
   - The mandatory Ralph deslop step also still had to run on the Ralph-owned file set.
+  - Architect review also surfaced one remaining contract gap: structured-memory restoration existed as a helper/test seam, but it still needed to participate in the live interaction-mode path.
 
 - Options considered:
   - Option A: declare completion from existing typecheck/tests.
@@ -71,14 +72,18 @@ For significant sessions, capture:
     - chat fallback on inferred continuity language
     - thread metadata as a surface/container seam
   - Use the deslop pass to remove overlapping explicit-work test coverage rather than broadening implementation scope.
+  - After deslop, wire restoration-approved continuity back into the classifier/daemon path so governed restoration is no longer only a helper.
 
 - Changes made:
   - `ARCHITECTURE.md`
     - rewrote the early glossary entries for `WorkItem`, `Ambient WorkItem`, and `DialogueThread`
     - rewrote Dialogue Layer / L0 summaries so thread attachment is no longer described as work truth
   - `packages/infra/tests/daemon-interaction-mode.test.ts`
-    - added/kept stronger coverage for explicit work entry, inferred-continuity chat fallback, and proactive non-work fallback
+    - added/kept stronger coverage for explicit work entry, inferred-continuity chat fallback, restoration-approved continuity, and proactive non-work fallback
     - merged overlapping explicit-work tests during the deslop pass
+  - `packages/infra/src/{intake/interaction-mode-classifier.ts,daemon/server.ts}`
+    - classifier now accepts restoration-gate results as an explicit promotion signal
+    - daemon now feeds promoted structured-memory restoration back into the interaction-mode path before work execution starts
   - `packages/infra/tests/dialogue-service.test.ts`
     - added assertions for `originChannel`, `surfaceKind`, and `activeWorkItemId` / `activeIntentId`
   - post-pass deslop follow-up
@@ -91,6 +96,7 @@ For significant sessions, capture:
   - The architecture file now reads consistently from the top of the document instead of only in the later retreat section.
   - The regression suite now proves the critical `chat / work / handoff` boundaries more directly.
   - Ralph now has fresh post-deslop evidence for typecheck/tests plus targeted lint on the task-owned file set.
+  - Governed structured-memory restoration is now part of the inbound interaction-mode path instead of only a standalone runtime helper.
 
 - Open questions / next steps:
   - Repo-wide `bun run lint` still reports unrelated/pre-existing issues in generated/session-owned files under `.omx/`, `.claude/`, and an unrelated worktree change in `packages/runtime/src/llm/openai-shared.ts`; this lane therefore verified Biome on the layered-continuity-owned files instead of the whole tree.
@@ -122,7 +128,7 @@ For significant sessions, capture:
   - Replace the old unified-intake section in `ARCHITECTURE.md` with an interaction-mode-first contract.
   - Keep the current runtime identity unified, but classify inbound turns into `chat`, `work`, or `handoff` before work governance.
   - Introduce a bounded `Intent -> WorkItem` compatibility layer instead of a hard rename.
-  - Add a first structured work-continuity promotion + restoration evaluator so governed restoration is no longer doc-only.
+  - Add structured work-continuity promotion plus a live restoration path that only upgrades inferred continuation into work when the promoted-memory double gate passes.
 
 - Changes made:
   - Updated `ARCHITECTURE.md`
@@ -154,6 +160,7 @@ For significant sessions, capture:
     - chat-mode messages answer conversationally without trust receipts / work contracts
     - handoff-mode messages create explicit capsules instead of implicit continuation
     - proactive submissions also respect the same non-work fallback
+    - restoration-like chat follow-ups can re-enter governed work only through promoted structured memory + live gate evaluation
   - Updated `packages/infra/src/daemon/dialogue-service.ts`
     - thread metadata now persists surface/handoff/work linkage
   - Updated `packages/orchestrator/src/intent/parser.ts`
@@ -171,13 +178,13 @@ For significant sessions, capture:
     - covered thread surface/handoff metadata, attached-thread work vs chat/handoff routing, proactive non-work fallback, and restoration gate behavior
 
 - Impact / Result:
-  - The repo now has a real code-level boundary between chat continuity, work continuity, and explicit transfer continuity.
+  - The repo now has a real code-level boundary between chat continuity, work continuity, explicit transfer continuity, and governed restoration.
   - Ambiguous follow-ups no longer have to become work by default.
-  - Mainline now has an executable first pass of the “structured promotion + live gate” restoration rule rather than only a planning note.
+  - Mainline now has an executable first pass of the “structured promotion + live gate” restoration rule, including an actual intake-time restoration path instead of only a planning note.
 
 - Open questions / next steps:
-  - The restoration evaluator currently proves the gate contract, but it is not yet wired into daemon recovery flows.
   - Persistence/storage naming still uses `Intent` broadly; the repo is now in an explicit compatibility phase, not the final `WorkItem` end state.
+  - The live restoration gate currently keys primarily on promoted semantic memory + scene/boundary checks; future work can refine how explicit permission/boundary acceptance is surfaced to users.
   - Existing older tests and architecture passages still refer to generalized `DecisionQueue` behavior and should keep being audited so ordinary chat never drifts back into work-governance semantics.
 
 

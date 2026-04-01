@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+	ChannelScope,
 	ClientEnvelope,
 	ContentBlock,
 	DialogueMessage,
@@ -260,6 +261,68 @@ describe("NousDaemon interaction-mode handling", () => {
 		}
 	});
 
+	test("restores governed work from promoted structured memory only when the live gate passes", async () => {
+		const daemon = createDaemon(
+			new ScriptedProvider([
+				'{"goal":{"summary":"Inspect auth refresh regression","successCriteria":["Report findings"]},"constraints":[],"priority":1,"humanCheckpoints":"always","contract":{"summary":"Inspect auth refresh regression and report findings","successCriteria":["Report findings"],"boundaries":["Do not modify files"],"interruptionPolicy":"minimal","deliveryMode":"structured_with_evidence"},"executionDepth":{"planningDepth":"none","timeDepth":"foreground","organizationDepth":"single_agent","initiativeMode":"reactive","rationale":"Restored structured work continuity can proceed as bounded read-only work."},"clarificationQuestions":[]}',
+				"Restored auth refresh investigation completed.",
+			]),
+		);
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			internals.memory.promoteWorkContinuation({
+				workItemId: "intent_auth_restore",
+				summary: "Inspect auth refresh regression",
+				threadId: "thread_origin",
+				scope: DEMO_SCOPE,
+				sourceSurfaceKind: "cli",
+				relevantFacts: ["Token refresh path changed yesterday."],
+			});
+			const thread = internals.dialogue.ensureThread({
+				threadId: "thread_restore",
+				title: "Restore thread",
+				channelId: "channel_cli",
+			});
+
+			const reply = await internals.controller.handle(
+				makeEnvelope({
+					id: "req_restore",
+					type: "send_message",
+					payload: {
+						threadId: thread.id,
+						text: "Continue that auth thing from yesterday.",
+					},
+				}),
+			);
+			expect(reply?.type).toBe("ack");
+
+			await waitFor(() => {
+				const snapshot = internals.dialogue.getThreadSnapshot({
+					threadId: thread.id,
+				});
+				return Boolean(
+					snapshot?.thread.metadata?.activeWorkItemId &&
+						snapshot.messages.some(
+							(message) => message.metadata?.restorationMemoryId,
+						),
+				);
+			}, 6000);
+
+			const snapshot = internals.dialogue.getThreadSnapshot({
+				threadId: thread.id,
+			});
+			expect(snapshot?.thread.metadata?.activeWorkItemId).toBeTruthy();
+			expect(
+				snapshot?.messages.some(
+					(message) => message.metadata?.restorationMemoryId !== undefined,
+				),
+			).toBe(true);
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
 	test("keeps proactive chat-like input out of work governance", async () => {
 		const daemon = createDaemon(new ScriptedProvider([]));
 
@@ -329,12 +392,27 @@ interface DaemonInternals {
 			getPendingByThread(threadId: string): Array<{ id: string }>;
 		};
 	};
+	memory: {
+		promoteWorkContinuation(input: {
+			workItemId: string;
+			summary: string;
+			threadId?: string;
+			scope?: ChannelScope;
+			sourceSurfaceKind?: string;
+			relevantFacts?: string[];
+		}): { id: string };
+	};
 	submitAmbientIntent(
 		threadId: string,
 		text: string,
 		scope: { workingDirectory?: string; projectRoot?: string },
 	): Promise<void>;
 }
+
+const DEMO_SCOPE: ChannelScope = {
+	workingDirectory: "/tmp/demo",
+	projectRoot: "/tmp/demo",
+};
 
 function createDaemon(llm: LLMProvider): NousDaemon {
 	const root = mkdtempSync(join(tmpdir(), "nous-daemon-interaction-"));

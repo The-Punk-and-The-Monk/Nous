@@ -18,6 +18,7 @@ export interface InteractionModeClassificationInput {
 	pendingDecision?: Decision;
 	recentThreadMessages?: Pick<DialogueMessage, "role" | "content">[];
 	threadMetadata?: Record<string, unknown>;
+	restorationAllowed?: boolean;
 }
 
 export class InteractionModeClassifier {
@@ -61,6 +62,15 @@ function classifyInteractionMode(
 			rationale:
 				"The message explicitly asks the assistant to begin or govern concrete work rather than continue lightweight conversation.",
 			confidence: input.activeIntent ? "high" : "medium",
+		};
+	}
+
+	if (input.restorationAllowed) {
+		return {
+			mode: "work",
+			rationale:
+				"A promoted structured work-continuity memory matched the current scene and passed permission/boundary checks, so work continuity may be restored safely.",
+			confidence: "medium",
 		};
 	}
 

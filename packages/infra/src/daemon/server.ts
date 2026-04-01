@@ -2,6 +2,7 @@ import { rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { type Socket, createServer } from "node:net";
 import type {
 	AssembledContext,
+	CapabilitySet,
 	Channel,
 	ClientEnvelope,
 	ContentBlock,
@@ -13,6 +14,7 @@ import type {
 	InteractionMode,
 	LLMMessage,
 	LLMProvider,
+	MemoryEntry,
 	MergeCandidate,
 	ProactiveCandidate,
 	RelationshipBoundary,
@@ -28,6 +30,7 @@ import {
 	MemoryService,
 	ProactiveRuntimeService,
 	ReflectionService,
+	evaluateWorkContinuationRestoration,
 	renderContextForSystemPrompt,
 } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
@@ -42,8 +45,8 @@ import { LocalProcedureSeedStore } from "../evolution/local-procedure-seed.ts";
 import { DecisionResponseInterpreter } from "../intake/decision-response-interpreter.ts";
 import { buildUserStateGrounding } from "../intake/grounding.ts";
 import {
-	type InteractionModeDecision,
 	InteractionModeClassifier,
+	type InteractionModeDecision,
 } from "../intake/interaction-mode-classifier.ts";
 import {
 	type ThreadInputDisposition,
@@ -616,6 +619,8 @@ export class NousDaemon {
 	}): Promise<void> {
 		const pending = this.backend.decisions.getPendingByThread(payload.threadId);
 		if (pending.length === 0) {
+			const restorationCandidate =
+				this.findRestorableWorkContinuationFromMemory(payload);
 			const modeDecision = await this.interactionModeClassifier.classify({
 				text: payload.text,
 				activeIntent: this.getLatestControllableIntentForThread(
@@ -630,7 +635,15 @@ export class NousDaemon {
 					})),
 				threadMetadata:
 					this.backend.messages.getThread(payload.threadId)?.metadata ?? {},
+				restorationAllowed: Boolean(restorationCandidate),
 			});
+			if (modeDecision.mode === "work" && restorationCandidate) {
+				await this.tryRestoreWorkContinuationFromMemory(
+					payload,
+					restorationCandidate,
+				);
+				return;
+			}
 			if (modeDecision.mode === "chat") {
 				this.storeConversationTurnMemory(payload);
 				await this.handleChatModeMessage(payload, modeDecision);
@@ -968,6 +981,73 @@ export class NousDaemon {
 			messageId: outbound.message.id,
 		});
 		await this.flushPendingDeliveriesForThread(payload.threadId);
+	}
+
+	private findRestorableWorkContinuationFromMemory(payload: {
+		threadId: string;
+		messageId: string;
+		text: string;
+		channel: Channel;
+	}) {
+		if (!looksLikeWorkRestorationRequest(payload.text)) {
+			return undefined;
+		}
+
+		return this.memory
+			.retrieve({
+				query: payload.text,
+				scope: payload.channel.scope,
+				threadId: payload.threadId,
+				tiers: ["semantic"],
+				limit: 5,
+			})
+			.map((result) => ({
+				entry: result.entry,
+				verdict: evaluateWorkContinuationRestoration({
+					memoryEntry: result.entry,
+					scope: payload.channel.scope,
+					permissionGranted: hasGrantedCapabilitySet(
+						resolvePermissionCapabilities(loadPermissionPolicy(), {
+							projectRoot: payload.channel.scope.projectRoot,
+						}),
+					),
+					boundaryAccepted: looksLikeWorkRestorationRequest(payload.text),
+				}),
+			}))
+			.find((candidate) => candidate.verdict.allowed);
+	}
+
+	private async tryRestoreWorkContinuationFromMemory(
+		payload: {
+			threadId: string;
+			messageId: string;
+			text: string;
+			channel: Channel;
+		},
+		restored = this.findRestorableWorkContinuationFromMemory(payload),
+	): Promise<boolean> {
+		if (!restored) {
+			return false;
+		}
+
+		this.dialogue.enqueueAssistantMessage({
+			threadId: payload.threadId,
+			content:
+				"I found promoted structured work memory that matched this scene, so I restored this into governed work.",
+			kind: "notification",
+			metadata: {
+				interactionMode: "work",
+				restorationMemoryId: restored.entry.id,
+				restorationReason: restored.verdict.reason,
+			},
+		});
+		await this.flushPendingDeliveriesForThread(payload.threadId);
+
+		await this.startIntentExecution({
+			...payload,
+			text: buildRestoredWorkRequest(payload.text, restored.entry),
+		});
+		return true;
 	}
 
 	private async handleHandoffModeMessage(
@@ -2988,6 +3068,7 @@ export class NousDaemon {
 		const taskSummaries = this.intentTaskSummariesById.get(intentId) ?? [];
 		const usedToolNames = this.intentToolNamesById.get(intentId) ?? [];
 		const riskyToolNames = this.intentRiskyToolNamesById.get(intentId) ?? [];
+		const intent = this.backend.intents.getById(intentId);
 		this.memory.ingestIntentOutcome({
 			intentId,
 			intentText: text,
@@ -2996,6 +3077,19 @@ export class NousDaemon {
 			threadId,
 			outputs,
 		});
+		if (outcome === "intent.achieved" && scope && intent) {
+			this.memory.promoteWorkContinuation({
+				workItemId: intentId,
+				summary: intent.goal.summary || text,
+				threadId,
+				scope,
+				sourceSurfaceKind: this.readThreadSurfaceKind(threadId),
+				relevantFacts: dedupeStrings([...outputs, ...taskSummaries]).slice(
+					0,
+					5,
+				),
+			});
+		}
 		this.procedureSeeds.recordTrace({
 			id: prefixedId("trace"),
 			intentId,
@@ -3012,6 +3106,17 @@ export class NousDaemon {
 		});
 
 		this.cleanupTrackedIntentState(intentId);
+	}
+
+	private readThreadSurfaceKind(
+		threadId: string | undefined,
+	): string | undefined {
+		if (!threadId) {
+			return undefined;
+		}
+		const surfaceKind =
+			this.backend.messages.getThread(threadId)?.metadata?.surfaceKind;
+		return typeof surfaceKind === "string" ? surfaceKind : undefined;
 	}
 
 	private mergeTrackedList(
@@ -3587,4 +3692,42 @@ function compactText(text: string, limit: number): string {
 
 function dedupeStrings(values: string[]): string[] {
 	return [...new Set(values)];
+}
+
+function looksLikeWorkRestorationRequest(text: string): boolean {
+	const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+	return [
+		"continue that",
+		"continue this from yesterday",
+		"resume that",
+		"pick this back up",
+		"continue the auth thing",
+		"接着上次",
+		"继续那个",
+		"继续昨天",
+		"恢复那个任务",
+	].some((pattern) => normalized.includes(pattern));
+}
+
+function buildRestoredWorkRequest(
+	originalText: string,
+	memoryEntry: MemoryEntry,
+): string {
+	const summaryLine = memoryEntry.content
+		.split("\n")
+		.find((line) => line.trim().length > 0);
+	const summary = summaryLine
+		? summaryLine.replace(/^Structured work continuation:\s*/, "").trim()
+		: memoryEntry.content.trim();
+	return [
+		`Restore the governed work item described as: ${summary}`,
+		`User restoration request: ${originalText.trim()}`,
+		"Use the promoted structured work-continuity memory instead of raw conversational inference.",
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
+function hasGrantedCapabilitySet(capabilities: CapabilitySet): boolean {
+	return Object.values(capabilities).some((value) => value !== false);
 }
