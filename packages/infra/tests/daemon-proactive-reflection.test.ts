@@ -343,6 +343,10 @@ describe("NousDaemon proactive reflection isolation", () => {
 			internals.memory.storeManualNote({
 				content: "Use digests for low-risk proactive notices.",
 				factType: "user_preference",
+				scope: {
+					projectRoot: "/repo/app",
+					workingDirectory: "/repo/app",
+				},
 				tags: ["relationship:delivery:digest"],
 			});
 

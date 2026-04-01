@@ -3300,15 +3300,19 @@ export class NousDaemon {
 			this.proactive.enqueueDueProspectiveAgendas({
 				lookaheadMs: this.nousConfig.ambient.prospectiveLookaheadMs,
 			});
-			const boundary = this.buildAmbientRelationshipBoundary();
 			const leased = this.proactive.leaseDueAgendaItems(4);
 			for (const agendaItem of leased) {
+				const boundary = this.buildAmbientRelationshipBoundary({
+					scope: agendaItem.scope,
+					threadId: agendaItem.sourceThreadIds[0],
+				});
 				const outcome = await this.reflection.reflectAgenda({
 					agendaItem,
 					relationshipBoundary: boundary,
 				});
 				this.proactive.recordReflectionOutcome(outcome);
 			}
+			const boundary = this.buildAmbientRelationshipBoundary();
 			const deliverable = this.proactive.drainDeliverableCandidates(
 				boundary,
 				4,
@@ -3326,6 +3330,10 @@ export class NousDaemon {
 
 	private async deliverProactiveCandidate(
 		candidate: ProactiveCandidate,
+		boundary = this.buildAmbientRelationshipBoundary({
+			scope: candidate.scope,
+			threadId: candidate.sourceThreadIds[0],
+		}),
 	): Promise<void> {
 		if (candidate.recommendedMode === "silent") {
 			this.proactive.markCandidateDismissed(
@@ -3374,7 +3382,7 @@ export class NousDaemon {
 		) {
 			const ambientIntentText = candidate.proposedIntentText;
 			const allowAutoExecute =
-				this.nousConfig.ambient.autoSubmit &&
+				boundary.autonomyPolicy.allowAmbientAutoExecution &&
 				candidate.recommendedMode === "auto_execute" &&
 				candidate.requiresApproval === false;
 
@@ -3423,34 +3431,59 @@ export class NousDaemon {
 			return;
 		}
 
-		const digestGroups = new Map<string, ProactiveCandidate[]>();
-		const individual: ProactiveCandidate[] = [];
+		const digestGroups = new Map<
+			string,
+			{
+				boundary: RelationshipBoundary;
+				candidates: ProactiveCandidate[];
+			}
+		>();
+		const individual: Array<{
+			boundary: RelationshipBoundary;
+			candidate: ProactiveCandidate;
+		}> = [];
 
 		for (const candidate of candidates) {
-			if (!this.shouldDeliverAsDigest(boundary, candidate)) {
-				individual.push(candidate);
+			const candidateBoundary = this.buildAmbientRelationshipBoundary({
+				scope: candidate.scope,
+				threadId: candidate.sourceThreadIds[0],
+			});
+			if (!this.shouldDeliverAsDigest(candidateBoundary, candidate)) {
+				individual.push({
+					boundary: candidateBoundary,
+					candidate,
+				});
 				continue;
 			}
 			const threadId = this.resolveProactiveDeliveryThreadId(candidate);
 			if (!threadId) {
-				individual.push(candidate);
+				individual.push({
+					boundary: candidateBoundary,
+					candidate,
+				});
 				continue;
 			}
-			const existing = digestGroups.get(threadId) ?? [];
-			existing.push(candidate);
+			const existing = digestGroups.get(threadId) ?? {
+				boundary: candidateBoundary,
+				candidates: [],
+			};
+			existing.candidates.push(candidate);
 			digestGroups.set(threadId, existing);
 		}
 
-		for (const candidate of individual) {
-			await this.deliverProactiveCandidate(candidate);
+		for (const item of individual) {
+			await this.deliverProactiveCandidate(item.candidate, item.boundary);
 		}
 
 		for (const [threadId, grouped] of digestGroups) {
-			if (grouped.length < 2) {
-				await this.deliverProactiveCandidate(grouped[0] as ProactiveCandidate);
+			if (grouped.candidates.length < 2) {
+				await this.deliverProactiveCandidate(
+					grouped.candidates[0] as ProactiveCandidate,
+					grouped.boundary,
+				);
 				continue;
 			}
-			await this.deliverProactiveDigest(threadId, grouped);
+			await this.deliverProactiveDigest(threadId, grouped.candidates);
 		}
 	}
 
@@ -3531,9 +3564,14 @@ export class NousDaemon {
 		return `Ambient notices — ${label}`;
 	}
 
-	private buildAmbientRelationshipBoundary(): RelationshipBoundary {
+	private buildAmbientRelationshipBoundary(
+		input: {
+			scope?: Channel["scope"];
+			threadId?: string;
+		} = {},
+	): RelationshipBoundary {
 		const relationship = this.nousConfig.relationship;
-		const learned = this.memory.deriveRelationshipBoundaryOverrides();
+		const learned = this.memory.deriveRelationshipBoundaryOverrides(input);
 		return {
 			assistantStyle: {
 				...relationship.assistantStyle,

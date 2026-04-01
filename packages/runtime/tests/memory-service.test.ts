@@ -264,11 +264,22 @@ describe("MemoryService", () => {
 		});
 
 		const overrides = service.deriveRelationshipBoundaryOverrides();
+		const scopedOverrides = service.deriveRelationshipBoundaryOverrides({
+			scope: {
+				projectRoot: "/repo/other",
+				workingDirectory: "/repo/other",
+			},
+		});
 
 		expect(overrides.interruptionPolicy?.preferredDelivery).toBe("digest");
 		expect(overrides.proactivityPolicy?.initiativeLevel).toBe("minimal");
 		expect(overrides.autonomyPolicy?.allowAmbientAutoExecution).toBe(false);
 		expect(overrides.assistantStyle?.warmth).toBeUndefined();
 		expect(overrides.sourceMemoryIds).toHaveLength(1);
+		expect(scopedOverrides.interruptionPolicy?.preferredDelivery).toBe(
+			"digest",
+		);
+		expect(scopedOverrides.assistantStyle?.warmth).toBe("high");
+		expect(scopedOverrides.sourceMemoryIds).toHaveLength(2);
 	});
 });
