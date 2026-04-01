@@ -5501,3 +5501,60 @@ For significant sessions, capture:
   - The next natural continuation is likely:
     - surface `flowId` / `planGraphId` in debug/status/process views
     - or start using `Flow` for proactive attach-vs-create / merge-candidate production.
+
+### Session: Expose `Flow` / `PlanGraph` ownership in debug surfaces
+- Context / Trigger:
+  - After wiring `Flow` / `PlanGraph` into the real runtime path, the next missing piece was obvious:
+    - the ownership objects existed
+    - but there was still no straightforward way to inspect them from the CLI
+  - That would have made the previous iteration hard to validate in real usage:
+    - work governance would exist
+    - but the user could not easily see it
+- Problem:
+  - `nous debug daemon` and `nous debug thread <threadId>` were still centered on:
+    - intents
+    - tasks
+    - decisions
+    - messages/events
+  - They did not yet reveal:
+    - which flow owns the current thread’s work
+    - which plan graph the tasks belong to
+    - whether recent daemon activity is beginning to accumulate higher-order work objects
+  - Without these surfaces, flow-governance would remain hard to verify and easy to mistrust.
+- Options considered:
+  - Option A: defer observability until flow lifecycle semantics are richer.
+    - Rejected because hidden governance objects are much harder to iterate on safely.
+  - Option B: add full new commands (`nous flows ...`) immediately.
+    - Rejected because that would expand the control surface more than necessary before the basic debug path proves useful.
+  - Option C: extend the existing debug views first so `Flow` / `PlanGraph` are visible where users already inspect daemon/thread state.
+    - Chosen because it adds real visibility with minimal control-surface sprawl.
+- Decision:
+  - Extend `debug thread` so it shows:
+    - linked flows
+    - linked plan graphs
+    - task ownership snippets (`flow=` / `plan=`)
+  - Extend `debug daemon` so it shows:
+    - active flows
+    - recent plan graphs
+  - Add focused tests around debug output rather than broad snapshots.
+- Changes made:
+  - Updated `packages/infra/src/cli/commands/debug.ts`
+    - added flow summary rendering in thread debug
+    - added plan-graph summary rendering in thread debug
+    - added active-flow and recent-plan-graph sections in daemon debug
+    - added task ownership hints in task lines
+  - Added `packages/infra/tests/debug-command.test.ts`
+    - verifies thread debug renders flow / plan graph ownership
+    - verifies daemon debug renders active flows / recent plan graphs
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/debug-command.test.ts packages/infra/tests/daemon-work-governance.test.ts packages/orchestrator/tests/orchestrator-work-governance.test.ts` ✅
+- Impact / Result:
+  - `Flow` / `PlanGraph` are now part of the operator-visible debug surface instead of hidden substrate.
+  - The work-governance architecture is easier to validate manually:
+    - by thread
+    - by daemon-wide recent activity
+  - This materially lowers the cost of the next iterations, because future flow/merge/proactive decisions can be inspected through existing CLI surfaces instead of only database forensics.
+- Open questions / follow-ups:
+  - Debug visibility exists now, but there is still no dedicated operator surface for flow lifecycle actions (`show`, `cancel`, `merge review`, etc.).
+  - Once flow semantics stabilize further, Nous should likely grow from “debug visibility” to a first-class `flows` control/discovery surface rather than overloading debug forever.

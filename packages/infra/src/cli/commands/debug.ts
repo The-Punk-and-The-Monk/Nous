@@ -1,10 +1,12 @@
 import type { PersistenceBackend } from "@nous/persistence";
 import type {
+	Flow,
 	DecisionStatus,
 	DialogueMessage,
 	DialogueThread,
 	Event,
 	Intent,
+	PlanGraph,
 	ProcessItem,
 	Task,
 	TurnResolutionSnapshot,
@@ -59,6 +61,22 @@ function debugThread(threadId: string, backend: PersistenceBackend): void {
 	const intents = intentIds
 		.map((intentId) => backend.intents.getById(intentId))
 		.filter((intent): intent is Intent => Boolean(intent));
+	const flows = dedupeById(
+		intents
+			.map((intent) =>
+				intent.flowId ? backend.work.getFlowById(intent.flowId) : undefined,
+			)
+			.filter((flow): flow is Flow => Boolean(flow)),
+	);
+	const planGraphs = dedupeById(
+		intents
+			.map((intent) =>
+				intent.planGraphId
+					? backend.work.getPlanGraphById(intent.planGraphId)
+					: undefined,
+			)
+			.filter((planGraph): planGraph is PlanGraph => Boolean(planGraph)),
+	);
 	const tasks = intents.flatMap((intent) => backend.tasks.getByIntent(intent.id));
 	const decisions = DECISION_STATUSES.flatMap((status) =>
 		backend.decisions
@@ -70,6 +88,8 @@ function debugThread(threadId: string, backend: PersistenceBackend): void {
 	console.log(colors.bold(`\n  νοῦς — Debug Thread ${threadId}\n`));
 	printThreadSummary(thread, messages.length, pendingOutbox.length);
 	printIntentSummary(intents);
+	printFlowSummary(flows);
+	printPlanGraphSummary(planGraphs);
 	printTaskSummary(tasks);
 	printDecisionSummary(decisions);
 	printTurnSurface(messages);
@@ -85,6 +105,11 @@ function debugDaemon(backend: PersistenceBackend): void {
 	const runningTasks = backend.tasks.getByStatus("running");
 	const pendingDecisions = backend.decisions.getByStatus("pending");
 	const queuedDecisions = backend.decisions.getByStatus("queued");
+	const activeFlows = backend.work.listFlows({
+		statuses: ["active", "blocked", "quiet"],
+		limit: 10,
+	});
+	const recentPlanGraphs = backend.work.listPlanGraphs({ limit: 8 });
 	const recentThreads = backend.messages.listThreads(5);
 	const recentEvents = backend.events.query({ limit: 12 });
 
@@ -95,12 +120,33 @@ function debugDaemon(backend: PersistenceBackend): void {
 	console.log(
 		`  ${colors.dim("Pending decisions:")} ${pendingDecisions.length}  ${colors.dim("Queued decisions:")} ${queuedDecisions.length}  ${colors.dim("Pending outbox:")} ${backend.messages.countOutbox("pending")}`,
 	);
+	console.log(
+		`  ${colors.dim("Active flows:")} ${activeFlows.length}  ${colors.dim("Recent plan graphs:")} ${recentPlanGraphs.length}`,
+	);
 
 	if (recentThreads.length > 0) {
 		console.log(`\n  ${colors.cyan("Recent threads")}`);
 		for (const thread of recentThreads) {
 			console.log(
 				`    ${thread.id.slice(0, 14)}  ${renderStatus(thread.status)}  ${thread.title}`,
+			);
+		}
+	}
+
+	if (activeFlows.length > 0) {
+		console.log(`\n  ${colors.cyan("Active flows")}`);
+		for (const flow of activeFlows) {
+			console.log(
+				`    ${flow.id.slice(0, 14)}  ${renderStatus(flow.status)}  ${flow.kind}  ${singleLine(flow.title, 70)}`,
+			);
+		}
+	}
+
+	if (recentPlanGraphs.length > 0) {
+		console.log(`\n  ${colors.cyan("Recent plan graphs")}`);
+		for (const planGraph of recentPlanGraphs) {
+			console.log(
+				`    ${planGraph.id.slice(0, 14)}  ${renderStatus(planGraph.status)}  ${planGraph.topology}  intent=${planGraph.intentId.slice(0, 14)}`,
 			);
 		}
 	}
@@ -135,6 +181,34 @@ function printIntentSummary(intents: Intent[]): void {
 	}
 }
 
+function printFlowSummary(flows: Flow[]): void {
+	console.log(`\n  ${colors.cyan("Linked flows")} ${colors.dim(`(${flows.length})`)}`);
+	if (flows.length === 0) {
+		console.log(`    ${colors.dim("No linked flows.")}`);
+		return;
+	}
+	for (const flow of flows) {
+		console.log(
+			`    ${flow.id.slice(0, 18)}  ${renderStatus(flow.status)}  ${flow.kind}  ${flow.title}`,
+		);
+	}
+}
+
+function printPlanGraphSummary(planGraphs: PlanGraph[]): void {
+	console.log(
+		`\n  ${colors.cyan("Plan graphs")} ${colors.dim(`(${planGraphs.length})`)}`,
+	);
+	if (planGraphs.length === 0) {
+		console.log(`    ${colors.dim("No linked plan graphs.")}`);
+		return;
+	}
+	for (const planGraph of planGraphs) {
+		console.log(
+			`    ${planGraph.id.slice(0, 18)}  ${renderStatus(planGraph.status)}  ${planGraph.topology}  depth=${planGraph.planningDepth}`,
+		);
+	}
+}
+
 function printTaskSummary(tasks: Task[]): void {
 	console.log(`\n  ${colors.cyan("Tasks")} ${colors.dim(`(${tasks.length})`)}`);
 	if (tasks.length === 0) {
@@ -149,8 +223,12 @@ function printTaskSummary(tasks: Task[]): void {
 		const agent = task.assignedAgentId
 			? ` agent=${task.assignedAgentId.slice(0, 14)}`
 			: "";
+		const ownership = [
+			task.flowId ? ` flow=${task.flowId.slice(0, 10)}` : "",
+			task.planGraphId ? ` plan=${task.planGraphId.slice(0, 10)}` : "",
+		].join("");
 		console.log(
-			`    ${task.id.slice(0, 18)}  ${renderStatus(task.status)}  ${task.description}${caps}${agent}`,
+			`    ${task.id.slice(0, 18)}  ${renderStatus(task.status)}  ${task.description}${caps}${agent}${ownership}`,
 		);
 	}
 }
@@ -382,6 +460,19 @@ function singleLine(value: string, max = 100): string {
 		return compact;
 	}
 	return `${compact.slice(0, max - 1)}…`;
+}
+
+function dedupeById<T extends { id: string }>(values: T[]): T[] {
+	const seen = new Set<string>();
+	const result: T[] = [];
+	for (const value of values) {
+		if (seen.has(value.id)) {
+			continue;
+		}
+		seen.add(value.id);
+		result.push(value);
+	}
+	return result;
 }
 
 function printDebugUsage(): void {
