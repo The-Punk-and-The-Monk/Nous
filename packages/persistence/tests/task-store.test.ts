@@ -47,11 +47,20 @@ beforeEach(() => {
 
 describe("SQLiteTaskStore", () => {
 	test("create and getById", () => {
-		const task = makeTask({ id: "task_001", description: "do something" });
+		const task = makeTask({
+			id: "task_001",
+			description: "do something",
+			flowId: "flow_auth",
+			planGraphId: "plan_auth",
+			cognitiveOperation: "execution_main",
+		});
 		taskStore.create(task);
 		const retrieved = taskStore.getById("task_001");
 		expect(retrieved).toBeDefined();
 		expect(retrieved?.description).toBe("do something");
+		expect(retrieved?.flowId).toBe("flow_auth");
+		expect(retrieved?.planGraphId).toBe("plan_auth");
+		expect(retrieved?.cognitiveOperation).toBe("execution_main");
 		expect(retrieved?.status).toBe("created");
 	});
 

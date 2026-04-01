@@ -8,20 +8,23 @@ export class SQLiteTaskStore implements TaskStore {
 	create(task: Task): void {
 		this.db
 			.prepare(
-				`INSERT INTO tasks (id, intent_id, parent_task_id, depends_on, description,
-			 assigned_agent_id, capabilities_required, status, retries, max_retries,
+				`INSERT INTO tasks (id, intent_id, flow_id, plan_graph_id, parent_task_id, depends_on, description,
+			 assigned_agent_id, capabilities_required, cognitive_operation, status, retries, max_retries,
 			 backoff_seconds, created_at, queued_at, started_at, last_heartbeat,
 			 completed_at, result, error, escalation_reason)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				task.id,
 				task.intentId,
+				task.flowId ?? null,
+				task.planGraphId ?? null,
 				task.parentTaskId ?? null,
 				JSON.stringify(task.dependsOn),
 				task.description,
 				task.assignedAgentId ?? null,
 				JSON.stringify(task.capabilitiesRequired),
+				task.cognitiveOperation ?? null,
 				task.status,
 				task.retries,
 				task.maxRetries,
@@ -50,9 +53,12 @@ export class SQLiteTaskStore implements TaskStore {
 
 		const fieldMap: Record<string, string> = {
 			intentId: "intent_id",
+			flowId: "flow_id",
+			planGraphId: "plan_graph_id",
 			parentTaskId: "parent_task_id",
 			assignedAgentId: "assigned_agent_id",
 			capabilitiesRequired: "capabilities_required",
+			cognitiveOperation: "cognitive_operation",
 			maxRetries: "max_retries",
 			backoffSeconds: "backoff_seconds",
 			createdAt: "created_at",
@@ -172,11 +178,14 @@ export class SQLiteTaskStore implements TaskStore {
 interface RawTaskRow {
 	id: string;
 	intent_id: string;
+	flow_id: string | null;
+	plan_graph_id: string | null;
 	parent_task_id: string | null;
 	depends_on: string;
 	description: string;
 	assigned_agent_id: string | null;
 	capabilities_required: string;
+	cognitive_operation: string | null;
 	status: string;
 	retries: number;
 	max_retries: number;
@@ -195,11 +204,14 @@ function toTask(row: RawTaskRow): Task {
 	return {
 		id: row.id,
 		intentId: row.intent_id,
+		flowId: row.flow_id ?? undefined,
+		planGraphId: row.plan_graph_id ?? undefined,
 		parentTaskId: row.parent_task_id ?? undefined,
 		dependsOn: JSON.parse(row.depends_on),
 		description: row.description,
 		assignedAgentId: row.assigned_agent_id ?? undefined,
 		capabilitiesRequired: JSON.parse(row.capabilities_required),
+		cognitiveOperation: row.cognitive_operation as Task["cognitiveOperation"],
 		status: row.status as TaskStatus,
 		retries: row.retries,
 		maxRetries: row.max_retries,

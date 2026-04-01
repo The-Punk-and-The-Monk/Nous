@@ -117,6 +117,9 @@ export type IntentExecutionDirective =
 
 export interface Intent {
 	id: string;
+	flowId?: string;
+	planGraphId?: string;
+	sourceEnvelopeId?: string;
 	raw: string;
 	workingText?: string;
 	goal: StructuredGoal;

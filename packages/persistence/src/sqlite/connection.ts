@@ -49,11 +49,14 @@ CREATE INDEX IF NOT EXISTS idx_intents_status ON intents(status);
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   intent_id TEXT NOT NULL,
+  flow_id TEXT,
+  plan_graph_id TEXT,
   parent_task_id TEXT,
   depends_on TEXT NOT NULL DEFAULT '[]',
   description TEXT NOT NULL,
   assigned_agent_id TEXT,
   capabilities_required TEXT NOT NULL DEFAULT '[]',
+  cognitive_operation TEXT,
   status TEXT NOT NULL DEFAULT 'created',
   retries INTEGER NOT NULL DEFAULT 0,
   max_retries INTEGER NOT NULL DEFAULT 3,
@@ -71,6 +74,79 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_intent ON tasks(intent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent_id);
+
+-- Work governance
+CREATE TABLE IF NOT EXISTS flows (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  owner_thread_id TEXT,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 0,
+  blocked_reason TEXT,
+  primary_intent_id TEXT,
+  related_intent_ids TEXT NOT NULL DEFAULT '[]',
+  related_task_ids TEXT NOT NULL DEFAULT '[]',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flows_status_updated ON flows(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_flows_owner_thread ON flows(owner_thread_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS plan_graphs (
+  id TEXT PRIMARY KEY,
+  intent_id TEXT NOT NULL,
+  flow_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  topology TEXT NOT NULL,
+  planning_depth TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (intent_id) REFERENCES intents(id),
+  FOREIGN KEY (flow_id) REFERENCES flows(id)
+);
+CREATE INDEX IF NOT EXISTS idx_plan_graphs_flow ON plan_graphs(flow_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plan_graphs_intent ON plan_graphs(intent_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS work_relations (
+  id TEXT PRIMARY KEY,
+  from_kind TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_kind TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  flow_id TEXT,
+  plan_graph_id TEXT,
+  rationale TEXT,
+  confidence REAL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_work_relations_from ON work_relations(from_kind, from_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_relations_to ON work_relations(to_kind, to_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_relations_flow ON work_relations(flow_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS merge_candidates (
+  id TEXT PRIMARY KEY,
+  left_kind TEXT NOT NULL,
+  left_id TEXT NOT NULL,
+  right_kind TEXT NOT NULL,
+  right_id TEXT NOT NULL,
+  proposed_action TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  produced_by TEXT NOT NULL,
+  status TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_merge_candidates_status ON merge_candidates(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merge_candidates_left ON merge_candidates(left_kind, left_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merge_candidates_right ON merge_candidates(right_kind, right_id, created_at DESC);
 
 -- Memory
 CREATE TABLE IF NOT EXISTS memory (
@@ -130,6 +206,18 @@ CREATE TABLE IF NOT EXISTS dialogue_threads (
   metadata TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_dialogue_threads_updated ON dialogue_threads(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS flow_thread_bindings (
+  flow_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (flow_id, thread_id, role),
+  FOREIGN KEY (flow_id) REFERENCES flows(id),
+  FOREIGN KEY (thread_id) REFERENCES dialogue_threads(id)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_thread_bindings_thread ON flow_thread_bindings(thread_id, role, created_at DESC);
 
 -- Dialogue messages
 CREATE TABLE IF NOT EXISTS dialogue_messages (
@@ -262,6 +350,28 @@ CREATE INDEX IF NOT EXISTS idx_message_outbox_pending ON message_outbox(status, 
 
 export function runMigrations(db: Database): void {
 	db.exec(MIGRATION_001);
+	ensureColumn(
+		db,
+		"tasks",
+		"flow_id",
+		"ALTER TABLE tasks ADD COLUMN flow_id TEXT",
+	);
+	ensureColumn(
+		db,
+		"tasks",
+		"plan_graph_id",
+		"ALTER TABLE tasks ADD COLUMN plan_graph_id TEXT",
+	);
+	ensureColumn(
+		db,
+		"tasks",
+		"cognitive_operation",
+		"ALTER TABLE tasks ADD COLUMN cognitive_operation TEXT",
+	);
+	db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_flow ON tasks(flow_id)");
+	db.exec(
+		"CREATE INDEX IF NOT EXISTS idx_tasks_plan_graph ON tasks(plan_graph_id)",
+	);
 	ensureColumn(
 		db,
 		"intents",

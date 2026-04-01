@@ -6,6 +6,14 @@ export type { IntentStore } from "./interfaces/intent-store.ts";
 export type { MessageStore } from "./interfaces/message-store.ts";
 export type { DecisionStore } from "./interfaces/decision-store.ts";
 export type {
+	WorkStore,
+	FlowQuery,
+	PlanGraphQuery,
+	WorkRelationQuery,
+	MergeCandidateQuery,
+	FlowThreadBindingQuery,
+} from "./interfaces/work-store.ts";
+export type {
 	ProactiveStore,
 	ReflectionAgendaQuery,
 	ProactiveCandidateQuery,
@@ -19,6 +27,7 @@ export { SQLiteMemoryStore } from "./sqlite/memory-store.sqlite.ts";
 export { SQLiteIntentStore } from "./sqlite/intent-store.sqlite.ts";
 export { SQLiteMessageStore } from "./sqlite/message-store.sqlite.ts";
 export { SQLiteDecisionStore } from "./sqlite/decision-store.sqlite.ts";
+export { SQLiteWorkStore } from "./sqlite/work-store.sqlite.ts";
 export { SQLiteProactiveStore } from "./sqlite/proactive-store.sqlite.ts";
 
 // Connection utilities

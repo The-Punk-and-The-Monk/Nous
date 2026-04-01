@@ -9,6 +9,9 @@ let store: SQLiteIntentStore;
 function makeIntent(overrides: Partial<Intent> = {}): Intent {
 	return {
 		id: overrides.id ?? "intent_1",
+		flowId: overrides.flowId,
+		planGraphId: overrides.planGraphId,
+		sourceEnvelopeId: overrides.sourceEnvelopeId,
 		raw: overrides.raw ?? "Inspect the auth changes",
 		goal:
 			overrides.goal ??
@@ -53,9 +56,19 @@ beforeEach(() => {
 
 describe("SQLiteIntentStore", () => {
 	test("stores and retrieves task-intake metadata", () => {
-		store.create(makeIntent({ id: "intent_meta" }));
+		store.create(
+			makeIntent({
+				id: "intent_meta",
+				flowId: "flow_auth",
+				planGraphId: "plan_auth",
+				sourceEnvelopeId: "env_turn_1",
+			}),
+		);
 
 		const retrieved = store.getById("intent_meta");
+		expect(retrieved?.flowId).toBe("flow_auth");
+		expect(retrieved?.planGraphId).toBe("plan_auth");
+		expect(retrieved?.sourceEnvelopeId).toBe("env_turn_1");
 		expect(retrieved?.contract?.summary).toContain("summarize findings");
 		expect(retrieved?.executionDepth?.planningDepth).toBe("light");
 		expect(retrieved?.clarificationQuestions).toEqual([]);

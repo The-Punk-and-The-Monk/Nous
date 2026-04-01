@@ -136,6 +136,9 @@ function toIntent(row: RawIntentRow): Intent {
 	const metadata = deserializeIntentMetadata(row.metadata);
 	return {
 		id: row.id,
+		flowId: metadata.flowId,
+		planGraphId: metadata.planGraphId,
+		sourceEnvelopeId: metadata.sourceEnvelopeId,
 		raw: row.raw,
 		workingText: metadata.workingText,
 		goal: JSON.parse(row.goal),
@@ -158,6 +161,9 @@ function toIntent(row: RawIntentRow): Intent {
 }
 
 interface IntentMetadata {
+	flowId?: string;
+	planGraphId?: string;
+	sourceEnvelopeId?: string;
 	contract?: TaskContract;
 	executionDepth?: ExecutionDepthDecision;
 	clarificationQuestions?: string[];
@@ -171,6 +177,9 @@ interface IntentMetadata {
 
 function serializeIntentMetadata(intent: Partial<Intent>): IntentMetadata {
 	return {
+		flowId: intent.flowId,
+		planGraphId: intent.planGraphId,
+		sourceEnvelopeId: intent.sourceEnvelopeId,
 		contract: intent.contract,
 		executionDepth: intent.executionDepth,
 		clarificationQuestions: intent.clarificationQuestions,
@@ -190,6 +199,20 @@ function deserializeIntentMetadata(
 	try {
 		const value = JSON.parse(raw) as IntentMetadata;
 		return {
+			flowId:
+				typeof value.flowId === "string" && value.flowId.trim().length > 0
+					? value.flowId
+					: undefined,
+			planGraphId:
+				typeof value.planGraphId === "string" &&
+				value.planGraphId.trim().length > 0
+					? value.planGraphId
+					: undefined,
+			sourceEnvelopeId:
+				typeof value.sourceEnvelopeId === "string" &&
+				value.sourceEnvelopeId.trim().length > 0
+					? value.sourceEnvelopeId
+					: undefined,
 			contract: value.contract,
 			executionDepth: value.executionDepth,
 			clarificationQuestions: Array.isArray(value.clarificationQuestions)
@@ -221,6 +244,9 @@ function extractIntentMetadata(
 	fields: Partial<Intent>,
 ): Partial<IntentMetadata> | undefined {
 	const hasMetadataField =
+		"flowId" in fields ||
+		"planGraphId" in fields ||
+		"sourceEnvelopeId" in fields ||
 		"contract" in fields ||
 		"executionDepth" in fields ||
 		"clarificationQuestions" in fields ||
@@ -232,6 +258,15 @@ function extractIntentMetadata(
 		"pendingPause" in fields;
 	if (!hasMetadataField) return undefined;
 	const patch: Partial<IntentMetadata> = {};
+	if ("flowId" in fields) {
+		patch.flowId = fields.flowId;
+	}
+	if ("planGraphId" in fields) {
+		patch.planGraphId = fields.planGraphId;
+	}
+	if ("sourceEnvelopeId" in fields) {
+		patch.sourceEnvelopeId = fields.sourceEnvelopeId;
+	}
 	if ("contract" in fields) {
 		patch.contract = fields.contract;
 	}

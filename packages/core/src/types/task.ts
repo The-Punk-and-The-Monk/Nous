@@ -1,3 +1,4 @@
+import type { CognitiveOperation } from "./inference.ts";
 import type { ISOTimestamp } from "../utils/timestamp.ts";
 
 export type TaskStatus =
@@ -15,12 +16,15 @@ export type TaskStatus =
 export interface Task {
 	id: string;
 	intentId: string;
+	flowId?: string;
+	planGraphId?: string;
 	parentTaskId?: string;
 	dependsOn: string[];
 
 	description: string;
 	assignedAgentId?: string;
 	capabilitiesRequired: string[];
+	cognitiveOperation?: CognitiveOperation;
 
 	status: TaskStatus;
 	retries: number;

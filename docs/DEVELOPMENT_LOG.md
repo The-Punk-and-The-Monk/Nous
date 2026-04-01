@@ -5314,3 +5314,107 @@ For significant sessions, capture:
   - `Flow` is the next most important missing core object; until it exists in code, the architecture remains ahead of implementation here.
   - `TaskEdge` vs generic relation objects should likely be narrowed further before coding, so the scheduler and merge/governance layers do not overload one relation type with too many meanings.
   - `InferenceAllocationPlan` still needs a sibling object for model capability/profiles before runtime assignment can become principled in code.
+
+### Session: Materialize the first work-governance substrate in core + SQLite
+- Context / Trigger:
+  - The previous architecture iteration intentionally ended with a concrete build order:
+    1. core contracts first
+    2. daemon/orchestrator projections second
+    3. planner/runtime behavior later
+  - To keep that architecture honest, the next step could not be another prose-only refinement. The core work-governance objects had to become real code surfaces.
+- Problem:
+  - Before this iteration, the repo had:
+    - architecture language for `Flow`, `PlanGraph`, merge slots, multimodal intake, and model-team allocation
+    - but no corresponding core object model or persistence substrate
+  - That meant the architecture had no durable code anchor for:
+    - higher-level work ownership above intents
+    - typed cross-work relations
+    - merge proposals
+    - model allocation plans
+    - multimodal input envelopes
+  - The existing runtime spine also lacked even minimal hang points in `Intent` / `Task` to attach these future objects safely.
+- Options considered:
+  - Option A: add only the new core TypeScript types and leave persistence for later.
+    - Rejected because the architecture had already identified these as durable governance objects, not transient runtime helpers. Without persistence, they would still be too abstract.
+  - Option B: jump directly to daemon/orchestrator runtime integration for flows.
+    - Rejected because that would force behavior decisions before the object model and SQLite substrate had stabilized.
+  - Option C: land the first substrate slice now:
+    - new core types
+    - minimal `Intent` / `Task` hang points
+    - a standalone SQLite `WorkStore`
+    - targeted round-trip tests
+    - Chosen because it turns the architecture slots into real repository contracts without prematurely locking runtime behavior.
+- Decision:
+  - Add new core type families for:
+    - work governance
+    - inference allocation
+    - multimodal input envelopes
+  - Extend existing runtime-owned objects conservatively:
+    - `Intent` gets `flowId`, `planGraphId`, `sourceEnvelopeId`
+    - `Task` gets `flowId`, `planGraphId`, `cognitiveOperation`
+  - Add a new persistence surface:
+    - `WorkStore`
+    - SQLite-backed tables for:
+      - `flows`
+      - `plan_graphs`
+      - `work_relations`
+      - `merge_candidates`
+      - `flow_thread_bindings`
+  - Keep this slice intentionally non-invasive:
+    - no daemon/orchestrator behavior changes yet
+    - just stable objects + persistence + tests
+- Changes made:
+  - Added `packages/core/src/types/work.ts`
+    - `Flow`
+    - `PlanGraph`
+    - `WorkRelation`
+    - `MergeCandidate`
+    - `FlowThreadBinding`
+  - Added `packages/core/src/types/inference.ts`
+    - `CognitiveOperation`
+    - `ModelCapabilityProfile`
+    - `InferenceAllocationPlan`
+    - worker-assignment support
+  - Added `packages/core/src/types/input-content.ts`
+    - typed multimodal `InputPart`
+    - `TurnInputEnvelope`
+  - Updated `packages/core/src/types/intent.ts`
+    - added flow / plan / envelope hang points
+  - Updated `packages/core/src/types/task.ts`
+    - added flow / plan / cognitive-operation hang points
+  - Updated `packages/core/src/index.ts`
+    - exported the new contract families
+  - Added `packages/persistence/src/interfaces/work-store.ts`
+  - Added `packages/persistence/src/sqlite/work-store.sqlite.ts`
+  - Updated `packages/persistence/src/sqlite/connection.ts`
+    - added work-governance tables
+    - added task columns:
+      - `flow_id`
+      - `plan_graph_id`
+      - `cognitive_operation`
+    - handled index creation so older task tables do not break during migration
+  - Updated `packages/persistence/src/sqlite/intent-store.sqlite.ts`
+    - persisted new intent hang points through metadata
+  - Updated `packages/persistence/src/sqlite/task-store.sqlite.ts`
+    - persisted new task hang points through explicit columns
+  - Updated `packages/persistence/src/backend.ts`
+    - exposed `work` on the composed backend
+  - Updated `packages/persistence/src/index.ts`
+    - exported `WorkStore` and `SQLiteWorkStore`
+  - Added `packages/persistence/tests/work-store.test.ts`
+    - covers flow / plan graph / relation / merge candidate / thread binding round-trips
+  - Updated existing persistence tests:
+    - `packages/persistence/tests/intent-store.test.ts`
+    - `packages/persistence/tests/task-store.test.ts`
+    - to verify the new hang points survive round-trip
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/persistence/tests/intent-store.test.ts packages/persistence/tests/task-store.test.ts packages/persistence/tests/work-store.test.ts` ✅
+- Impact / Result:
+  - The planning/work-governance architecture is no longer prose-only; it now has a real code and SQLite substrate.
+  - Future iterations can integrate flows/merge/model-allocation/multimodal behavior against stable objects instead of inventing ad hoc metadata fields under pressure.
+  - `Intent` and `Task` now have the minimum honest attachment points needed for later flow-aware orchestrator work.
+- Open questions / follow-ups:
+  - The current `WorkStore` is substrate only; no daemon/orchestrator code creates flows or plan graphs yet.
+  - `WorkRelation` is intentionally generic. Before scheduler integration, Nous should still decide whether some relation kinds deserve narrower specialized objects or APIs.
+  - `ModelCapabilityProfile` exists now as a contract, but no runtime source of truth populates it yet.

@@ -27,6 +27,47 @@ export type {
 	TaskStatus,
 } from "./types/task.ts";
 export { TASK_TRANSITIONS, TERMINAL_STATES } from "./types/task.ts";
+export type {
+	Flow,
+	FlowKind,
+	FlowSource,
+	FlowStatus,
+	PlanGraph,
+	PlanGraphTopology,
+	PlanGraphStatus,
+	WorkObjectKind,
+	WorkRelationKind,
+	WorkRelation,
+	MergeCandidateAction,
+	MergeCandidateProducer,
+	MergeCandidateStatus,
+	MergeCandidate,
+	FlowThreadBindingRole,
+	FlowThreadBinding,
+} from "./types/work.ts";
+export type {
+	CognitiveOperation,
+	ModelModality,
+	ModelLatencyClass,
+	ModelCostClass,
+	ModelTrustTier,
+	ModelCapabilityProfile,
+	InferenceAllocationMode,
+	InferenceWorkerAssignment,
+	InferenceAllocationPlan,
+} from "./types/inference.ts";
+export type {
+	InputContentSource,
+	TextInputPart,
+	ImageInputPart,
+	AudioInputPart,
+	VideoInputPart,
+	FileInputPart,
+	ScreenSnapshotInputPart,
+	ScreenRecordingInputPart,
+	InputPart,
+	TurnInputEnvelope,
+} from "./types/input-content.ts";
 
 export type {
 	Agent,
