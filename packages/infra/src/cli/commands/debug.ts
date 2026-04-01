@@ -6,6 +6,7 @@ import type {
 	DialogueThread,
 	Event,
 	Intent,
+	MergeCandidate,
 	PlanGraph,
 	ProcessItem,
 	Task,
@@ -83,6 +84,13 @@ function debugThread(threadId: string, backend: PersistenceBackend): void {
 			.getByStatus(status)
 			.filter((decision) => decision.threadId === threadId),
 	);
+	const mergeCandidates = dedupeById(
+		backend.work
+			.listMergeCandidates({ limit: 20 })
+			.filter((candidate) =>
+				intentIds.includes(candidate.leftId) || intentIds.includes(candidate.rightId),
+			),
+	);
 	const recentEvents = collectRecentEvents(intents, tasks, backend);
 
 	console.log(colors.bold(`\n  νοῦς — Debug Thread ${threadId}\n`));
@@ -90,6 +98,7 @@ function debugThread(threadId: string, backend: PersistenceBackend): void {
 	printIntentSummary(intents);
 	printFlowSummary(flows);
 	printPlanGraphSummary(planGraphs);
+	printMergeCandidateSummary(mergeCandidates);
 	printTaskSummary(tasks);
 	printDecisionSummary(decisions);
 	printTurnSurface(messages);
@@ -110,6 +119,7 @@ function debugDaemon(backend: PersistenceBackend): void {
 		limit: 10,
 	});
 	const recentPlanGraphs = backend.work.listPlanGraphs({ limit: 8 });
+	const recentMergeCandidates = backend.work.listMergeCandidates({ limit: 8 });
 	const recentThreads = backend.messages.listThreads(5);
 	const recentEvents = backend.events.query({ limit: 12 });
 
@@ -121,7 +131,7 @@ function debugDaemon(backend: PersistenceBackend): void {
 		`  ${colors.dim("Pending decisions:")} ${pendingDecisions.length}  ${colors.dim("Queued decisions:")} ${queuedDecisions.length}  ${colors.dim("Pending outbox:")} ${backend.messages.countOutbox("pending")}`,
 	);
 	console.log(
-		`  ${colors.dim("Active flows:")} ${activeFlows.length}  ${colors.dim("Recent plan graphs:")} ${recentPlanGraphs.length}`,
+		`  ${colors.dim("Active flows:")} ${activeFlows.length}  ${colors.dim("Recent plan graphs:")} ${recentPlanGraphs.length}  ${colors.dim("Recent merge candidates:")} ${recentMergeCandidates.length}`,
 	);
 
 	if (recentThreads.length > 0) {
@@ -147,6 +157,15 @@ function debugDaemon(backend: PersistenceBackend): void {
 		for (const planGraph of recentPlanGraphs) {
 			console.log(
 				`    ${planGraph.id.slice(0, 14)}  ${renderStatus(planGraph.status)}  ${planGraph.topology}  intent=${planGraph.intentId.slice(0, 14)}`,
+			);
+		}
+	}
+
+	if (recentMergeCandidates.length > 0) {
+		console.log(`\n  ${colors.cyan("Recent merge candidates")}`);
+		for (const candidate of recentMergeCandidates) {
+			console.log(
+				`    ${candidate.id.slice(0, 14)}  ${renderStatus(candidate.status)}  ${candidate.proposedAction}  ${candidate.leftId.slice(0, 10)} ↔ ${candidate.rightId.slice(0, 10)}`,
 			);
 		}
 	}
@@ -205,6 +224,21 @@ function printPlanGraphSummary(planGraphs: PlanGraph[]): void {
 	for (const planGraph of planGraphs) {
 		console.log(
 			`    ${planGraph.id.slice(0, 18)}  ${renderStatus(planGraph.status)}  ${planGraph.topology}  depth=${planGraph.planningDepth}`,
+		);
+	}
+}
+
+function printMergeCandidateSummary(candidates: MergeCandidate[]): void {
+	console.log(
+		`\n  ${colors.cyan("Merge candidates")} ${colors.dim(`(${candidates.length})`)}`,
+	);
+	if (candidates.length === 0) {
+		console.log(`    ${colors.dim("No linked merge candidates.")}`);
+		return;
+	}
+	for (const candidate of candidates) {
+		console.log(
+			`    ${candidate.id.slice(0, 18)}  ${renderStatus(candidate.status)}  ${candidate.proposedAction}  ${candidate.leftId.slice(0, 10)} ↔ ${candidate.rightId.slice(0, 10)}`,
 		);
 	}
 }

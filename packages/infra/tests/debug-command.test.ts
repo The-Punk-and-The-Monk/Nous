@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { DialogueThread, Flow, Intent, PlanGraph, Task } from "@nous/core";
+import type {
+	DialogueThread,
+	Flow,
+	Intent,
+	MergeCandidate,
+	PlanGraph,
+	Task,
+} from "@nous/core";
 import { createPersistenceBackend } from "@nous/persistence";
 import { debugCommand } from "../src/cli/commands/debug.ts";
 
@@ -20,9 +27,11 @@ describe("debugCommand", () => {
 		expect(output).toContain("Linked flows");
 		expect(output).toContain("Auth migration");
 		expect(output).toContain("Plan graphs");
+		expect(output).toContain("Merge candidates");
 		expect(output).toContain("parallel");
 		expect(output).toContain("flow_auth");
 		expect(output).toContain("plan_auth");
+		expect(output).toContain("link_only");
 
 		backend.close();
 	});
@@ -34,6 +43,7 @@ describe("debugCommand", () => {
 
 		expect(output).toContain("Active flows:");
 		expect(output).toContain("Recent plan graphs:");
+		expect(output).toContain("Recent merge candidates:");
 		expect(output).toContain("explicit_request");
 		expect(output).toContain("parallel");
 
@@ -96,6 +106,19 @@ function seedThreadFixture(
 		createdAt: "2026-04-01T10:00:00.000Z",
 		updatedAt: "2026-04-01T10:01:00.000Z",
 	};
+	const mergeCandidate: MergeCandidate = {
+		id: "merge_auth",
+		leftKind: "intent",
+		leftId: "intent_auth",
+		rightKind: "intent",
+		rightId: "intent_auth_followup",
+		proposedAction: "link_only",
+		rationale: "Likely the same auth migration work stream.",
+		confidence: 0.68,
+		producedBy: "conflict_analyzer",
+		status: "proposed",
+		createdAt: "2026-04-01T10:02:00.000Z",
+	};
 	const tasks: Task[] = [
 		{
 			id: "task_auth_1",
@@ -133,6 +156,7 @@ function seedThreadFixture(
 	backend.intents.create(intent);
 	backend.work.createFlow(flow);
 	backend.work.createPlanGraph(planGraph);
+	backend.work.createMergeCandidate(mergeCandidate);
 	for (const task of tasks) {
 		backend.tasks.create(task);
 	}

@@ -5614,3 +5614,46 @@ For significant sessions, capture:
   - Merge candidates are persisted now, but not yet surfaced in debug/status/control surfaces.
   - The current overlap heuristic is intentionally conservative and project-scope based; richer semantic merge assessment should likely become its own `CognitiveOperation` later.
   - The next natural continuation is to expose merge candidates in operator-facing debug/control surfaces before changing runtime behavior any further.
+
+### Session: Surface merge candidates in daemon/thread debug output
+- Context / Trigger:
+  - The previous iteration landed proposal-only merge governance for overlapping ambient work.
+  - That created the right runtime evidence, but one practical gap remained:
+    - merge candidates existed only in the database
+    - operators still could not inspect them through the normal debug path
+- Problem:
+  - A governance object that cannot be seen is difficult to trust and difficult to iterate on.
+  - The current debug surfaces already showed:
+    - intents
+    - flows
+    - plan graphs
+    - tasks
+    - decisions
+  - But they still omitted the new merge-governance evidence layer.
+- Options considered:
+  - Option A: wait for a future dedicated `flows`/`merge` control surface.
+    - Rejected because merge governance would remain effectively hidden in the meantime.
+  - Option B: extend existing debug output first, then decide later whether a dedicated control surface is warranted.
+    - Chosen because it provides immediate operator visibility with minimal new UI/control complexity.
+- Decision:
+  - Extend:
+    - `nous debug thread <threadId>`
+    - `nous debug daemon`
+  - so they display merge candidates alongside the existing work-governance sections.
+- Changes made:
+  - Updated `packages/infra/src/cli/commands/debug.ts`
+    - added thread-level merge-candidate summary rendering
+    - added daemon-level recent merge-candidate rendering
+    - included merge candidate counts in daemon debug summary
+  - Updated `packages/infra/tests/debug-command.test.ts`
+    - seeded merge-candidate fixture data
+    - verified thread and daemon debug views include merge-candidate output
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/debug-command.test.ts` ✅
+- Impact / Result:
+  - Merge governance is now inspectable through the standard debug path instead of requiring direct database inspection.
+  - This makes the new proposal-only merge layer materially more usable for dogfooding and future refinement.
+- Open questions / follow-ups:
+  - Debug visibility is helpful, but there is still no first-class user/operator action surface for accepting/rejecting/expiring merge candidates.
+  - If merge governance keeps expanding, Nous will likely need a dedicated control-surface/catalog entry rather than growing debug output indefinitely.
