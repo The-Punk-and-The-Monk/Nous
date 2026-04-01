@@ -29,6 +29,10 @@ export function fromOpenAIChatResponse(
 		}
 	}
 
+	const completionDetails = response.usage?.completion_tokens_details as
+		| { reasoning_tokens?: number }
+		| undefined;
+
 	return {
 		id: response.id,
 		content,
@@ -36,6 +40,7 @@ export function fromOpenAIChatResponse(
 		usage: {
 			inputTokens: response.usage?.prompt_tokens ?? 0,
 			outputTokens: response.usage?.completion_tokens ?? 0,
+			thinkingTokens: completionDetails?.reasoning_tokens,
 		},
 	};
 }
@@ -72,6 +77,32 @@ export function fromOpenAIResponsesResponse(
 		}
 	}
 
+	// Capture reasoning items from Responses API
+	for (const item of response.output) {
+		if (item.type === "reasoning") {
+			const reasoning = item as unknown as {
+				type: "reasoning";
+				summary?: Array<{ type: string; text: string }>;
+			};
+			const parts = reasoning.summary ?? [];
+			const text = parts
+				.map((p) => p.text ?? "")
+				.filter(Boolean)
+				.join("\n");
+			if (text) {
+				content.push({
+					type: "thinking",
+					thinking: text,
+					providerHint: "openai",
+				});
+			}
+		}
+	}
+
+	const outputDetails = response.usage?.output_tokens_details as
+		| { reasoning_tokens?: number }
+		| undefined;
+
 	return {
 		id: response.id,
 		content,
@@ -79,6 +110,7 @@ export function fromOpenAIResponsesResponse(
 		usage: {
 			inputTokens: response.usage?.input_tokens ?? 0,
 			outputTokens: response.usage?.output_tokens ?? 0,
+			thinkingTokens: outputDetails?.reasoning_tokens,
 		},
 	};
 }

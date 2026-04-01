@@ -43,6 +43,55 @@ For significant sessions, capture:
 
 ---
 
+## 2026-04-01
+
+### Session: Add thinking/reasoning capture across all LLM providers
+
+- Context / Trigger:
+  - Nous discarded all thinking/reasoning output from both Anthropic (extended thinking) and OpenAI (reasoning items). User requires thinking to be captured internally for future display, debugging, and user adaptation learning — even if not shown to end users yet.
+
+- Problem:
+  - Anthropic provider (`anthropic.ts:165`) had an explicit `// Skip thinking blocks` comment. OpenAI response normalizer only extracted `output_text` and `refusal`, discarding `reasoning` items entirely. No core type existed for thinking content. No streaming support for thinking deltas. Agent runtime had no way to emit thinking events.
+
+- Options considered:
+  - **Separate `thinking` field on `LLMResponse`**: Rejected because Anthropic requires thinking blocks to be replayed at their original position in conversation history (with signatures). Keeping them in the `content` array preserves ordering naturally.
+  - **Always-on thinking**: Rejected in favor of per-request `ThinkingConfig` toggle, since structured generation should not waste token budget on thinking.
+
+- Decision:
+  - Add `ThinkingBlock` to core `ContentBlock` union with `thinking`, `signature`, and `providerHint` fields.
+  - Add `ThinkingConfig` interface (`enabled` + `budgetTokens`) to `LLMRequest`.
+  - Capture thinking from Anthropic extended thinking API (including streaming `thinking_delta` events and signature-based conversation replay).
+  - Capture reasoning from OpenAI Responses API `reasoning` items (summary text), and `thinkingTokens` from both Chat Completions and Responses API usage details.
+  - Map `ThinkingConfig.budgetTokens` to OpenAI reasoning effort tiers (`low`/`medium`/`high`).
+  - Emit `agent.thinking` events from agent runtime for downstream consumers.
+  - Strip thinking blocks during context compaction (too large for compacted history).
+  - Existing consumers filtering on `type === "text"` naturally ignore thinking blocks — backward compatible.
+
+- Changes made:
+  - `packages/core/src/llm/types.ts` — Added `ThinkingBlock`, `ThinkingConfig` interfaces; extended `ContentBlock`, `LLMRequest`, `LLMResponse.usage`, `StreamChunk`
+  - `packages/core/src/index.ts` — Exported new types
+  - `packages/core/src/types/event.ts` — Added `agent.thinking` to `EventType`
+  - `packages/runtime/src/llm/anthropic.ts` — Enable extended thinking in params (with temperature removal), capture thinking blocks in response, emit `thinking_delta` in streaming, replay thinking blocks in conversation messages
+  - `packages/runtime/src/llm/openai-response-normalizer.ts` — Capture `reasoning` items from Responses API, add `thinkingTokens` from both APIs
+  - `packages/runtime/src/llm/openai-request-normalizer.ts` — Map `ThinkingConfig` to reasoning effort, added `budgetToOpenAIEffort` helper
+  - `packages/runtime/src/llm/openai-shared.ts` — Handle `response.reasoning.delta` events in streaming
+  - `packages/runtime/src/agent/runtime.ts` — Added `thinkingConfig` to `AgentRuntimeConfig`, pass to LLM, emit `agent.thinking` events
+  - `packages/runtime/src/agent/context.ts` — Handle `ThinkingBlock` in `blockLength()`, strip thinking during compaction
+
+- Impact:
+  - All thinking/reasoning output is now captured in the `ContentBlock[]` pipeline, available for storage, debugging, and future display.
+  - Agent runtime emits `agent.thinking` events with full thinking text per iteration.
+  - No existing consumers broken (backward compatible union extension).
+  - 0 new type errors, 0 new test failures.
+
+- Open questions / next steps:
+  - Surface thinking in progress events / process surface for user-facing debugging (currently `agent.thinking` is emitted but not projected to delivery).
+  - Add thinking display toggle to CLI/REPL renderer when user requests it.
+  - Anthropic does not expose a dedicated `thinkingTokens` count in usage — may need to estimate from thinking block text length.
+  - OpenAI `reasoning.content` array (full reasoning vs. summary-only) availability is API-version dependent; currently capturing `summary` only.
+
+---
+
 ## 2026-03-29
 
 ### Session: Establish repository-level development log + add direct OpenAI provider

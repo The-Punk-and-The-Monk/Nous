@@ -355,8 +355,17 @@ export class OpenAIProviderBase implements LLMProvider {
 						}
 						yield { type: "message_end" };
 						break;
-					default:
+					default: {
+						// Handle reasoning delta events (not yet in SDK type definitions)
+						const eventType = (event as { type: string }).type;
+						if (eventType === "response.reasoning.delta") {
+							const delta = (event as { delta?: string }).delta;
+							if (delta) {
+								yield { type: "thinking_delta", text: delta };
+							}
+						}
 						break;
+					}
 				}
 			}
 		} catch (err) {

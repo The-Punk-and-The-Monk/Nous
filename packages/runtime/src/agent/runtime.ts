@@ -7,6 +7,7 @@ import type {
 	Logger,
 	PermissionCallback,
 	Task,
+	ThinkingConfig,
 	ToolDef,
 	ToolResult,
 	ToolUseBlock,
@@ -30,6 +31,7 @@ export interface AgentRuntimeConfig {
 	maxIterations?: number;
 	maxTokens?: number;
 	systemPrompt?: string;
+	thinkingConfig?: ThinkingConfig;
 	onPermissionNeeded?: PermissionCallback;
 	onRuntimeEvent?: (event: Event) => void;
 }
@@ -78,6 +80,7 @@ export class AgentRuntime {
 	private maxIterations: number;
 	private maxTokens: number;
 	private systemPrompt: string;
+	private thinkingConfig?: ThinkingConfig;
 	private pendingInterrupt?: RuntimeInterruptState;
 	private activeToolExecution?: ActiveToolExecution;
 	private currentTaskId?: string;
@@ -97,6 +100,7 @@ export class AgentRuntime {
 		this.maxIterations = config.maxIterations ?? 25;
 		this.maxTokens = config.maxTokens ?? 4096;
 		this.context = new ContextManager();
+		this.thinkingConfig = config.thinkingConfig;
 		this.onPermissionNeeded = config.onPermissionNeeded;
 		this.onRuntimeEvent = config.onRuntimeEvent;
 		this.systemPrompt =
@@ -202,6 +206,7 @@ export class AgentRuntime {
 					messages,
 					tools: tools.length > 0 ? tools : undefined,
 					maxTokens: this.maxTokens,
+					thinking: this.thinkingConfig,
 				});
 
 				totalInputTokens += response.usage.inputTokens;
@@ -210,6 +215,21 @@ export class AgentRuntime {
 					response.usage.inputTokens,
 					response.usage.outputTokens,
 				);
+
+				// Emit thinking event if thinking blocks are present
+				const thinkingBlocks = response.content.filter(
+					(b) => b.type === "thinking",
+				);
+				if (thinkingBlocks.length > 0) {
+					this.emitEvent("agent.thinking", "agent", this.agentId, {
+						taskId: task.id,
+						thinking: thinkingBlocks
+							.map((b) => (b as { thinking: string }).thinking)
+							.join("\n"),
+						thinkingTokens: response.usage.thinkingTokens,
+						iteration: iterations,
+					});
+				}
 
 				// Update heartbeat
 				this.taskStore.update(task.id, { lastHeartbeat: now() });

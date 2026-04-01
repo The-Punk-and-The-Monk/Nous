@@ -5,7 +5,11 @@ export interface LLMMessage {
 	content: string | ContentBlock[];
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+export type ContentBlock =
+	| TextBlock
+	| ToolUseBlock
+	| ToolResultBlock
+	| ThinkingBlock;
 
 export interface TextBlock {
 	type: "text";
@@ -24,6 +28,21 @@ export interface ToolResultBlock {
 	toolUseId: string;
 	content: string;
 	isError?: boolean;
+}
+
+export interface ThinkingBlock {
+	type: "thinking";
+	thinking: string;
+	/** Provider-specific signature for multi-turn continuity (Anthropic) */
+	signature?: string;
+	/** Provider that generated this thinking */
+	providerHint?: string;
+}
+
+export interface ThinkingConfig {
+	enabled: boolean;
+	/** Budget in tokens for thinking. Anthropic: budget_tokens; OpenAI: maps to effort tier */
+	budgetTokens?: number;
 }
 
 export interface LLMToolDef {
@@ -56,6 +75,7 @@ export interface LLMRequest {
 	temperature?: number;
 	stopSequences?: string[];
 	responseFormat?: LLMResponseFormat;
+	thinking?: ThinkingConfig;
 }
 
 export interface LLMResponse {
@@ -65,12 +85,14 @@ export interface LLMResponse {
 	usage: {
 		inputTokens: number;
 		outputTokens: number;
+		thinkingTokens?: number;
 	};
 }
 
 export interface StreamChunk {
 	type:
 		| "text_delta"
+		| "thinking_delta"
 		| "tool_use_start"
 		| "tool_use_delta"
 		| "tool_use_end"
@@ -78,4 +100,6 @@ export interface StreamChunk {
 	text?: string;
 	toolUse?: Partial<ToolUseBlock>;
 	usage?: LLMResponse["usage"];
+	/** Signature emitted at end of a thinking block (Anthropic) */
+	thinkingSignature?: string;
 }

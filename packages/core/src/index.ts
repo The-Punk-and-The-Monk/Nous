@@ -317,6 +317,8 @@ export type {
 	TextBlock,
 	ToolUseBlock,
 	ToolResultBlock,
+	ThinkingBlock,
+	ThinkingConfig,
 	LLMToolDef,
 	LLMRequest,
 	LLMResponseFormat,

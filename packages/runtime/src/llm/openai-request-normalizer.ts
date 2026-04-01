@@ -121,6 +121,12 @@ export function toOpenAIResponsesParams(
 	) {
 		params.reasoning = { effort: reasoningEffort };
 	}
+	// Map ThinkingConfig to reasoning effort when no explicit effort is set
+	if (request.thinking?.enabled && !params.reasoning) {
+		params.reasoning = {
+			effort: budgetToOpenAIEffort(request.thinking.budgetTokens),
+		};
+	}
 
 	return params;
 }
@@ -504,6 +510,14 @@ function flattenOpenAIMessageContent(content: unknown): string {
 		})
 		.filter(Boolean)
 		.join("\n");
+}
+
+function budgetToOpenAIEffort(
+	budgetTokens?: number,
+): "low" | "medium" | "high" {
+	if (!budgetTokens || budgetTokens >= 20000) return "high";
+	if (budgetTokens >= 5000) return "medium";
+	return "low";
 }
 
 function flattenCoreMessageText(content: LLMMessage["content"]): string {

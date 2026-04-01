@@ -40,6 +40,7 @@ export type EventType =
 	| "agent.registered"
 	| "agent.assigned"
 	| "agent.heartbeat"
+	| "agent.thinking"
 	| "agent.idle"
 	| "agent.suspended"
 	| "agent.offline"

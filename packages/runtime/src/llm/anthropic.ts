@@ -83,16 +83,20 @@ export class AnthropicProvider implements LLMProvider {
 		const params = this.toAnthropicParams(request);
 
 		const stream = this.client.messages.stream(params);
+		const blockTypes = new Map<number, string>();
 
 		for await (const event of stream) {
 			if (event.type === "content_block_delta") {
 				const delta = event.delta as {
 					type: string;
 					text?: string;
+					thinking?: string;
 					partial_json?: string;
 				};
 				if (delta.type === "text_delta") {
 					yield { type: "text_delta", text: delta.text };
+				} else if (delta.type === "thinking_delta") {
+					yield { type: "thinking_delta", text: delta.thinking };
 				} else if (delta.type === "input_json_delta") {
 					yield { type: "tool_use_delta", text: delta.partial_json };
 				}
@@ -102,6 +106,7 @@ export class AnthropicProvider implements LLMProvider {
 					id?: string;
 					name?: string;
 				};
+				blockTypes.set((event as { index: number }).index, block.type);
 				if (block.type === "tool_use") {
 					yield {
 						type: "tool_use_start",
@@ -109,7 +114,12 @@ export class AnthropicProvider implements LLMProvider {
 					};
 				}
 			} else if (event.type === "content_block_stop") {
-				yield { type: "tool_use_end" };
+				const idx = (event as { index: number }).index;
+				const blockType = blockTypes.get(idx);
+				blockTypes.delete(idx);
+				if (blockType !== "thinking") {
+					yield { type: "tool_use_end" };
+				}
 			} else if (event.type === "message_stop") {
 				yield { type: "message_end" };
 			}
@@ -145,6 +155,14 @@ export class AnthropicProvider implements LLMProvider {
 		if (request.stopSequences) {
 			params.stop_sequences = request.stopSequences;
 		}
+		if (request.thinking?.enabled) {
+			(params as unknown as Record<string, unknown>).thinking = {
+				type: "enabled",
+				budget_tokens: request.thinking.budgetTokens ?? 10000,
+			};
+			// Anthropic requires temperature=1 or omitted when thinking is enabled
+			delete params.temperature;
+		}
 
 		return params;
 	}
@@ -161,8 +179,20 @@ export class AnthropicProvider implements LLMProvider {
 					name: block.name,
 					input: block.input as Record<string, unknown>,
 				});
+			} else if (block.type === "thinking") {
+				const tb = block as unknown as {
+					type: "thinking";
+					thinking: string;
+					signature: string;
+				};
+				content.push({
+					type: "thinking",
+					thinking: tb.thinking,
+					signature: tb.signature,
+					providerHint: "anthropic",
+				});
 			}
-			// Skip thinking blocks and other non-standard blocks
+			// Skip other non-standard blocks
 		}
 
 		return {
@@ -185,6 +215,13 @@ function toAnthropicMessage(msg: LLMMessage): Anthropic.MessageParam {
 	const blocks: Anthropic.ContentBlockParam[] = msg.content.map((block) => {
 		if (block.type === "text") {
 			return { type: "text" as const, text: block.text };
+		}
+		if (block.type === "thinking") {
+			return {
+				type: "thinking" as const,
+				thinking: block.thinking,
+				signature: block.signature ?? "",
+			} as unknown as Anthropic.ContentBlockParam;
 		}
 		if (block.type === "tool_use") {
 			return {

@@ -48,7 +48,7 @@ export class ContextManager {
 
 		if (middle.length === 0) return messages;
 
-		// Summarize middle messages
+		// Summarize middle messages (thinking blocks are stripped — too large for compacted context)
 		const summaryParts: string[] = [];
 		for (const msg of middle) {
 			if (typeof msg.content === "string") {
@@ -66,6 +66,7 @@ export class ContextManager {
 								: block.content;
 						summaryParts.push(`[tool_result]: ${truncated}`);
 					}
+					// thinking blocks are intentionally omitted from compaction
 				}
 			}
 		}
@@ -92,5 +93,7 @@ function blockLength(block: ContentBlock): number {
 			return block.name.length + JSON.stringify(block.input).length;
 		case "tool_result":
 			return block.content.length;
+		case "thinking":
+			return block.thinking.length;
 	}
 }
