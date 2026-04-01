@@ -4759,3 +4759,32 @@ For significant sessions, capture:
   - Future iterations are less likely to miss notifications because of the same parser failure.
 - Open questions / follow-ups:
   - `NSUserNotificationCenter` is a legacy API. It works here, but if macOS behavior changes later, Nous may eventually want a more durable local notification helper script rather than embedding raw one-liners in instructions.
+
+### Session: Materialize macOS notification fallback as repo-local helper
+- Context / Trigger:
+  - The previous iteration documented the JXA/Cocoa fallback in `AGENTS.md`, but the repo still depended on long inline `osascript` one-liners for actual use.
+  - Since notification policy is now explicitly iteration-based, the operational path itself should become reusable repo-local infrastructure rather than memorized shell fragments.
+- Problem:
+  - Inline AppleScript/JXA one-liners are easy to mistype and cumbersome to reuse consistently in overnight loops.
+  - The repo already knew the working fallback, but it did not yet expose that knowledge as a stable helper surface.
+- Options considered:
+  - Option A: keep only instruction-level examples in `AGENTS.md`.
+    - Rejected because the policy would remain operationally fragile.
+  - Option B: add a small repo-local helper that tries AppleScript first and JXA second, then point `AGENTS.md` at that helper.
+    - Chosen because it turns notification behavior into a reusable local capability.
+- Decision:
+  - Add `scripts/macos_notify.sh` as the repo-local macOS notification helper.
+  - Make `AGENTS.md` prefer the helper script, while still documenting the raw AppleScript and JXA commands as fallback knowledge.
+- Changes made:
+  - Added `scripts/macos_notify.sh`
+    - default title = `Nous`
+    - supports `--title`
+    - tries AppleScript first
+    - falls back to JXA/Cocoa if AppleScript parsing fails
+  - Updated `AGENTS.md`
+    - changed the preferred notification path to the helper script
+- Impact / Result:
+  - The repo now has a reusable macOS notification helper instead of only inline command examples.
+  - Iteration-level notifications are less dependent on remembering long command strings.
+- Open questions / follow-ups:
+  - The helper currently shells out to `osascript` twice at most. If notification behavior becomes more central, it may be worth adding lightweight logging of notification attempts and failures for auditing.

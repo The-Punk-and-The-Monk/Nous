@@ -179,8 +179,13 @@ If requested:
 - If work truly stops because of a real stop condition, send one more final notification for the stop.
 - Notifications should be short and state what iteration landed or why execution stopped.
 - The title must include `Nous`.
-- Preferred command form:
-  - first try:
+- Preferred in-repo path:
+
+```bash
+scripts/macos_notify.sh "Your message here"
+```
+
+- If the helper script cannot be used, try first:
 
 ```bash
 osascript -e 'display notification "Your message here" with title "Nous"'
