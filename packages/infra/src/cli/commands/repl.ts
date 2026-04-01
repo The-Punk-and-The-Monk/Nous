@@ -10,7 +10,6 @@ import { DaemonClientSession } from "../../daemon/client.ts";
 import { printReplCommands } from "../help.ts";
 import {
 	resolveSlashCommand,
-	shouldAttemptModelControlResolution,
 	translateControlResolution,
 } from "../repl-control.ts";
 import { colors } from "../ui/colors.ts";
@@ -308,13 +307,6 @@ async function resolveReplInput(
 					threadId: slashResolution.threadId,
 					interpretedAs: slashResolution.interpretedAs ?? input,
 				};
-	}
-
-	if (!shouldAttemptModelControlResolution(input)) {
-		return {
-			kind: "submit" as const,
-			text: input,
-		};
 	}
 
 	const response = (await withTimeout(

@@ -4995,3 +4995,56 @@ For significant sessions, capture:
     - reminder kinds
     - relationship-specific delivery modes
     - memory-derived preference hints that propose safe config updates rather than silently changing behavior.
+
+### Session: Correct the REPL contract back to slash-only local control parsing
+- Context / Trigger:
+  - After the previous REPL bugfix landed, the user called out a valid contract problem:
+    - the fix had introduced a local `NATURAL_LANGUAGE_CONTROL_PATTERNS` heuristic
+    - that meant some non-slash natural-language inputs were intercepted locally before reaching the daemon-side LLM control router
+  - The user’s preferred boundary is stricter:
+    - slash commands that are explicitly part of the REPL surface should be resolved locally and deterministically
+    - everything else should still go through the LLM control-routing path first, even if the eventual result is normal task-plane submission
+- Problem:
+  - The local heuristic solved a responsiveness issue, but it subtly changed the control contract:
+    - the client, not the daemon/router, started deciding which non-slash utterances were “obviously task-plane”
+    - that weakened the shared control-surface abstraction and reintroduced local interpretation policy
+  - In other words, the previous patch fixed the symptom but overreached architecturally.
+- Options considered:
+  - Option A: keep the heuristic because it reduces latency for obvious task requests.
+    - Rejected because it violates the intended control-routing contract and creates client-local policy drift.
+  - Option B: revert to the cleaner split:
+    - slash commands = local deterministic control
+    - all other text = daemon-side LLM control routing, with the improved error/prompt handling still preserved
+    - Chosen because it matches the user’s intended UX contract and keeps semantic interpretation centralized.
+- Decision:
+  - Remove the local natural-language control pattern detector entirely.
+  - Keep the parts of the earlier REPL fix that were actually about robustness:
+    - visible error surfacing
+    - in-flight input guarding
+    - prompt redraw discipline while async input handling is running
+  - Restore the simpler invariant:
+    - only `/...` commands bypass the LLM
+    - all other text first asks the daemon-side control router whether it is control or task-plane
+- Changes made:
+  - Updated `packages/infra/src/cli/repl-control.ts`
+    - removed `NATURAL_LANGUAGE_CONTROL_PATTERNS`
+    - removed `shouldAttemptModelControlResolution`
+  - Updated `packages/infra/src/cli/commands/repl.ts`
+    - restored non-slash inputs to always use daemon-side `resolve_control_input`
+    - kept the stronger async/error-handling path from the previous bugfix
+  - Updated `packages/infra/tests/repl-control.test.ts`
+    - removed the tests that encoded the now-reverted local heuristic behavior
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/repl-control.test.ts packages/infra/tests/control-intent-router.test.ts` ✅
+- Impact / Result:
+  - The REPL contract is now aligned again:
+    - explicit slash control is local and deterministic
+    - non-slash natural language remains centrally interpreted by the daemon-side LLM router
+  - The real bugfix remains intact:
+    - failures are surfaced visibly
+    - prompt/input behavior is more stable than before
+  - This avoids drifting into ad hoc client-local natural-language parsing while still preserving the more honest async handling improvements.
+- Open questions / follow-ups:
+  - This still means ordinary non-slash input depends on the control-routing LLM hop before task submission.
+  - If that latency or fragility remains undesirable in practice, the next improvement should likely be a protocol-level redesign of control-plane vs task-plane submission rather than another local heuristic layer.
