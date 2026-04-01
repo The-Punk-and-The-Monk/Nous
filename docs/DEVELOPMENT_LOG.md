@@ -420,6 +420,35 @@ For significant sessions, capture:
 - Open questions / next steps:
   - If preference capture broadens further, the heuristic guard should likely be replaced by a dedicated bounded interpreter instead of endlessly growing substring rules.
 
+### Session: Separate procedure validation from skill promotion
+
+- Context / Trigger:
+  - After several relationship-aware runtime iterations, the next natural continuation from the ideal-state program was to tighten the procedural-memory / evolution seam so it matches the architecture's more conservative progression.
+
+- Problem:
+  - `LocalProcedureSeedStore` was promoting a procedure as soon as it became `validated`, which effectively collapsed “validated procedure candidate” and “promoted reusable procedure/skill seed” into the same threshold.
+  - That was more aggressive than the architecture's intended sequence of repeated validation before promotion.
+
+- Decision:
+  - Keep validation at the existing repeated-success point, but delay promotion until the **third** successful trace.
+  - Preserve the current lightweight local procedure-seed model while making promotion more conservative.
+
+- Changes made:
+  - `packages/infra/src/evolution/local-procedure-seed.ts`
+    - validation still begins once repeated success is demonstrated
+    - promotion now requires `successCount >= 3`
+  - `packages/infra/tests/procedure-seed.test.ts`
+    - updated regression coverage to prove:
+      - second success validates but does not yet promote
+      - third success promotes the reusable procedure artifact
+
+- Impact / Result:
+  - Procedural seed promotion is now more consistent with the architecture's “validate, then crystallize” progression.
+  - Nous becomes slightly more conservative about elevating repeated behavior into a reusable procedure/skill seed.
+
+- Open questions / next steps:
+  - A later step can decide whether the promotion threshold should also depend on shadow-validation quality or tool-risk profile, not only repeated success count.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass
