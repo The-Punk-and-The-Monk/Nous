@@ -4681,3 +4681,54 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - The current trace enrichment is still aggregated at intent/task-summary level, not full ordered step graphs; a future procedural compiler should decide when to retain sequence-level detail and when to stay abstract.
   - Risky-tool names are now preserved, but procedure validation still only keys mainly on repeated success count; a future step should use richer validation heuristics that consider stability of tool sequence and outcome quality.
+
+### Session: Consolidate AGENTS contract around continuous building and iteration-level notifications
+- Context / Trigger:
+  - The user called out a real execution failure: although recent overnight work had been progressing and committing, the assistant still emitted a stop-style wrap-up after an iteration.
+  - The repo-level `AGENTS.md` had also accumulated repeated directives across product thesis, persistent directives, memory direction, and notification behavior, which left room for ambiguous interpretation.
+- Problem:
+  - The previous `AGENTS.md` did not make the “keep building until a real blocker” rule strong enough at the repository-contract level.
+  - Notification policy was scoped per dialogue round instead of per committed iteration, which mismatched the overnight operating model.
+  - The file structure itself had drifted:
+    - duplicate statements about ambient/perception and memory direction
+    - repeated architectural guidance in multiple sections
+    - one orphaned trailing line about commits that was not integrated into the main contract
+- Options considered:
+  - Option A: append the new prompt requirements as one more section at the bottom.
+    - Rejected because it would preserve the same ambiguity and duplicate even more rules.
+  - Option B: rewrite and consolidate `AGENTS.md` into a single stronger operating contract while preserving all meaningful existing directives.
+    - Chosen because the real problem was not one missing sentence; it was duplicated and partially overlapping instructions.
+- Decision:
+  - Replace the existing `AGENTS.md` with a consolidated structure that explicitly defines:
+    - required startup reading order
+    - north star and current architectural center
+    - persistent product directives
+    - architecture discipline
+    - external reference policy
+    - a **Continuous Build Contract**
+    - repo boundaries
+    - documentation discipline
+    - commit discipline
+    - iteration-level notification rules
+  - Strengthen the default operating invariant:
+    - do not stop after one patch, one milestone, or one commit
+    - after every coherent iteration, immediately choose the next natural continuation
+    - only stop on true blockers, explicit user pause, or high-risk architecture decisions that truly require human choice
+  - Change notification policy from “once per dialogue round” to:
+    - after every iteration commit
+    - plus one final notification if work truly stops
+- Changes made:
+  - Rewrote `AGENTS.md`
+    - removed repeated ambient / memory / architecture guidance from separate overlapping sections
+    - folded the user’s continuous-builder prompt intent into a durable repo instruction contract
+    - moved commit discipline into a proper section
+    - updated macOS notification policy to be iteration-based rather than round-based
+    - added the preferred `osascript -e 'display notification ... with title "Nous"'` command form directly into the repo instructions
+- Impact / Result:
+  - The repository now has a much clearer operating contract for overnight continuous building.
+  - “One commit equals one closed iteration, not a stopping point” is now explicit in repo memory rather than only implicit in user chat.
+  - Notification timing now matches the actual engineering rhythm of iterative autonomous work.
+  - The file is shorter in conceptual duplication while stronger in operational clarity.
+- Open questions / follow-ups:
+  - The repo-level contract is now much clearer, but future overnight wrappers or automation scripts should eventually align their control loop directly with this iteration model instead of relying only on prompt text.
+  - The macOS notification command still needs a live re-check in this environment after the contract update, because prior attempts returned AppleScript parsing errors.
