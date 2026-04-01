@@ -61,7 +61,11 @@ describe("DialogueService", () => {
 		expect(snapshot).toBeDefined();
 		expect(snapshot?.messages).toHaveLength(1);
 		expect(snapshot?.messages[0].content).toBe("Refactor auth module");
-		expect(snapshot?.messages[0].metadata?.turnId).toBe(snapshot?.messages[0].id);
+		expect(snapshot?.messages[0].metadata?.turnId).toBe(
+			snapshot?.messages[0].id,
+		);
+		expect(snapshot?.thread.metadata?.originChannel).toBe(channel.id);
+		expect(snapshot?.thread.metadata?.surfaceKind).toBe("cli");
 	});
 
 	test("enqueueAssistantMessage persists outbox entry", async () => {
@@ -179,5 +183,25 @@ describe("DialogueService", () => {
 			threadId: ack.payload.threadId,
 		});
 		expect(snapshot?.thread.metadata?.intentIds).toEqual(["intent_demo"]);
+		expect(snapshot?.thread.metadata?.activeIntentId).toBe("intent_demo");
+		expect(snapshot?.thread.metadata?.activeWorkItemId).toBe("intent_demo");
+	});
+
+	test("stores handoff capsule metadata on the thread container", async () => {
+		const stores = createFixture();
+		const service = new DialogueService({ messageStore: stores.messageStore });
+		const channel = makeChannel({ id: "channel_ide", type: "ide" });
+		const ack = await service.submitIntent(channel, {
+			text: "Inspect repository state",
+		});
+
+		service.setHandoffCapsuleForThread(ack.payload.threadId, "handoff_demo");
+
+		const snapshot = service.getThreadSnapshot({
+			threadId: ack.payload.threadId,
+		});
+		expect(snapshot?.thread.metadata?.handoffCapsuleId).toBe("handoff_demo");
+		expect(snapshot?.thread.metadata?.surfaceKind).toBe("ide");
+		expect(snapshot?.thread.metadata?.originChannel).toBe("channel_ide");
 	});
 });

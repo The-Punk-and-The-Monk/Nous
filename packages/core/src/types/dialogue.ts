@@ -5,6 +5,23 @@ export type DialogueThreadStatus = "active" | "archived";
 export type DialogueRole = "human" | "assistant" | "system";
 export type DialogueDirection = "inbound" | "outbound";
 export type OutboxStatus = "pending" | "delivered" | "failed";
+export type DialogueThreadSurfaceKind =
+	| "cli"
+	| "ide"
+	| "web"
+	| "notification"
+	| "daemon"
+	| "unknown";
+
+export interface DialogueThreadMetadata extends Record<string, unknown> {
+	channelIds?: string[];
+	intentIds?: string[];
+	activeIntentId?: string;
+	activeWorkItemId?: string;
+	handoffCapsuleId?: string;
+	surfaceKind?: DialogueThreadSurfaceKind;
+	originChannel?: string;
+}
 
 export interface DialogueThread {
 	id: string;
@@ -12,7 +29,7 @@ export interface DialogueThread {
 	status: DialogueThreadStatus;
 	createdAt: ISOTimestamp;
 	updatedAt: ISOTimestamp;
-	metadata?: Record<string, unknown>;
+	metadata?: DialogueThreadMetadata;
 }
 
 export interface DialogueMessage {

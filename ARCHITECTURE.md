@@ -231,7 +231,7 @@ The system's world is defined by these core abstractions. Getting these wrong me
 
 | Concept | Owner | Description |
 |---------|-------|-------------|
-| **Intent** | Human | A goal expressed in natural language — fuzzy, high-level, may have constraints |
+| **WorkItem** (`Intent` in current code) | Human | A governed unit of work derived when an interaction enters Work Mode — owns goal, contract, execution depth, and execution state |
 | **Plan** | Orchestrator | A decomposition of Intent into a Task DAG — revisable, not final |
 | **Task** | Scheduler | An atomic unit of work with a full lifecycle (state machine, dependencies, retry policy) |
 | **Instance** | Infrastructure | A long-lived Nous identity — the unit that persists across channels/sessions today and may participate in collective intelligence later |
@@ -246,7 +246,7 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **Proactive Cognition** | Orchestration | A lower-frequency reflective loop that synthesizes signals, memory, prospective commitments, and user state into governed proactive candidates — the "background caring mind" of Nous |
 | **ProactiveCandidate** | Orchestration / Dialogue | A system-initiated candidate output: reminder, check-in, celebration, suggestion, offer, silent watchpoint, or actionable ambient task |
 | **RelationshipBoundary** | Cross-cutting | User-specific policy for proactivity, intimacy, interruption, tone, and what forms of care or initiative are welcome |
-| **Ambient Intent** | Orchestration | An actionable subtype of proactive output: a goal inferred from environment/state signals, not explicitly stated by a human — system-initiated work that enters the normal intent pipeline |
+| **Ambient WorkItem** (`AmbientIntent` in current code) | Orchestration | An actionable subtype of proactive output: a system-inferred work candidate that may enter work governance after the same approval / boundary checks as other work-mode inputs |
 | **ProcedureCandidate** | Evolution | A reusable execution pattern observed from successful runs, not yet fully validated as a stable Skill |
 | **Skill** | Evolution | A reusable execution path crystallized from successful experience — the unit of learned competence |
 | **PromptAsset** | Runtime | A versioned reusable instruction template with variables and metadata; may seed an Agent or Skill, but is not itself a Skill |
@@ -258,7 +258,7 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **PermissionRule** | Infrastructure | A user-controlled authorization rule scoped by directory/system/command/network — what Nous is allowed to do |
 | **CommunicationPolicy** | Infrastructure | User-controlled rules governing all inter-Nous communication — what to share, whom to consult, what to auto-approve |
 | **Channel** | Dialogue | An I/O connection to the user (CLI, IDE, Web) — a viewport into Nous, not an isolated session |
-| **DialogueThread** | Dialogue | A conversation topic that may span multiple channels — groups related messages and intents |
+| **DialogueThread** | Dialogue | A surface conversation container that may span multiple channels — groups messages, delivery, and explicit work/handoff bindings, but is not itself topic truth or work truth |
 | **MessageOutbox** | Dialogue | Persistent queue for outbound messages — survives channel disconnects and daemon restarts |
 | **ConflictAnalysis** | Dialogue | Two-layer analysis of inter-task resource and semantic conflicts — prevents concurrent intents from breaking each other |
 | **NousMessage** | Infrastructure | The atomic unit of inter-Nous communication — always E2E encrypted, always audit-logged |
@@ -325,17 +325,17 @@ The system's world is defined by these core abstractions. Getting these wrong me
 
 ### Dialogue Layer (`packages/dialogue`)
 - **Channel Manager**: Manages all connected I/O channels (CLI, IDE, Web, API). Channels connect and disconnect freely — Nous keeps running regardless. Multiple channels can be active simultaneously. Each channel carries a `scope` (CWD, project, focused file) that influences Context Assembly but does NOT isolate memory or state.
-- **Dialogue Manager**: Maintains multi-turn conversation context across all channels. Groups messages into `DialogueThread`s by topic. A thread can span multiple channels (start a conversation in CLI, continue in IDE). All messages are persisted to L3 Message Store — Nous never loses context.
-- **Thread Tracker**: Tracks active threads, associates them with intents and tasks. When a user sends a message, determines whether it belongs to an existing thread or starts a new one.
+- **Dialogue Manager**: Maintains multi-turn conversation context across all channels. Persists messages inside `DialogueThread`s as surface containers. A thread may span multiple channels (start in CLI, continue in IDE), but the thread itself does **not** prove work continuity; work continuity requires explicit work state, explicit handoff, or governed restoration. All messages are persisted to L3 Message Store — Nous never loses context.
+- **Thread Tracker**: Tracks active threads, explicit work-item bindings, and handoff capsules. When a user sends a message, it decides whether the message should attach to an existing surface container or start a new one; it must not treat raw thread attachment as sufficient evidence of work continuity.
 - **Message Outbox**: Persistent queue for outbound messages (results, notifications, questions). When a channel is disconnected, messages accumulate in the outbox. When the channel reconnects (or any channel connects), pending messages are delivered. (See Message Delivery section below)
-- **Conflict Analyzer**: When a new intent arrives, analyzes potential conflicts with currently active intents/tasks — resource conflicts (file locks, shared state), semantic conflicts (contradictory goals), and dependency ordering. Uses both static analysis (resource overlap detection) and LLM-assisted semantic analysis. (See Conflict Detection section below)
+- **Conflict Analyzer**: When a new work item arrives, analyzes potential conflicts with currently active work — resource conflicts (file locks, shared state), semantic conflicts (contradictory goals), and dependency ordering. Uses both static analysis (resource overlap detection) and LLM-assisted semantic analysis. (See Conflict Detection section below)
 
 ### L0 — Intent Plane (`packages/orchestrator`)
-- Receives natural language goals from humans (**Human Intent**)
-- Receives system-inferred goals from Attention Filter (**Ambient Intent**)
+- Receives natural language goals from humans and forms governed **WorkItems** (compatibility name: `Intent`) when interaction-mode classification enters Work Mode
+- Receives system-inferred work candidates from Attention Filter (**Ambient WorkItems** / current-code `AmbientIntent`)
 - Parses constraints and priorities
 - Maintains the **Human Decision Queue**: only decisions that are irreversible, out-of-scope, or post-max-retry reach the human
-- Ambient Intents carry a `confidence` score — below threshold, they queue for human approval instead of auto-executing
+- Ambient work candidates carry a `confidence` score — below threshold, they queue for human approval instead of auto-executing
 
 ### L1 — Orchestration Plane (`packages/orchestrator`)
 - **Intent Planner**: Goal → structured Task DAG
@@ -1964,142 +1964,159 @@ Tier 2 (Episodic)                    Tier 3 (Semantic)                  Tier 4 (
 
 ---
 
-## Unified Task Intake and Execution Depth Model
+## Interaction Modes, Work Intake, and Execution Depth
 
-If Nous is genuinely a **persistent personal assistant**, it must not split the world into:
+If Nous is genuinely a **persistent personal assistant**, it must preserve one assistant identity across channels **without** pretending that every incoming message belongs to the same kind of continuity.
 
-- "real agent tasks"
-- "simple commands"
-- "ambient signals"
+The older mainline framing said:
 
-as if these were different kinds of minds. They are different **input surfaces**, but they must enter one unified intent system.
+> every incoming user message, command, or ambient signal enters the same task-intake pipeline; the system then chooses the appropriate execution depth.
 
-### The architectural correction
+That framing was useful for resisting workspace-only "command path vs agent path" thinking, but it overreached in one important way: it made ordinary chat, explicit work, and transfer/handoff look like one universal governance path. In practice, that pushed too much ambiguous conversational traffic into intent/task machinery.
 
-The wrong framing is:
+### Mainline correction
 
-> some inputs go through a deep agent path, while other inputs take a special "short path"
+The mainline contract is now:
 
-That framing tends to pull the system back toward today's workspace-centric agent frameworks — optimized for command execution inside a repo, but weak at understanding the user's broader state and intent.
+> **Every incoming interaction is first classified as `chat`, `work`, or `handoff`.**  
+> **Only `work` interactions enter work governance by default.**
 
-The correct framing for Nous is:
+This is **not** a retreat into fragmented mini-assistants. The same Nous still carries:
 
-> every incoming user message, command, or ambient signal enters the same **task-intake pipeline**; the system then chooses the appropriate **execution depth**.
+- one assistant identity
+- one local policy surface
+- one persistent memory substrate
+- one background runtime
 
-This preserves the product thesis:
+What changes is the **entry contract**, not the identity of the assistant.
+
+### Why this is the right correction
+
+The wrong framing is now:
+
+> all inputs should enter one unified work-intake pipeline first, and only later be interpreted more narrowly
+
+That framing made it too easy to:
+
+- treat thread attachment as work-continuity truth
+- route lightweight chat repair into decision / clarification machinery
+- hide transfer semantics inside implicit continuity guesses
+- preserve the illusion of seamless arbitrary-window conversation by growing more router state
+
+The corrected framing preserves the product thesis more honestly:
 
 - **user-centered**, not workspace-centered
-- **intent-centered**, not command-centered
-- **continuity-first**, not session-first
-- **proactive-capable**, not purely request/response
+- **assistant-centered**, not mode-fragmented
+- **layered continuity**, not thread magic
+- **governed restoration**, not implicit carry-over
 
-### One intake, many depths
+### Three interaction modes
+
+#### 1. Chat mode
+
+Chat mode is for:
+
+- conversational repair
+- tone/phrasing changes
+- lightweight recall
+- preference notes
+- casual follow-up that does **not** clearly govern work
+
+Chat mode should feel light. It should **not** default to:
+
+- work contracts
+- trust receipts
+- decision queue entries
+- evidence-heavy delivery
+
+If chat is ambiguous, the system defaults to **chat**, not silent work escalation.
+
+#### 2. Work mode
+
+Work mode is for inputs that clearly:
+
+- start a concrete task
+- revise current task scope
+- pause / resume / cancel current work
+- answer a work-blocking clarification
+- otherwise govern a persistent work object
+
+Only in Work Mode does Nous enter the full work-governance path:
 
 ```text
-Message / Command / Ambient Signal
+Work interaction
   │
   ▼
 User-State Grounding
-  │  Who is this user? what thread/project/goal context are they in?
-  │  what unfinished work, preferences, and recent activity matter here?
   ▼
-Intent Inference
-  │  explicit intent
-  │  real intent
-  │  latent/potential intent
+Work-item inference
   ▼
 Clarification Gate
-  │  ask only if ambiguity blocks safe or useful execution
   ▼
 Task Contract Formation
-  │  goal · boundaries · success criteria · interruption policy
   ▼
 Execution Depth Selection
-  │
-  ├─ Planning depth: none / light / full
-  ├─ Time depth: foreground / background
-  ├─ Organization depth:
-  │    - single agent
-  │    - serial specialists
-  │    - parallel specialists
-  └─ Initiative mode:
-       - reactive to user request
-       - proactive from ambient/user-state signals
   ▼
 Orchestration + Execution
   ▼
 Verification + Decision Queue
   ▼
-Delivery + Memory + Follow-up
+Structured Delivery + Memory
 ```
 
-### User interaction flow
+Execution depth therefore remains real and important, but it is now a **Work Mode abstraction**, not the universal first step for every message.
 
-From the user's perspective, a well-designed Nous task should feel like this:
+#### 3. Handoff mode
 
-1. **The user expresses a goal or request**
-   - not necessarily in perfectly structured language
-   - possibly from any channel or environment
-2. **Nous demonstrates understanding before over-executing**
-   - what it thinks the user wants
-   - how deeply it plans to engage
-   - when it may need to interrupt
-3. **Nous proceeds mostly silently**
-   - only surfacing true blockers, risks, or important forks
-4. **Nous returns a structured delivery**
-   - result
-   - evidence / validation
-   - remaining risks
-   - possible next steps
-5. **Nous retains continuity**
-   - the task does not disappear just because the channel does
+Handoff mode is for interactions that explicitly ask the system to:
 
-### Internal execution flow
+- package current context
+- attach work/context to another surface
+- create a transfer capsule
+- move from one mode or window to another without pretending continuity is automatic
 
-Internally, the flow should be reasoned about in this order:
+Handoff is first-class because transfer continuity should be explicit and inspectable.
 
-1. **Signal intake**
-2. **User-state grounding**
-3. **Explicit / real / latent intent inference**
-4. **Clarification if ambiguity matters**
-5. **Task contract formation**
-6. **Execution depth selection**
-7. **Orchestration**
-8. **Verification**
-9. **Decision queue / human checkpoints**
-10. **Delivery + evidence capture + memory/evolution hooks**
+### Classifier contract
 
-This order matters. Planning is not the universal entrypoint. Long-running execution is not the universal entrypoint. Multi-agent orchestration is not the universal entrypoint. They are all consequences of the depth decision made *after* intent and contract are understood.
+The `chat / work / handoff` classifier is part of the architecture, not a hidden heuristic seam.
 
-### What "execution depth" means
+It may use:
 
-Execution depth is the key abstraction that replaces the misleading "fast path vs deep path" mental model.
+- current message content and explicit phrasing
+- existing governed work state
+- explicit handoff artifacts
+- permission / boundary context
+- governed restoration-gate results
 
-#### 1. Planning depth
+It must **not** treat these as sufficient by themselves:
 
-- **none**: direct action is safe and obvious
-- **light**: a short local plan is enough
-- **full**: explicit task decomposition and scheduler involvement are needed
+- raw thread attachment
+- same-surface continuity
+- conversational resemblance
+- heuristic topic similarity alone
+- unpromoted memory snippets
 
-#### 2. Time depth
+When confidence is insufficient, the fallback is:
 
-- **foreground**: user likely expects a quick answer/result
-- **background**: task continues asynchronously with progress continuity
+> **stay in chat**
 
-#### 3. Organization depth
+### Work continuity and restoration
 
-- **single agent**: one runtime loop is enough
-- **serial specialists**: distinct stages benefit from handoff
-- **parallel specialists**: bounded concurrent branches provide value
+Mainline still keeps work continuity, but with harder boundaries:
 
-#### 4. Initiative depth
+- raw conversational or thread similarity cannot silently continue work across surfaces
+- explicit handoff is a first-class bridge
+- governed structured-memory restoration is also allowed
 
-- **reactive**: user-requested execution
-- **proactive**: user-state and ambient signals justify a suggestion or action
+Direct restoration from memory is valid only when **both** conditions hold:
 
-### Commands are not a separate ontology
+1. the prior commonality has been promoted into a structured memory / work-pattern object
+2. the current scene passes match + permission + boundary checks
 
-This is the crucial point.
+This means explicit handoff is important, but it is **not** the only continuity bridge.
+
+### Commands are still not a separate assistant ontology
 
 A shell-like request such as:
 
@@ -2107,53 +2124,69 @@ A shell-like request such as:
 - "search for the failing test"
 - "see what changed in auth.ts"
 
-must not be modeled as a fundamentally different class of system input.
+is still not a fundamentally different *assistant species*.
 
-They are still:
+The distinction is not "commands vs real tasks."
+The distinction is:
 
-- user-originated signals
-- interpreted in user/project/thread context
-- candidates for latent-intent inference
-- subject to contract/risk/interruption policy
+- does this message stay in **chat**
+- does it enter **work**
+- or does it request **handoff**
 
-What differs is only the selected execution depth — often shallow, but still inside the same unified system.
+If it clearly enters Work Mode, execution depth still decides whether the work is shallow or deep.
 
 ### Relation to existing architecture layers
 
-This model does not replace the current layered architecture. It clarifies how those layers should collaborate.
+This correction refines, rather than discards, the layered architecture.
 
 | Concern | Primary layer(s) |
 |---------|------------------|
-| signal/message intake | Dialogue Layer + L0 Intent Plane |
-| user-state grounding | Context Assembly + Memory + Dialogue continuity |
-| intent inference | L0 Intent Plane |
-| task contract formation | L0 Intent Plane |
-| execution depth selection | L0/L1 boundary |
+| interaction-mode classification | Dialogue Layer + L0 boundary contract |
+| chat continuity | Dialogue Layer + Memory retrieval |
+| work-item inference / contract formation | L0 Intent Plane |
+| execution depth selection | L0/L1 boundary inside Work Mode |
 | planning / routing / scheduling | L1 Orchestration Plane |
 | tool/model execution | L2 Runtime |
-| evidence / continuity / replay | L3 Persistence + Dialogue Outbox |
+| evidence / replay / outbox | L3 Persistence + Dialogue Outbox |
+| handoff / transfer capsules | Dialogue Layer + L3 Persistence |
 | proactive follow-up | Perception Pipeline + L0 Ambient Intent |
 
 ### Architectural implication
 
-The current architecture already has many necessary building blocks:
+The current architecture already contains many of the right building blocks:
 
 - Unified Presence
-- Intent → Plan → Task separation
 - Context Assembly
-- Human Decision Queue
+- Decision Queue
 - Daemon continuity
-- Conflict detection
+- Intent / Plan / Task separation
 - Ambient Intent
 
-But this section makes explicit a still-missing middle structure:
+The missing correction was not "add more router cleverness." It was:
 
-1. **User-State Grounding as a first-class step**
-2. **Task Contract Formation as a first-class step**
-3. **Execution Depth Selection as a first-class step**
-4. **Delivery as a first-class contract, not just a final message**
+1. **Interaction mode as a first-class boundary**
+2. **Work governance only for work**
+3. **Chat clarification vs work clarification split**
+4. **Explicit handoff plus governed restoration instead of implicit continuity illusion**
 
-That is the path from "persistent agent runtime" toward "persistent personal assistant."
+That is the path from "persistent runtime with ambitious continuity language" to "persistent personal assistant with explicit, transferable, governable continuity."
+
+### `NousHumanLike` exploration boundary
+
+There is a separate exploratory branch:
+
+- `NousHumanLike`
+
+That branch is allowed to continue exploring:
+
+- human-like seamless arbitrary-window conversation
+
+But it is **not** part of mainline architecture requirements, and it must not silently flow back into mainline contracts. Mainline continues to optimize for:
+
+- one persistent assistant
+- layered continuity
+- explicit transfer
+- governed structured restoration
 
 ### Semantic Layering Draft
 
@@ -2518,48 +2551,50 @@ new input / ambient promotion
 
 This pattern is important because it preserves the original intent identity before human governance happens. Nous should not lose the original task simply because a checkpoint appeared in the middle.
 
-### Thread / Intent / DecisionQueue Relationship Model
+### Thread / WorkItem (`Intent`) / DecisionQueue Relationship Model
 
 To preserve continuity correctly, Nous must not collapse conversation, work, and blocking coordination into one object.
 
 - **Thread** = communication continuity
   - the place where the human and Nous talk
-  - contains messages, clarifications, notifications, and delivery
-- **Intent** = execution continuity
-  - the thing Nous is trying to accomplish
+  - a surface conversation container, not topic truth and not work truth
+  - contains messages, lightweight chat repair, notifications, replay, and delivery
+- **WorkItem** = execution continuity
+  - the thing Nous is trying to accomplish once an interaction enters Work Mode
   - owns goal, contract, execution depth, tasks, and execution state
+  - current code still uses the compatibility name `Intent`, but mainline architecture should now read it as a bounded migration toward `WorkItem`
 - **Decision** = blocking coordination item
-  - the explicit object for "I cannot safely/usefully continue until X is resolved"
-  - clarification is one decision kind, not the only one
+  - the explicit object for "I cannot safely/usefully continue this work until X is resolved"
+  - belongs to work blocking / governed checkpoints, not ordinary chat clarification
 - **DecisionQueue** = the thread-facing governance surface for pending decisions
-  - controls which blocking item is currently active for human resolution
+  - controls which work-blocking item is currently active for human resolution
   - keeps thread replies and resume semantics coherent
 
 #### Relationship
 
-- one `DialogueThread` may contain **multiple** intents over time
-- one intent should have one **primary thread** for human-facing coordination
+- one `DialogueThread` may contain **multiple** work items over time
+- one work item should have one **primary thread** for human-facing coordination
 - one blocking `Decision` belongs to:
-  - exactly one `intent`
+  - exactly one `work item`
   - exactly one `thread`
 - one `DecisionQueue` may contain multiple decisions over time, but MVP policy keeps only one pending decision active per thread at once
 
 So the model is not:
 
-- thread == intent
+- thread == work item
 
 It is:
 
 - thread = conversation container
-- intent = work identity
+- work item = work identity
 - decision = blocking bridge between them
 
 #### Invariants
 
-1. **Tasks belong to intents, not threads**
-2. **Messages belong to threads, not intents by default**
-3. **A clarification reply happens in a thread, but it resumes an intent**
-4. **Clarification does not create a new intent identity**
+1. **Tasks belong to work items, not threads**
+2. **Messages belong to threads, not work items by default**
+3. **A work clarification reply happens in a thread, but it resumes a work item**
+4. **Ordinary chat clarification should not create a new work item or decision by default**
 5. **The original request should remain preserved; the executable understanding may evolve**
 
 This implies Nous should distinguish between:

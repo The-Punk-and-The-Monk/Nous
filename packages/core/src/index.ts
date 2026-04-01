@@ -5,6 +5,9 @@ export type {
 	Intent,
 	AmbientIntent,
 	IntentStatus,
+	WorkItem,
+	AmbientWorkItem,
+	WorkItemStatus,
 	StructuredGoal,
 	Constraint,
 	CheckpointPolicy,
@@ -230,6 +233,8 @@ export { DEFAULT_COMMUNICATION_POLICY } from "./types/communication.ts";
 export type {
 	DialogueThread,
 	DialogueThreadStatus,
+	DialogueThreadMetadata,
+	DialogueThreadSurfaceKind,
 	DialogueMessage,
 	DialogueRole,
 	DialogueDirection,
@@ -239,6 +244,7 @@ export type {
 export type {
 	InteractionPresentation,
 	InteractionPhase,
+	InteractionMode,
 	TurnRouteKind,
 	ThreadResolutionKind,
 	TurnResolutionSnapshot,
@@ -246,6 +252,7 @@ export type {
 	ProcessItemStatus,
 	ProcessItem,
 	AnswerArtifact,
+	HandoffCapsule,
 	DialogueMessageMetadata,
 } from "./types/interaction.ts";
 export type {

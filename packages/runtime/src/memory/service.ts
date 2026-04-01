@@ -86,6 +86,19 @@ export interface StoreManualMemoryNoteInput {
 	confidence?: number;
 }
 
+export interface PromoteWorkContinuationInput {
+	workItemId: string;
+	summary: string;
+	threadId?: string;
+	scope?: ChannelScope;
+	sourceSurfaceKind?: string;
+	pendingQuestions?: string[];
+	relevantFacts?: string[];
+	sourceRefs?: MemorySourceRef[];
+	parentMemoryIds?: string[];
+	confidence?: number;
+}
+
 export interface MemoryContextQuery
 	extends Omit<MemoryRetrievalInput, "agentId"> {
 	recordAccess?: boolean;
@@ -382,6 +395,48 @@ export class MemoryService {
 			lastAccessedAt: createdAt,
 			accessCount: 0,
 			retentionScore: 1.15,
+		});
+	}
+
+	promoteWorkContinuation(input: PromoteWorkContinuationInput): MemoryEntry {
+		const relevantFacts = dedupeStrings(input.relevantFacts ?? []).slice(0, 5);
+		const pendingQuestions = dedupeStrings(input.pendingQuestions ?? []).slice(
+			0,
+			5,
+		);
+		const confidence = clampConfidence(input.confidence ?? 0.82);
+		const content = [
+			`Structured work continuation: ${input.summary.trim()}`,
+			`Work item: ${input.workItemId}`,
+			relevantFacts.length > 0
+				? `Relevant facts: ${relevantFacts.join(" | ")}`
+				: undefined,
+			pendingQuestions.length > 0
+				? `Pending questions: ${pendingQuestions.join(" | ")}`
+				: undefined,
+		]
+			.filter(Boolean)
+			.join("\n");
+
+		return this.storeManualNote({
+			content,
+			factType: "generalized_pattern",
+			threadId: input.threadId,
+			intentId: input.workItemId,
+			scope: input.scope,
+			tags: dedupeStrings([
+				"work_continuity",
+				"structured",
+				"double_gate_candidate",
+				input.sourceSurfaceKind ? `surface:${input.sourceSurfaceKind}` : "",
+			]),
+			sourceRefs: compactRefs([
+				input.threadId ? { kind: "thread", id: input.threadId } : undefined,
+				{ kind: "intent", id: input.workItemId },
+				...(input.sourceRefs ?? []),
+			]),
+			parentMemoryIds: input.parentMemoryIds,
+			confidence,
 		});
 	}
 

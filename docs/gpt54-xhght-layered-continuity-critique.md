@@ -291,6 +291,25 @@ OpenClaw 没有试图在对象模型上过度拟人化。
 
 > **One persistent assistant. Multiple continuity layers. Explicit handoff.**
 
+### 5.0 Mainline clarification after planning handoff
+
+后续 deep-interview / consensus planning 又补上了两个主线边界：
+
+1. **mainline 不再坚持“所有输入先进入统一 intent/task-intake pipeline”**
+   - 现在的主线合同是：
+   - **先判 `chat / work / handoff`，再决定是否进入工作治理**
+2. **显式 handoff 很重要，但不是唯一 bridge**
+   - mainline 允许：
+   - **升级后的结构化 memory 在双门槛下直接恢复 work continuity**
+   - 双门槛是：
+     - 已升级为结构化 work/commonality memory
+     - 当前场景通过 match + permission + boundary checks
+
+因此，主线不是“只有显式 handoff”，
+而是：
+
+> **explicit handoff first-class + governed structured restoration allowed**
+
 ### 5.1 五层连续性，而不是一种 continuity
 
 #### Layer A — Identity Continuity
@@ -356,6 +375,17 @@ OpenClaw 没有试图在对象模型上过度拟人化。
 - “把这个对话转成一个明确任务”
 - “把这个任务 attach 到 IDE”
 - “把当前结论转成可恢复 capsule”
+
+但主线后续澄清也说明：
+
+- explicit handoff **不是唯一合法 bridge**
+- 当 memory 已被提升为结构化对象，而且当前场景通过双门槛检查时，
+- 系统也可以直接恢复 work continuity
+
+所以更准确的说法是：
+
+> **transfer continuity 应优先追求显式可转交；  
+> memory continuity 只在被治理提升后，才可直接参与恢复。**
 
 #### Layer E — Memory Continuity
 
@@ -459,6 +489,11 @@ OpenClaw 没有试图在对象模型上过度拟人化。
 - “你还记得刚才那个吗”
 
 这些更像 chat-layer continuation，不该默认生成一个完整工作对象。
+
+主线现在还进一步收紧为：
+
+- 架构命名目标应迁向 `WorkItem`
+- 但允许存在一个有边界的 `Intent -> WorkItem` 兼容迁移期
 
 ### 7.3 `Decision` 只服务工作阻塞，不接管普通对话澄清
 
@@ -568,7 +603,7 @@ interface HandoffCapsule {
   id: string;
   sourceSurfaceId?: string;
   sourceThreadId?: string;
-  sourceWorkId?: string;
+  sourceWorkItemId?: string;
   summary: string;
   relevantFacts: string[];
   pendingQuestions: string[];
@@ -587,6 +622,13 @@ interface HandoffCapsule {
 - CLI 聊到一半，切到 IDE
 - 把当前需要继续的部分显式打包成 capsule
 - IDE attach 的不是“神秘统一 thread”，而是一个明确 handoff
+
+但主线最终没有把它升级为“唯一合法 continuity bridge”。
+它现在的地位是：
+
+- **first-class**
+- **strongly preferred for explicit transfer**
+- **but coexists with governed structured-memory restoration**
 
 ### Phase 4 — Chat memory 与 Work memory 分离
 
@@ -692,3 +734,19 @@ interface HandoffCapsule {
 正确的回撤方向是：
 
 > **保留同一个持续助手，放弃统一连续对话幻觉，把 continuity 改造成分层、显式、可转交。**
+
+### 补充：`NousHumanLike` 分支
+
+为了不丢失那条更激进的探索线，repo 现在还明确保留：
+
+- `NousHumanLike`
+
+它继续探索：
+
+- “像人一样在任意窗口自然无缝继续对话”
+
+但它与 mainline 的关系是：
+
+- **独立探索**
+- **不回流 main**
+- **不重新定义 mainline 的合同**

@@ -8,8 +8,8 @@ import type {
 	Channel,
 	DaemonEnvelope,
 	DaemonMessageType,
-	DialogueMessageMetadata,
 	DialogueMessage,
+	DialogueMessageMetadata,
 	DialogueThread,
 	GetThreadPayload,
 	OutboxEntry,
@@ -285,7 +285,8 @@ export class DialogueService {
 		const kind = params.kind ?? "notification";
 		const presentation: DialogueMessageMetadata["presentation"] =
 			typeof params.metadata?.presentation === "string"
-				? (params.metadata.presentation as DialogueMessageMetadata["presentation"])
+				? (params.metadata
+						.presentation as DialogueMessageMetadata["presentation"])
 				: kind === "result"
 					? "answer"
 					: kind === "decision_needed"
@@ -418,6 +419,24 @@ export class DialogueService {
 		);
 		intentIds.add(intentId);
 		metadata.intentIds = [...intentIds];
+		metadata.activeIntentId = intentId;
+		metadata.activeWorkItemId = intentId;
+		this.config.messageStore.updateThread(threadId, {
+			updatedAt: this.clock(),
+			metadata,
+		});
+	}
+
+	linkWorkItemToThread(threadId: string, workItemId: string): void {
+		this.linkIntentToThread(threadId, workItemId);
+	}
+
+	setHandoffCapsuleForThread(threadId: string, capsuleId: string): void {
+		const thread = this.requireThread(threadId);
+		const metadata = {
+			...(thread.metadata ?? {}),
+			handoffCapsuleId: capsuleId,
+		};
 		this.config.messageStore.updateThread(threadId, {
 			updatedAt: this.clock(),
 			metadata,
@@ -443,7 +462,11 @@ export class DialogueService {
 			status: "active",
 			createdAt: timestamp,
 			updatedAt: timestamp,
-			metadata: { channelIds: [input.channelId] },
+			metadata: {
+				channelIds: [input.channelId],
+				originChannel: input.channelId,
+				surfaceKind: inferSurfaceKind(input.channelId),
+			},
 		};
 		this.config.messageStore.createThread(thread);
 		return thread;
@@ -493,6 +516,7 @@ export class DialogueService {
 		);
 		if (channelId) {
 			currentChannelIds.add(channelId);
+			metadata.surfaceKind = inferSurfaceKind(channelId);
 		}
 		metadata.channelIds = [...currentChannelIds];
 
@@ -539,4 +563,23 @@ function isDeliverableToChannel(
 	channelId: string,
 ): boolean {
 	return !entry.targetChannel || entry.targetChannel === channelId;
+}
+
+function inferSurfaceKind(channelId: string) {
+	if (channelId.startsWith("channel_cli")) {
+		return "cli" as const;
+	}
+	if (channelId.startsWith("channel_ide")) {
+		return "ide" as const;
+	}
+	if (channelId.startsWith("channel_web")) {
+		return "web" as const;
+	}
+	if (channelId.startsWith("channel_notification")) {
+		return "notification" as const;
+	}
+	if (channelId === "daemon") {
+		return "daemon" as const;
+	}
+	return "unknown" as const;
 }

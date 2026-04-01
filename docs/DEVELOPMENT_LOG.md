@@ -45,6 +45,210 @@ For significant sessions, capture:
 
 ## 2026-04-01
 
+### Session: Finish the layered continuity retreat verification pass
+
+- Context / Trigger:
+  - The layered-continuity Ralph run resumed from an unfinished worktree and needed to prove whether the implementation was actually complete against the PRD/test spec, not merely partially landed.
+
+- Problem:
+  - Although the main interaction-mode routing and compatibility seams were already in place, two kinds of gaps remained:
+    - **doc drift**: early `ARCHITECTURE.md` glossary/dialogue-layer text still described `DialogueThread` too much like topic/work truth
+    - **evidence drift**: tests around explicit `send_message` work entry and thread-container metadata were still thinner than the PRD/test-spec boundary required
+  - The mandatory Ralph deslop step also still had to run on the Ralph-owned file set.
+
+- Options considered:
+  - Option A: declare completion from existing typecheck/tests.
+    - Rejected because residual architecture wording would leave contradictory mainline guidance in the same file.
+  - Option B: do a wide `Intent -> WorkItem` rewrite immediately.
+    - Rejected because the current implementation intentionally stays in a bounded compatibility phase and a global rename would widen scope.
+  - Option C: tighten only the contradictory doc surfaces and add the minimum missing regression coverage.
+    - Chosen because it closes the remaining acceptance/evidence gaps with the smallest safe diff.
+
+- Decision:
+  - Update the early architecture glossary and dialogue-layer/L0 summaries so they agree with the later interaction-mode-first contract.
+  - Strengthen runtime regression proof for:
+    - explicit work-mode `send_message`
+    - chat fallback on inferred continuity language
+    - thread metadata as a surface/container seam
+  - Use the deslop pass to remove overlapping explicit-work test coverage rather than broadening implementation scope.
+
+- Changes made:
+  - `ARCHITECTURE.md`
+    - rewrote the early glossary entries for `WorkItem`, `Ambient WorkItem`, and `DialogueThread`
+    - rewrote Dialogue Layer / L0 summaries so thread attachment is no longer described as work truth
+  - `packages/infra/tests/daemon-interaction-mode.test.ts`
+    - added/kept stronger coverage for explicit work entry, inferred-continuity chat fallback, and proactive non-work fallback
+    - merged overlapping explicit-work tests during the deslop pass
+  - `packages/infra/tests/dialogue-service.test.ts`
+    - added assertions for `originChannel`, `surfaceKind`, and `activeWorkItemId` / `activeIntentId`
+  - `docs/DEVELOPMENT_LOG.md`
+    - recorded the resumed verification/deslop session
+
+- Impact / Result:
+  - The architecture file now reads consistently from the top of the document instead of only in the later retreat section.
+  - The regression suite now proves the critical `chat / work / handoff` boundaries more directly.
+  - Ralph now has fresh post-deslop evidence for typecheck/tests plus targeted lint on the task-owned file set.
+
+- Open questions / next steps:
+  - Repo-wide `bun run lint` still reports unrelated/pre-existing issues in generated/session-owned files under `.omx/`, `.claude/`, and an unrelated worktree change in `packages/runtime/src/llm/openai-shared.ts`; this lane therefore verified Biome on the layered-continuity-owned files instead of the whole tree.
+  - The broader repo-wide `Intent -> WorkItem` terminology migration remains intentionally incomplete and should be handled as a separate bounded follow-up.
+
+### Session: Land interaction-mode routing and the first structured work-restoration gate
+
+- Context / Trigger:
+  - After the layered continuity retreat plan was approved, the next execution step was to convert the mainline contract into real repo behavior instead of leaving it as planning-only prose.
+  - The concrete target was the unfinished `$ralph .omx/plans/prd-layered-continuity-retreat.md` implementation pass.
+
+- Problem:
+  - Mainline architecture and runtime still leaned on the older unified-intake worldview:
+    - docs still framed all inputs as one intake path before depth selection
+    - daemon thread replies still defaulted toward work governance
+    - no first-class `chat / work / handoff` classifier existed in code
+    - the `Intent -> WorkItem` migration had no explicit compatibility seam
+    - governed structured-memory restoration was described in planning artifacts but had no executable gate contract yet
+
+- Options considered:
+  - Option A: finish only the doc rewrite and defer runtime changes.
+    - Rejected because the repo would remain architecturally self-contradictory.
+  - Option B: patch daemon routing only and postpone the restoration gate.
+    - Rejected because it would leave the PRD’s “double gate” requirement ungrounded in code.
+  - Option C: land docs + routing + compatibility aliases + a first restoration evaluator seam together.
+    - Chosen because it closes the mainline contract loop with the smallest still-coherent slice.
+
+- Decision:
+  - Replace the old unified-intake section in `ARCHITECTURE.md` with an interaction-mode-first contract.
+  - Keep the current runtime identity unified, but classify inbound turns into `chat`, `work`, or `handoff` before work governance.
+  - Introduce a bounded `Intent -> WorkItem` compatibility layer instead of a hard rename.
+  - Add a first structured work-continuity promotion + restoration evaluator so governed restoration is no longer doc-only.
+
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - replaced the old `Unified Task Intake and Execution Depth Model` mainline framing with `Interaction Modes, Work Intake, and Execution Depth`
+    - made `chat / work / handoff` the first boundary
+    - documented chat fallback on ambiguity
+    - documented `NousHumanLike` as an isolated exploration boundary
+    - clarified `DialogueThread` / `WorkItem` / `Decision` responsibilities
+  - Updated `docs/gpt54-xhght-layered-continuity-critique.md`
+    - reconciled the critique memo with the planned mainline outcome:
+      - explicit handoff is first-class
+      - governed structured restoration is also allowed
+      - `Intent -> WorkItem` migration is bounded
+      - `NousHumanLike` remains isolated
+  - Updated `packages/core/src/types/dialogue.ts`
+    - added typed `DialogueThreadMetadata`
+    - added surface metadata and explicit `activeWorkItemId` / `handoffCapsuleId` fields
+  - Updated `packages/core/src/types/interaction.ts`
+    - added `InteractionMode`
+    - added `HandoffCapsule`
+    - allowed message metadata to carry mode + handoff artifacts
+  - Updated `packages/core/src/types/intent.ts`, `packages/core/src/types/task-intake.ts`, `packages/core/src/index.ts`
+    - added bounded `WorkItem` compatibility aliases and exports
+  - Added `packages/infra/src/intake/interaction-mode-classifier.ts`
+    - explicit heuristic contract for `chat / work / handoff`
+    - ambiguity fallback to chat
+  - Updated `packages/infra/src/daemon/server.ts`
+    - thread messages now classify mode before entering work governance
+    - chat-mode messages answer conversationally without trust receipts / work contracts
+    - handoff-mode messages create explicit capsules instead of implicit continuation
+    - proactive submissions also respect the same non-work fallback
+  - Updated `packages/infra/src/daemon/dialogue-service.ts`
+    - thread metadata now persists surface/handoff/work linkage
+  - Updated `packages/orchestrator/src/intent/parser.ts`
+    - `TaskIntake` now exposes `workItem` alongside the current `intent` compatibility field
+  - Updated `packages/runtime/src/memory/service.ts`
+    - added `promoteWorkContinuation()` to create structured semantic work-continuity memories
+  - Added `packages/runtime/src/memory/work-continuity.ts`
+    - added `evaluateWorkContinuationRestoration()` as the first executable double-gate contract
+  - Added/updated tests:
+    - `packages/core/tests/work-item-alias.test.ts`
+    - `packages/infra/tests/dialogue-service.test.ts`
+    - `packages/infra/tests/interaction-mode-classifier.test.ts`
+    - `packages/infra/tests/daemon-interaction-mode.test.ts`
+    - `packages/runtime/tests/work-continuity-restoration.test.ts`
+    - covered thread surface/handoff metadata, attached-thread work vs chat/handoff routing, proactive non-work fallback, and restoration gate behavior
+
+- Impact / Result:
+  - The repo now has a real code-level boundary between chat continuity, work continuity, and explicit transfer continuity.
+  - Ambiguous follow-ups no longer have to become work by default.
+  - Mainline now has an executable first pass of the “structured promotion + live gate” restoration rule rather than only a planning note.
+
+- Open questions / next steps:
+  - The restoration evaluator currently proves the gate contract, but it is not yet wired into daemon recovery flows.
+  - Persistence/storage naming still uses `Intent` broadly; the repo is now in an explicit compatibility phase, not the final `WorkItem` end state.
+  - Existing older tests and architecture passages still refer to generalized `DecisionQueue` behavior and should keep being audited so ordinary chat never drifts back into work-governance semantics.
+
+
+### Session: Consensus planning for layered continuity retreat mainline
+
+- Context / Trigger:
+  - After the deep-interview converged on a planning-ready spec for the layered continuity retreat, the next step was to turn that clarified architecture direction into a consensus-ready plan instead of jumping into implementation.
+  - The user invoked `$plan --consensus --direct` against `.omx/specs/deep-interview-layered-continuity-retreat.md`.
+
+- Problem:
+  - The repo already contained a clarified requirements artifact, but execution was still risky because:
+    - `ARCHITECTURE.md` still contains the older unified-intent-first contract
+    - code paths in daemon/controller/orchestrator still route through `submitIntentBackground`
+    - the retreat direction needed a concrete implementation order, verification contract, and staffing guidance before any execution lane could start
+  - The plan also needed to preserve a clean isolation boundary for the exploratory `NousHumanLike` branch.
+
+- Alternatives considered:
+  - Route-first retrofit.
+    - Rejected because it would patch intake behavior on top of the old ontology.
+  - Memory-first restoration.
+    - Rejected because it would risk reintroducing implicit continuity semantics before contracts were cleaned up.
+  - Object-first contraction.
+    - Chosen because the clarified problem is ontological before it is procedural.
+
+- Decision:
+  - Create consensus planning artifacts under `.omx/plans/`:
+    - `prd-layered-continuity-retreat.md`
+    - `test-spec-layered-continuity-retreat.md`
+  - Use the deep-interview spec as the requirements source of truth.
+  - Keep the mainline plan centered on:
+    - `chat/work/handoff` as the first classification boundary
+    - `Intent -> WorkItem`
+    - `DialogueThread` as surface container
+    - `Decision` limited to work blocking
+    - structured-memory restoration under a double gate
+    - `NousHumanLike` documented but isolated from mainline
+  - Sequence follow-up implementation planning as:
+    1. semantic object contracts first
+    2. bounded terminology migration (`Intent -> WorkItem`) second
+    3. routing/gating third
+    4. memory promotion/restoration fourth
+
+- Changes made:
+  - Added `.omx/plans/prd-layered-continuity-retreat.md`
+    - requirements summary
+    - testable acceptance criteria
+    - RALPLAN-DR summary
+    - ADR
+    - implementation steps with file-backed evidence
+    - risks/mitigations
+    - verification steps
+    - available-agent-types roster
+    - staffing guidance / launch hints / team verification path
+  - Added `.omx/plans/test-spec-layered-continuity-retreat.md`
+    - doc/unit/integration/restoration verification matrix
+    - concrete verification cases for daemon/orchestrator/decision-flow migration
+  - Tightened the draft after internal architect/critic-style review by making:
+    - the `chat/work/handoff` classifier contract explicit, including prohibited signals and ambiguity fallback to chat
+    - semantic contraction land before the public `Intent -> WorkItem` terminology migration
+    - single persistent-assistant coherence an explicit acceptance target rather than an implied assumption
+    - `Intent -> WorkItem` compatibility/deprecation an explicit deliverable
+    - explicit handoff optional-but-first-class alongside governed restoration
+    - search-based no-reentry / no-unified-intake drift checks part of verification
+
+- Impact / Result:
+  - The repo now has the planning artifacts required for a ralplan-first handoff.
+  - Mainline architecture work can begin from a bounded, evidence-backed plan instead of a loose design memo.
+  - The execution handoff can preserve the deep-interview contract without reopening the same requirements debate.
+
+- Open questions / follow-ups:
+  - Exact `WorkItem` migration mechanics across persistence/runtime/types.
+  - Exact structured-memory promotion object(s) and the live double-gate evaluator.
+  - Exact wording changes required in `ARCHITECTURE.md` to preserve `NousHumanLike` as an isolated branch without contaminating mainline requirements.
+
 ### Session: Critique unified cross-window conversational continuity and propose a layered retreat
 
 - Context / Trigger:

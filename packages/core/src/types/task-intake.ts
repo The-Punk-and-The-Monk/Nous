@@ -1,4 +1,4 @@
-import type { Intent } from "./intent.ts";
+import type { Intent, WorkItem } from "./intent.ts";
 
 export type PlanningDepth = "none" | "light" | "full";
 
@@ -46,6 +46,7 @@ export interface ExecutionDepthDecision {
 
 export interface TaskIntake {
 	intent: Intent;
+	workItem: WorkItem;
 	contract: TaskContract;
 	executionDepth: ExecutionDepthDecision;
 	clarificationQuestions: string[];

@@ -7,6 +7,7 @@ export type InteractionPresentation =
 	| "system";
 
 export type InteractionPhase = "commentary" | "final";
+export type InteractionMode = "chat" | "work" | "handoff";
 
 export type TurnRouteKind =
 	| "new_intent"
@@ -76,14 +77,28 @@ export interface AnswerArtifact {
 	mode?: string;
 }
 
+export interface HandoffCapsule {
+	id: string;
+	sourceSurfaceId?: string;
+	sourceThreadId?: string;
+	sourceWorkItemId?: string;
+	summary: string;
+	relevantFacts: string[];
+	pendingQuestions: string[];
+	suggestedNextAction?: "continue_chat" | "resume_work" | "start_new_work";
+	createdAt: ISOTimestamp;
+}
+
 export interface DialogueMessageMetadata extends Record<string, unknown> {
 	kind?: string;
 	presentation?: InteractionPresentation;
 	phase?: InteractionPhase;
+	interactionMode?: InteractionMode;
 	turnId?: string;
 	intentId?: string;
 	decisionId?: string;
 	processItem?: ProcessItem;
 	answerArtifact?: AnswerArtifact;
 	trustReceipt?: TurnResolutionSnapshot;
+	handoffCapsule?: HandoffCapsule;
 }

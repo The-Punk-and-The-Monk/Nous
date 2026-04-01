@@ -88,6 +88,7 @@ export class IntentParser {
 
 			return {
 				intent,
+				workItem: intent,
 				contract: parsed.contract,
 				executionDepth: parsed.executionDepth,
 				clarificationQuestions: parsed.clarificationQuestions,

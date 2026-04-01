@@ -4,10 +4,14 @@ import type {
 	AssembledContext,
 	Channel,
 	ClientEnvelope,
+	ContentBlock,
 	DaemonEnvelope,
 	Decision,
 	Flow,
+	HandoffCapsule,
 	Intent,
+	InteractionMode,
+	LLMMessage,
 	LLMProvider,
 	MergeCandidate,
 	ProactiveCandidate,
@@ -33,20 +37,17 @@ import {
 	loadPermissionPolicy,
 	resolvePermissionCapabilities,
 } from "../config/permissions.ts";
+import { ControlIntentRouter } from "../control/control-intent-router.ts";
 import { LocalProcedureSeedStore } from "../evolution/local-procedure-seed.ts";
 import { DecisionResponseInterpreter } from "../intake/decision-response-interpreter.ts";
 import { buildUserStateGrounding } from "../intake/grounding.ts";
+import { InteractionModeClassifier } from "../intake/interaction-mode-classifier.ts";
 import {
 	type ThreadInputDisposition,
 	ThreadInputRouter,
 } from "../intake/thread-input-router.ts";
 import { ThreadScopeRouter } from "../intake/thread-scope-router.ts";
-import { ControlIntentRouter } from "../control/control-intent-router.ts";
 import { ProcessSupervisor } from "../supervisor/supervisor.ts";
-import {
-	buildTrustReceiptDelivery,
-	projectProgressEvent,
-} from "./process-surface.ts";
 import {
 	type ConflictDecision,
 	StaticIntentConflictManager,
@@ -55,6 +56,10 @@ import { DaemonController } from "./controller.ts";
 import { DialogueService } from "./dialogue-service.ts";
 import { getDaemonPaths } from "./paths.ts";
 import { PerceptionService } from "./perception.ts";
+import {
+	buildTrustReceiptDelivery,
+	projectProgressEvent,
+} from "./process-surface.ts";
 
 export interface NousDaemonOptions {
 	llm: LLMProvider;
@@ -78,6 +83,7 @@ export class NousDaemon {
 	private readonly proactive: ProactiveRuntimeService;
 	private readonly reflection: ReflectionService;
 	private readonly perception: PerceptionService;
+	private readonly interactionModeClassifier: InteractionModeClassifier;
 	private readonly threadInputRouter: ThreadInputRouter;
 	private readonly threadScopeRouter: ThreadScopeRouter;
 	private readonly decisionResponseInterpreter: DecisionResponseInterpreter;
@@ -118,6 +124,7 @@ export class NousDaemon {
 			workStore: this.backend.work,
 		});
 		this.orchestrator.registerAgent(createGeneralAgent());
+		this.interactionModeClassifier = new InteractionModeClassifier();
 		this.threadInputRouter = new ThreadInputRouter(options.llm);
 		this.threadScopeRouter = new ThreadScopeRouter(options.llm);
 		this.decisionResponseInterpreter = new DecisionResponseInterpreter(
@@ -511,9 +518,27 @@ export class NousDaemon {
 				"intent_cancel_requested",
 			);
 			await this.activateNextQueuedDecision(threadId);
+			this.dialogue.enqueueAssistantMessage({
+				threadId,
+				content:
+					result.mode === "awaiting_boundary"
+						? "Cancellation requested for the current work item. I will stop at the next safe boundary."
+						: `Intent cancelled: ${params.reason}`,
+				kind: "notification",
+				metadata: {
+					intentId: params.intentId,
+					interactionMode: "work",
+					reason:
+						result.mode === "awaiting_boundary"
+							? "intent_cancel_requested"
+							: "intent_cancelled",
+				},
+			});
 			if (result.mode === "awaiting_boundary") {
 				await this.flushPendingDeliveriesForThread(threadId);
+				return;
 			}
+			await this.flushPendingDeliveriesForThread(threadId);
 		}
 	}
 
@@ -588,6 +613,31 @@ export class NousDaemon {
 	}): Promise<void> {
 		const pending = this.backend.decisions.getPendingByThread(payload.threadId);
 		if (pending.length === 0) {
+			const modeDecision = await this.interactionModeClassifier.classify({
+				text: payload.text,
+				activeIntent: this.getLatestControllableIntentForThread(
+					payload.threadId,
+				),
+				recentThreadMessages: this.backend.messages
+					.getMessagesByThread(payload.threadId)
+					.slice(-30)
+					.map((message) => ({
+						role: message.role,
+						content: message.content,
+					})),
+				threadMetadata:
+					this.backend.messages.getThread(payload.threadId)?.metadata ?? {},
+			});
+			if (modeDecision.mode === "chat") {
+				this.storeConversationTurnMemory(payload);
+				await this.handleChatModeMessage(payload, modeDecision);
+				return;
+			}
+			if (modeDecision.mode === "handoff") {
+				this.storeConversationTurnMemory(payload);
+				await this.handleHandoffModeMessage(payload, modeDecision);
+				return;
+			}
 			if (await this.tryHandleScopeSensitiveThreadMessage(payload)) {
 				this.storeConversationTurnMemory(payload);
 				return;
@@ -854,6 +904,174 @@ export class NousDaemon {
 		});
 	}
 
+	private async handleChatModeMessage(
+		payload: {
+			threadId: string;
+			messageId: string;
+			text: string;
+			channel: Channel;
+		},
+		modeDecision: {
+			mode: InteractionMode;
+			rationale: string;
+			confidence: string;
+		},
+	): Promise<void> {
+		const executionContext = this.buildExecutionContext(payload);
+		const recentThreadMessages: LLMMessage[] = this.backend.messages
+			.getMessagesByThread(payload.threadId)
+			.slice(-12)
+			.map((message) => {
+				const role: "user" | "assistant" | "system" =
+					message.role === "human"
+						? "user"
+						: message.role === "system"
+							? "system"
+							: "assistant";
+				return {
+					role,
+					content: message.content,
+				};
+			});
+		const response = await this.options.llm.chat({
+			system: [
+				executionContext.systemPrompt,
+				"You are replying in chat mode inside one persistent assistant runtime.",
+				"Stay conversational, concise, and helpful.",
+				"Do not create task contracts, evidence lists, trust receipts, or work-governance language unless the user explicitly asks to enter work mode.",
+				"If the user seems to want work execution, briefly answer but tell them to make the work request explicit.",
+			].join("\n\n"),
+			messages: recentThreadMessages,
+			maxTokens: 400,
+			temperature: 0.2,
+		});
+		const content =
+			extractAssistantText(response.content) ||
+			"I treated that as a chat follow-up. If you want me to turn it into governed work, say so explicitly.";
+		const outbound = this.dialogue.enqueueAssistantMessage({
+			threadId: payload.threadId,
+			content,
+			kind: "result",
+			metadata: {
+				presentation: "answer",
+				phase: "final",
+				interactionMode: "chat",
+				answerArtifact: { mode: "chat" },
+				modeConfidence: modeDecision.confidence,
+				modeRationale: modeDecision.rationale,
+			},
+		});
+		this.memory.ingestConversationTurn({
+			threadId: payload.threadId,
+			role: "assistant",
+			content,
+			scope: payload.channel.scope,
+			messageId: outbound.message.id,
+		});
+		await this.flushPendingDeliveriesForThread(payload.threadId);
+	}
+
+	private async handleHandoffModeMessage(
+		payload: {
+			threadId: string;
+			messageId: string;
+			text: string;
+			channel: Channel;
+		},
+		modeDecision: {
+			mode: InteractionMode;
+			rationale: string;
+			confidence: string;
+		},
+	): Promise<void> {
+		const capsule = this.buildHandoffCapsule(payload);
+		const content = [
+			"I treated that as an explicit handoff request.",
+			`Summary: ${capsule.summary}`,
+			capsule.relevantFacts.length > 0
+				? `Relevant facts: ${capsule.relevantFacts.join(" | ")}`
+				: undefined,
+			capsule.pendingQuestions.length > 0
+				? `Pending questions: ${capsule.pendingQuestions.join(" | ")}`
+				: undefined,
+			capsule.suggestedNextAction
+				? `Suggested next action: ${capsule.suggestedNextAction}`
+				: undefined,
+		]
+			.filter(Boolean)
+			.join("\n");
+		const outbound = this.dialogue.enqueueAssistantMessage({
+			threadId: payload.threadId,
+			content,
+			kind: "notification",
+			metadata: {
+				presentation: "answer",
+				phase: "final",
+				interactionMode: "handoff",
+				handoffCapsule: capsule,
+				answerArtifact: { mode: "handoff" },
+				modeConfidence: modeDecision.confidence,
+				modeRationale: modeDecision.rationale,
+			},
+		});
+		this.dialogue.setHandoffCapsuleForThread(payload.threadId, capsule.id);
+		this.memory.ingestConversationTurn({
+			threadId: payload.threadId,
+			role: "assistant",
+			content,
+			scope: payload.channel.scope,
+			messageId: outbound.message.id,
+		});
+		await this.flushPendingDeliveriesForThread(payload.threadId);
+	}
+
+	private buildHandoffCapsule(payload: {
+		threadId: string;
+		text: string;
+		channel: Pick<Channel, "id" | "type" | "scope">;
+	}): HandoffCapsule {
+		const activeIntent = this.getLatestControllableIntentForThread(
+			payload.threadId,
+		);
+		const recentMessages = this.backend.messages
+			.getMessagesByThread(payload.threadId)
+			.slice(-8);
+		const relevantFacts = [
+			activeIntent?.goal.summary,
+			activeIntent?.contract?.summary,
+			...recentMessages
+				.filter((message) => message.role === "human")
+				.slice(-3)
+				.map((message) => compactText(message.content, 120)),
+		].filter((value): value is string =>
+			Boolean(value && value.trim().length > 0),
+		);
+		const pendingDecisionQuestions = this.backend.decisions
+			.getPendingByThread(payload.threadId)
+			.flatMap((decision) => decision.questions);
+		const pendingQuestions =
+			pendingDecisionQuestions.length > 0
+				? pendingDecisionQuestions
+				: (activeIntent?.clarificationQuestions ?? []);
+		return {
+			id: prefixedId("handoff"),
+			sourceSurfaceId: payload.channel.id,
+			sourceThreadId: payload.threadId,
+			sourceWorkItemId: activeIntent?.id,
+			summary:
+				activeIntent?.goal.summary ??
+				`Continue this thread from ${payload.channel.type} without assuming implicit work continuation.`,
+			relevantFacts: dedupeStrings(relevantFacts).slice(0, 5),
+			pendingQuestions: dedupeStrings(pendingQuestions).slice(0, 5),
+			suggestedNextAction: activeIntent
+				? "resume_work"
+				: recentMessages.length > 1
+					? "continue_chat"
+					: "start_new_work",
+			createdAt: now(),
+		};
+	}
+
 	private async handleDecisionTextResponse(
 		payload: {
 			threadId: string;
@@ -902,11 +1120,14 @@ export class NousDaemon {
 				threadId: payload.threadId,
 				turnId: payload.messageId,
 				intentId: decision.intentId,
-				intentSummary: this.backend.intents.getById(decision.intentId)?.goal.summary,
+				intentSummary: this.backend.intents.getById(decision.intentId)?.goal
+					.summary,
 				route: "clarification_resume",
 				executionContext,
 				createdAt: turnStartedAt,
-				notes: ["This reply is being used to resume the original intent after clarification."],
+				notes: [
+					"This reply is being used to resume the original intent after clarification.",
+				],
 			}),
 		);
 		await this.flushPendingDeliveriesForThread(payload.threadId);
@@ -1442,11 +1663,14 @@ export class NousDaemon {
 				threadId: params.threadId,
 				turnId: params.messageId,
 				intentId: params.intentId,
-				intentSummary: this.backend.intents.getById(params.intentId)?.goal.summary,
+				intentSummary: this.backend.intents.getById(params.intentId)?.goal
+					.summary,
 				route: "scope_update",
 				executionContext,
 				createdAt: turnStartedAt,
-				notes: ["This turn is being applied as a scope update to the current intent."],
+				notes: [
+					"This turn is being applied as a scope update to the current intent.",
+				],
 			}),
 		);
 		await this.flushPendingDeliveriesForThread(params.threadId);
@@ -1620,6 +1844,30 @@ export class NousDaemon {
 		text: string,
 		scope: Channel["scope"],
 	): Promise<void> {
+		const modeDecision = await this.interactionModeClassifier.classify({
+			text,
+			activeIntent: this.getLatestControllableIntentForThread(threadId),
+			recentThreadMessages: this.backend.messages
+				.getMessagesByThread(threadId)
+				.slice(-20)
+				.map((message) => ({
+					role: message.role,
+					content: message.content,
+				})),
+			threadMetadata: this.backend.messages.getThread(threadId)?.metadata ?? {},
+		});
+		if (modeDecision.mode !== "work") {
+			await this.handleAmbientNonWorkMode({
+				threadId,
+				text,
+				scope,
+				mode: modeDecision.mode,
+				rationale: modeDecision.rationale,
+				confidence: modeDecision.confidence,
+			});
+			return;
+		}
+
 		const executionContext = this.buildExecutionContextForScope({
 			threadId,
 			text,
@@ -1635,7 +1883,9 @@ export class NousDaemon {
 				executionContext,
 				createdAt: turnStartedAt,
 				threadResolution: "ambient",
-				notes: ["This intent was initiated from the proactive reflection loop."],
+				notes: [
+					"This intent was initiated from the proactive reflection loop.",
+				],
 			}),
 		);
 		const intent = await this.orchestrator.submitIntentBackground(text, {
@@ -1685,6 +1935,30 @@ export class NousDaemon {
 		promotionMessage: string,
 		confidence: number,
 	): Promise<void> {
+		const modeDecision = await this.interactionModeClassifier.classify({
+			text,
+			activeIntent: this.getLatestControllableIntentForThread(threadId),
+			recentThreadMessages: this.backend.messages
+				.getMessagesByThread(threadId)
+				.slice(-20)
+				.map((message) => ({
+					role: message.role,
+					content: message.content,
+				})),
+			threadMetadata: this.backend.messages.getThread(threadId)?.metadata ?? {},
+		});
+		if (modeDecision.mode !== "work") {
+			await this.handleAmbientNonWorkMode({
+				threadId,
+				text: promotionMessage,
+				scope,
+				mode: modeDecision.mode,
+				rationale: modeDecision.rationale,
+				confidence,
+			});
+			return;
+		}
+
 		const executionContext = this.buildExecutionContextForScope({
 			threadId,
 			text,
@@ -1700,7 +1974,9 @@ export class NousDaemon {
 				executionContext,
 				createdAt: turnStartedAt,
 				threadResolution: "ambient",
-				notes: ["This proactive intent is being held for approval before execution."],
+				notes: [
+					"This proactive intent is being held for approval before execution.",
+				],
 			}),
 		);
 		const intent = await this.orchestrator.submitIntentBackground(text, {
@@ -1731,6 +2007,56 @@ export class NousDaemon {
 			promotionMessage,
 			confidence,
 		);
+	}
+
+	private async handleAmbientNonWorkMode(params: {
+		threadId: string;
+		text: string;
+		scope: Channel["scope"];
+		mode: Exclude<InteractionMode, "work">;
+		rationale: string;
+		confidence: string | number;
+	}): Promise<void> {
+		if (params.mode === "handoff") {
+			const capsule = this.buildHandoffCapsule({
+				threadId: params.threadId,
+				text: params.text,
+				channel: {
+					id: "daemon",
+					type: "sensor",
+					scope: params.scope,
+				},
+			});
+			this.dialogue.enqueueAssistantMessage({
+				threadId: params.threadId,
+				content: `I kept this proactive item out of work governance and packaged it as a handoff capsule: ${capsule.summary}`,
+				kind: "notification",
+				metadata: {
+					interactionMode: "handoff",
+					handoffCapsule: capsule,
+					answerArtifact: { mode: "handoff" },
+					modeConfidence: params.confidence,
+					modeRationale: params.rationale,
+				},
+			});
+			this.dialogue.setHandoffCapsuleForThread(params.threadId, capsule.id);
+			await this.flushPendingDeliveriesForThread(params.threadId);
+			return;
+		}
+
+		this.dialogue.enqueueAssistantMessage({
+			threadId: params.threadId,
+			content:
+				"I kept this proactive item in chat mode rather than silently escalating it into governed work.",
+			kind: "notification",
+			metadata: {
+				interactionMode: "chat",
+				answerArtifact: { mode: "chat" },
+				modeConfidence: params.confidence,
+				modeRationale: params.rationale,
+			},
+		});
+		await this.flushPendingDeliveriesForThread(params.threadId);
 	}
 
 	private scheduleIntentExecution(params: {
@@ -1842,7 +2168,10 @@ export class NousDaemon {
 		});
 		const threadContext = recentThreadMessages
 			.slice(-10)
-			.map((m) => `${m.role}: ${m.content.replace(/\s+/g, " ").trim().slice(0, 300)}`);
+			.map(
+				(m) =>
+					`${m.role}: ${m.content.replace(/\s+/g, " ").trim().slice(0, 300)}`,
+			);
 		const permissionCapabilities = resolvePermissionCapabilities(
 			permissionPolicy,
 			{ projectRoot: params.scope.projectRoot },
@@ -1896,7 +2225,8 @@ export class NousDaemon {
 			memoryHintCount: assembledContext.user.recentMemoryHints.length,
 			activeIntentCount: assembledContext.user.activeIntents.length,
 			scopeLabelCount: assembledContext.user.scopeLabels.length,
-			approvalBoundaryCount: assembledContext.permissions.approvalRequired.length,
+			approvalBoundaryCount:
+				assembledContext.permissions.approvalRequired.length,
 			notes: params.notes,
 			createdAt: params.createdAt,
 		};
@@ -2886,10 +3216,8 @@ export class NousDaemon {
 			await this.deliverProactiveCandidates(boundary, deliverable);
 		} catch (error) {
 			this.log.warn("Proactive reflection tick failed", {
-				errorName:
-					error instanceof Error ? error.name : typeof error,
-				errorMessage:
-					error instanceof Error ? error.message : String(error),
+				errorName: error instanceof Error ? error.name : typeof error,
+				errorMessage: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
 			this.isReflectionTickRunning = false;
@@ -3243,6 +3571,23 @@ function readNonEmptyString(value: unknown): string | undefined {
 	}
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function extractAssistantText(content: ContentBlock[]): string {
+	return content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text.trim())
+		.filter((text) => text.length > 0)
+		.join("\n")
+		.trim();
+}
+
+function compactText(text: string, limit: number): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (normalized.length <= limit) {
+		return normalized;
+	}
+	return `${normalized.slice(0, Math.max(0, limit - 3))}...`;
 }
 
 function dedupeStrings(values: string[]): string[] {

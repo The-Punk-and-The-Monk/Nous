@@ -61,6 +61,7 @@ export { WorkingMemory } from "./memory/working.ts";
 export { EpisodicMemory } from "./memory/episodic.ts";
 export { SemanticMemory } from "./memory/semantic.ts";
 export { MemoryService } from "./memory/service.ts";
+export { evaluateWorkContinuationRestoration } from "./memory/work-continuity.ts";
 export {
 	HybridMemoryRetriever,
 	LocalEmbeddingModel,
@@ -81,7 +82,12 @@ export type {
 	MemoryContextQuery,
 	MemoryServiceOptions,
 	UpdateProspectiveCommitmentInput,
+	PromoteWorkContinuationInput,
 } from "./memory/service.ts";
+export type {
+	WorkContinuationRestorationInput,
+	WorkContinuationRestorationVerdict,
+} from "./memory/work-continuity.ts";
 export { ProactiveRuntimeService } from "./proactive/agenda.ts";
 export type {
 	AgendaEnqueueDisposition,
