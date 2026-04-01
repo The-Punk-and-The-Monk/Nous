@@ -5156,3 +5156,35 @@ For significant sessions, capture:
     - explicit digest threads/summaries
     - user-facing digest acknowledgement / expansion controls
   - Approval-bearing ambient intents still bypass digesting, which is correct for now but leaves room for a richer medium-priority delivery design later.
+
+### Session: Relax REPL control-routing timeout now that non-slash input always goes through the LLM router
+- Context / Trigger:
+  - After restoring the REPL contract back to:
+    - slash commands = local deterministic control
+    - all other input = daemon-side LLM control routing
+  - one leftover implementation detail remained too aggressive for the intended UX:
+    - the REPL still timed out control routing after `1.5s`
+- Problem:
+  - With the corrected contract, ordinary non-slash task input now legitimately waits on the LLM control router before submission.
+  - A `1.5s` timeout is too short for realistic proxy/network/model variance and risks turning valid slow responses into visible REPL failures.
+  - That would effectively reintroduce a new user-facing bug:
+    - not “silent no-op”
+    - but frequent premature timeout errors
+- Options considered:
+  - Option A: keep `1.5s` as a “fast fail” guard.
+    - Rejected because it mismatches the user’s explicit preference that non-slash input should simply wait for the LLM path.
+  - Option B: raise the timeout to a more forgiving bound while keeping explicit failure surfacing.
+    - Chosen because it preserves the robustness of visible errors without making normal slower routing feel broken.
+- Decision:
+  - Increase REPL control-routing timeout from `1.5s` to `15s`.
+  - Keep explicit timeout/error surfacing, but align the threshold with the now-intended synchronous LLM routing path.
+- Changes made:
+  - Updated `packages/infra/src/cli/commands/repl.ts`
+    - changed `CONTROL_ROUTING_TIMEOUT_MS` from `1_500` to `15_000`
+- Validation:
+  - `bun x tsc --noEmit` pending in this same iteration
+- Impact / Result:
+  - The corrected REPL contract is now less likely to fail spuriously under normal model/proxy latency.
+  - Users who send ordinary non-slash input are allowed to wait for the actual intended LLM routing path rather than tripping a too-short client timeout.
+- Open questions / follow-ups:
+  - If real-world routing latency still feels too high, the right next move is likely protocol redesign or better router efficiency, not pushing the timeout back down into “fast-fail” territory.

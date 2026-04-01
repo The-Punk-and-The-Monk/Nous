@@ -15,7 +15,7 @@ import {
 import { colors } from "../ui/colors.ts";
 import { attachCommand, renderDialogueMessage } from "./attach.ts";
 
-const CONTROL_ROUTING_TIMEOUT_MS = 1_500;
+const CONTROL_ROUTING_TIMEOUT_MS = 15_000;
 
 export async function openDaemonRepl(options?: {
 	initialThreadId?: string;
