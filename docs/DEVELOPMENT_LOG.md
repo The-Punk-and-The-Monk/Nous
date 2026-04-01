@@ -45,6 +45,91 @@ For significant sessions, capture:
 
 ## 2026-04-01
 
+### Session: Define how Nous should treat user files in permissions, memory, and RAG
+
+- Context / Trigger:
+  - While discussing retrieval/matching and memory architecture, a deeper product question surfaced:
+    - if Nous is a personal assistant rather than only a coding agent, how should it treat user files?
+    - if the user did not explicitly mention a file, may Nous freely explore it?
+    - how should file resources, especially large files, be handled in memory/RAG without collapsing the architecture into "copy file contents into memory"?
+
+- Problem:
+  - Existing architecture already had:
+    - permission rules for `fs.read`
+    - storage-boundary principles
+    - artifact vs memory distinction
+    - memory/RAG pipeline
+  - But it did **not** yet state clearly enough that:
+    - file read permission is not equivalent to free exploratory reading
+    - files should remain primary artifacts rather than being flattened into memory entries
+    - large-file handling must be hierarchical and budget-aware
+  - Without this clarification, Nous risks drifting toward workspace-first coding-agent behavior:
+    - useful for repo tasks
+    - but too permissive and privacy-weak for a true personal assistant
+
+- Options considered:
+  - **Option A: Treat files as ordinary readable corpus whenever `fs.read` is granted**
+    - Rejected because it conflates:
+      - permission
+      - task justification
+      - memory retention
+    - and would normalize over-exploration of user data.
+  - **Option B: Require explicit file naming for every read**
+    - Rejected because it would make bounded technical tasks impractical; assistants sometimes need nearby exploratory reads to close a task.
+  - **Option C: Separate permission, exploration policy, and memory-retention policy**
+    - Chosen because it allows:
+      - bounded task-scoped exploration
+      - metadata-first ambient awareness
+      - explicit standing corpus indexing only by opt-in
+      - file-aware artifact retrieval without flattening raw file content into memory
+
+- Decision:
+  - Introduce a clear architectural rule:
+    - **permission answers “may read?”**
+    - **file policy answers “should read now?”**
+    - **memory policy answers “what may be retained?”**
+  - Define four file access modes:
+    - explicit target
+    - task-scoped exploration
+    - ambient metadata observation
+    - standing corpus indexing
+  - Set the default product stance:
+    - bounded exploration is allowed inside an active task scope
+    - free content exploration outside that scope is not the default
+    - ambient perception should be metadata-first
+  - Define file handling in memory/RAG:
+    - files remain primary artifacts
+    - memory stores derived summaries / facts / provenance / chunk handles
+    - large files use hierarchical indexing rather than whole-file prompt stuffing
+
+- Changes made:
+  - `ARCHITECTURE.md`
+    - added a file-treatment policy under storage-boundary principles
+    - clarified that permission is not exploration policy
+    - added a new file-as-artifact subsection under memory/RAG
+    - documented large-file handling and file-staleness semantics
+  - `docs/DEVELOPMENT_LOG.md`
+
+- Impact:
+  - The architecture now has a direct answer to:
+    - "Can Nous freely explore files the user did not mention?"
+  - File handling is now aligned with personal-assistant primacy instead of implicit workspace-corpus assumptions.
+  - Future implementation work on:
+    - file indexing
+    - artifact chunk retrieval
+    - file-derived memory
+    - ambient file awareness
+    now has an explicit product/architecture boundary to target.
+
+- Open questions / next steps:
+  - Introduce code-level contracts for:
+    - file treatment policy
+    - artifact indexing state
+    - chunk / hierarchical artifact retrieval
+  - Decide whether standing corpus indexing belongs under permissions, a separate content-governance policy, or both.
+  - Add file sensitivity classes and privacy-aware defaults for non-code domains.
+  - Define how binary/media extraction integrates with the same retrieval/matching layer.
+
 ### Session: Reframe retrieval/matching as a cross-cutting architectural capability
 
 - Context / Trigger:

@@ -441,6 +441,92 @@ This pattern is deliberate:
 
 > **DB governs; files publish.**
 
+#### User files are private artifacts, not free ambient corpus
+
+For Nous as a **personal assistant**, the user's files must not be treated as a free exploration surface just because file read permission exists.
+
+This is where Nous should intentionally differ from workspace-first coding agents:
+
+- workspace-first agents often treat the current repo as an implicit searchable corpus
+- that solves task-completion speed inside a developer workspace
+- but it introduces weak privacy semantics once the product expands from “repo operator” to “personal assistant”
+
+Nous therefore needs a stricter rule:
+
+> **Permission answers “may read?”**
+> **File policy answers “should read now?”**
+> **Memory policy answers “what, if anything, may be retained?”**
+
+These are different questions and must not collapse into a single boolean.
+
+#### File access modes
+
+Nous should reason about user files in four modes:
+
+1. **Explicit target**
+   - the user explicitly names or clearly implies the file / folder / corpus
+   - examples:
+     - “read this PDF”
+     - “check my notes folder”
+     - “inspect the auth module”
+   - content access is expected, subject to permission rules
+
+2. **Task-scoped exploration**
+   - the user did not name every file, but the active intent justifies bounded exploration inside an allowed scope
+   - examples:
+     - searching nearby source files to fix a bug
+     - reading related config files to answer a build issue
+   - this is allowed only under:
+     - an active intent
+     - a bounded scope
+     - least-exploration discipline
+
+3. **Ambient metadata observation**
+   - sensors may notice that a file changed, moved, appeared, or became stale
+   - this does **not** imply permission to read full contents
+   - ambient perception should be metadata-first by default
+
+4. **Standing corpus indexing**
+   - the user explicitly grants a persistent policy like:
+     - “index this project”
+     - “watch and summarize my research folder”
+     - “maintain recall over this notes vault”
+   - this is a durable opt-in corpus relationship, not an assumption
+
+#### Default policy for files the user did not mention
+
+Default Nous policy should be:
+
+- inside the current explicit task scope:
+  - bounded exploratory reading is allowed when it is necessary to complete the task
+- outside the active task scope:
+  - no free content exploration by default
+- ambient perception:
+  - metadata-first
+  - content only when:
+    - the user explicitly asked for broader awareness
+    - or a standing indexing/watch policy exists
+
+This preserves the personal-assistant relationship:
+
+- Nous is helpful and proactive
+- but it does not behave like it owns the user's entire file system as default training/inference substrate
+
+#### Least exploration principle
+
+Even when read access is allowed, Nous should follow:
+
+> **least exploration consistent with task closure**
+
+Meaning:
+
+- prefer file metadata before full content
+- prefer local neighborhood search before broad workspace crawl
+- prefer targeted file reads before recursive corpus ingestion
+- prefer explicit clarification if the required exploration boundary becomes materially broader than the current intent suggests
+
+This principle matters especially for personal files, research archives, journals, media folders, and other non-code domains where “just grep the whole tree” is not acceptable assistant behavior.
+
 #### Secret handling rule
 
 `~/.nous/secrets/` may exist, but it should not become a bucket of plaintext API keys.
@@ -1219,6 +1305,44 @@ $ nous permissions log --last 24h     # Audit log of permission checks
 
 Agents still declare what capabilities they *need* (their `capabilitiesRequired`). But whether those capabilities are actually *granted* is determined by the Permission System, not by the agent definition. An agent that needs `fs.write` will be denied at runtime if the user hasn't granted that permission — regardless of the agent's definition.
 
+#### Permission is not exploration policy
+
+For file access in particular, Nous should not equate:
+
+- `fs.read` granted
+
+with:
+
+- “assistant may freely inspect any readable file in scope whenever it wants”
+
+The correct model is:
+
+```text
+Effective file access behavior
+  = AgentDeclaredNeeds
+  ∩ PermissionRules
+  ∩ IntentConstraints
+  ∩ FileTreatmentPolicy
+```
+
+Where `FileTreatmentPolicy` captures:
+
+- whether the file/corpus was explicitly targeted
+- whether exploration is justified by the active task
+- whether only metadata or full content should be accessed
+- whether standing corpus-indexing consent exists
+
+This distinction is important because Nous is not only a coding copilot.
+The same person may later let Nous operate over:
+
+- code repositories
+- research PDFs
+- notes vaults
+- finance spreadsheets
+- personal writing
+
+Those domains require different exploration norms even when the raw permission primitive is still `fs.read`.
+
 The same permission policy should also be rendered back into Context Assembly as an **explainable boundary summary**. This matters product-wise: a personal assistant should be able to say not only "I can't do that," but **why** the current scope/policy blocks it and what kind of approval would unblock it.
 
 ```
@@ -1577,6 +1701,143 @@ Architecturally, this means:
 - the retrieval pipeline is the **policy stack**
 
 These are different layers and should not collapse into one class.
+
+### Files as Artifacts in Memory / RAG
+
+Files are one of the most important resources Nous will reason over, but they should not be flattened into “just more memory strings.”
+
+The right rule is:
+
+> **Files remain primary artifacts.**
+> **Memory stores derived understanding, provenance, and retrieval handles.**
+
+In other words:
+
+- the file itself is the source artifact
+- memory may store:
+  - summaries
+  - claims/facts
+  - execution-relevant extracted structure
+  - provenance back to file path / version / chunk
+- but Nous should not duplicate whole file contents into durable memory by default
+
+Why this matters:
+
+- raw files may be large, noisy, or sensitive
+- many files are better treated as retrievable artifacts than as persistent long-term memories
+- file content changes over time, so provenance and versioning matter
+
+#### File-aware retrieval boundary
+
+Nous should treat file retrieval as a sister path to memory retrieval:
+
+```typescript
+interface ArtifactRecord {
+  id: string;
+  kind: "file" | "attachment" | "report" | "export";
+  path: string;
+  mimeType?: string;
+  byteSize: number;
+  contentHash?: string;
+  projectRoot?: string;
+  sensitivity?: "normal" | "private" | "sensitive";
+  indexingState: "none" | "metadata_only" | "chunked" | "hierarchical";
+  lastIndexedAt?: string;
+}
+
+interface ArtifactChunk {
+  id: string;
+  artifactId: string;
+  ordinal: number;
+  text: string;
+  tokenEstimate: number;
+  sectionTitle?: string;
+  embedding?: EmbeddingVector;
+}
+```
+
+The consumer should be able to ask for:
+
+- artifact metadata
+- artifact summary
+- ranked chunks
+- a file excerpt window
+- or a pointer saying “read this artifact directly now”
+
+That is different from retrieving a semantic memory claim.
+
+#### What enters durable memory after reading a file
+
+Default policy:
+
+- **do not** store entire raw file contents in durable memory by default
+- **do** store:
+  - summaries
+  - extracted facts
+  - provenance handles
+  - relevant chunk references
+  - task outcomes derived from the file
+
+Examples:
+
+- acceptable durable memory:
+  - “The user's research folder contains a paper on active inference relevant to current discussion.”
+  - “In `auth.ts`, token refresh depends on `refreshSession()`.”
+  - “This PDF contains a section on positive psychology interventions; relevant pages: 14-18.”
+
+- not default durable memory:
+  - full plaintext copy of the entire PDF / notebook / book chapter
+  - entire source tree copied into semantic memory
+
+This keeps memory compact, governable, and easier to supersede when files change.
+
+#### Large-file handling policy
+
+Large files should not be treated like normal prompt context.
+Nous should use a file-size and file-type aware pipeline:
+
+| File class | Default handling |
+|-----------|------------------|
+| Small text files | Read on demand; usually no persistent chunk index needed unless reused often |
+| Medium text files | Chunk on demand; keep chunk index + summary if repeatedly accessed |
+| Large text files | Build hierarchical index: file summary → section summaries → chunks; never stuff whole file into prompt |
+| Binary / media files | Metadata first; OCR / transcript / extraction only when justified by task or standing policy |
+| Generated / noisy files | Ignore or metadata-only by default unless explicitly requested |
+
+Hierarchical handling for large text artifacts should look like:
+
+1. file-level metadata
+2. file-level summary
+3. section-level summaries
+4. chunk-level retrieval
+5. only selected chunks enter the active context
+
+This avoids three bad outcomes:
+
+- blowing the context window
+- polluting durable memory with raw bulk text
+- reading far more of the file than the current task actually needs
+
+#### File change and staleness semantics
+
+When file-derived memory or artifact chunks are used, they should remain linked to:
+
+- file path
+- content hash / version marker when available
+- chunk or section reference
+
+So later retrieval can detect:
+
+- file changed but memory summary is stale
+- chunk index needs refresh
+- a prior memory claim came from an older file version
+
+This is especially important for:
+
+- code repositories
+- evolving notes vaults
+- spreadsheets / reports
+- exported artifacts regenerated from other systems
 
 ### Memory Storage Architecture
 
