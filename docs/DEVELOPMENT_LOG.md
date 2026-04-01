@@ -336,6 +336,32 @@ For significant sessions, capture:
 - Open questions / next steps:
   - If future delivery policies distinguish between `delivered` and `converted` for quota semantics, that split should be made explicit rather than piggybacking on the same daily bucket.
 
+### Session: Align proactive cooldown suppression with delivery time
+
+- Context / Trigger:
+  - After daily quota counting moved to `deliveredAt`, architect review pointed out one remaining time-basis mismatch: cooldown suppression still used `createdAt`.
+
+- Problem:
+  - A candidate created long ago but delivered recently could still count as a fresh interruption for daily quota purposes while escaping cooldown suppression because its `createdAt` was outside the cooldown window.
+
+- Decision:
+  - Keep cooldown semantics simple and align them with actual delivery time.
+  - Change same-key cooldown lookup from `createdAfter` to `deliveredAfter`.
+  - Add a regression proving an older-created but recently delivered candidate still suppresses a new queued candidate with the same cooldown key.
+
+- Changes made:
+  - `packages/runtime/src/proactive/agenda.ts`
+    - cooldown suppression now queries recent delivered/converted candidates by `deliveredAfter`
+  - `packages/runtime/tests/proactive-runtime.test.ts`
+    - added regression coverage for old-created / recent-delivered cooldown suppression
+
+- Impact / Result:
+  - Proactive cooldown and daily quota logic now use the same time basis: when the user was actually interrupted.
+  - The proactive delivery runtime is more internally consistent across cross-day delivery scenarios.
+
+- Open questions / next steps:
+  - If future product semantics want `converted` items to cool down differently from `delivered` items, that distinction should become explicit instead of reusing one shared window.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass

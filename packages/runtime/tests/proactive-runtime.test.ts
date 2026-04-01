@@ -413,6 +413,64 @@ describe("ProactiveRuntimeService", () => {
 
 		expect(deliverable).toHaveLength(0);
 	});
+
+	test("uses deliveredAt for cooldown suppression as well", () => {
+		const db = initDatabase();
+		const memory = new MemoryService({
+			store: new SQLiteMemoryStore(db),
+			agentId: "nous",
+		});
+		const store = new SQLiteProactiveStore(db);
+		const service = new ProactiveRuntimeService({
+			store,
+			memory,
+			now: () => "2026-03-31T08:00:00.000Z",
+		});
+		const boundary: RelationshipBoundary = {
+			assistantStyle: {
+				warmth: "balanced",
+				directness: "balanced",
+			},
+			proactivityPolicy: {
+				initiativeLevel: "balanced",
+				allowedKinds: ["suggestion", "offer", "reminder", "ambient_intent"],
+				blockedKinds: [],
+				requireApprovalForKinds: ["ambient_intent"],
+			},
+			interruptionPolicy: {
+				maxUnpromptedMessagesPerDay: 5,
+				preferredDelivery: "thread",
+			},
+			autonomyPolicy: {
+				allowOffersWithoutPrompt: true,
+				allowAmbientAutoExecution: false,
+			},
+		};
+
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_old_created_recently_delivered",
+				status: "delivered",
+				createdAt: "2026-03-30T10:00:00.000Z",
+				deliveredAt: "2026-03-31T07:30:00.000Z",
+				cooldownKey: "shared_cooldown_key",
+			}),
+		);
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_should_be_suppressed",
+				status: "queued",
+				cooldownKey: "shared_cooldown_key",
+			}),
+		);
+
+		const deliverable = service.drainDeliverableCandidates(boundary, 4);
+
+		expect(deliverable).toHaveLength(0);
+		expect(store.getCandidateById("cand_should_be_suppressed")?.status).toBe(
+			"dismissed",
+		);
+	});
 });
 
 function makeAgenda(

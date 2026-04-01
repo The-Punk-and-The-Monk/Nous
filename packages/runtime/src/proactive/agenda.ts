@@ -228,7 +228,7 @@ export class ProactiveRuntimeService {
 					.listCandidates({
 						statuses: ["delivered", "converted"],
 						cooldownKey: candidate.cooldownKey,
-						createdAfter: addMilliseconds(
+						deliveredAfter: addMilliseconds(
 							referenceTime,
 							-this.deliveryCooldownMs,
 						),
