@@ -26,6 +26,25 @@ describe("REPL control local layer", () => {
 		expect(resolution.message).toContain("/attach thread_abc123");
 	});
 
+	test("resolves debug and inspect slash commands deterministically", () => {
+		expect(resolveSlashCommand("/debug daemon")).toEqual({
+			kind: "execute",
+			action: "debug_daemon",
+			interpretedAs: "/debug daemon",
+		});
+		expect(resolveSlashCommand("/events 12")).toEqual({
+			kind: "execute",
+			action: "show_events",
+			limit: 12,
+			interpretedAs: "/events 12",
+		});
+		expect(resolveSlashCommand("/network policy")).toEqual({
+			kind: "execute",
+			action: "show_network_policy",
+			interpretedAs: "/network policy",
+		});
+	});
+
 	test("translates model control discovery results into local actions", () => {
 		const resolved = translateControlResolution("你现在能做什么", {
 			resolution: {

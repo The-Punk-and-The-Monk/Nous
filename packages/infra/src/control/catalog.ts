@@ -159,6 +159,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "daemon",
 		syntaxes: [
 			{ surface: "cli", usage: "nous daemon status" },
+			{ surface: "repl", usage: "/daemon status" },
 			{ surface: "ide", usage: "Show daemon transport status" },
 			{ surface: "web", usage: "Show daemon transport status" },
 		],
@@ -174,6 +175,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "inspect",
 		syntaxes: [
 			{ surface: "cli", usage: "nous debug daemon" },
+			{ surface: "repl", usage: "/debug daemon" },
 			{ surface: "ide", usage: "Debug daemon state" },
 			{ surface: "web", usage: "Open daemon debug view" },
 		],
@@ -189,6 +191,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "inspect",
 		syntaxes: [
 			{ surface: "cli", usage: "nous debug thread <threadId>" },
+			{ surface: "repl", usage: "/debug thread [threadId]" },
 			{ surface: "ide", usage: "Debug thread <threadId>" },
 			{ surface: "web", usage: "Open thread debug view" },
 		],
@@ -203,6 +206,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "inspect",
 		syntaxes: [
 			{ surface: "cli", usage: "nous events [N]" },
+			{ surface: "repl", usage: "/events [N]" },
 			{ surface: "ide", usage: "Show recent events" },
 			{ surface: "web", usage: "Open event timeline" },
 		],
@@ -217,6 +221,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "inspect",
 		syntaxes: [
 			{ surface: "cli", usage: "nous memory [search]" },
+			{ surface: "repl", usage: "/memory [search]" },
 			{ surface: "ide", usage: "Inspect memory" },
 			{ surface: "web", usage: "Browse memory" },
 		],
@@ -231,6 +236,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "permissions",
 		syntaxes: [
 			{ surface: "cli", usage: "nous permissions" },
+			{ surface: "repl", usage: "/permissions" },
 			{ surface: "ide", usage: "Inspect permissions" },
 			{ surface: "web", usage: "Inspect permissions" },
 		],
@@ -303,6 +309,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "network",
 		syntaxes: [
 			{ surface: "cli", usage: "nous network status" },
+			{ surface: "repl", usage: "/network status" },
 			{ surface: "ide", usage: "Show network status" },
 			{ surface: "web", usage: "Show network status" },
 		],
@@ -345,6 +352,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "network",
 		syntaxes: [
 			{ surface: "cli", usage: "nous network policy" },
+			{ surface: "repl", usage: "/network policy" },
 			{ surface: "ide", usage: "Inspect network policy" },
 			{ surface: "web", usage: "Inspect network policy" },
 		],
@@ -411,6 +419,7 @@ const CONTROL_SURFACE_CATALOG: ControlSurfaceEntry[] = [
 		category: "network",
 		syntaxes: [
 			{ surface: "cli", usage: "nous network log [N]" },
+			{ surface: "repl", usage: "/network log [N]" },
 			{ surface: "ide", usage: "Inspect network exchange log" },
 			{ surface: "web", usage: "Inspect network exchange log" },
 		],

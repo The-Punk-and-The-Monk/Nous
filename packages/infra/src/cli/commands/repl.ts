@@ -6,12 +6,20 @@ import type {
 	ThreadSnapshot,
 } from "@nous/core";
 import { now, prefixedId } from "@nous/core";
+import { createPersistenceBackend } from "@nous/persistence";
 import { DaemonClientSession } from "../../daemon/client.ts";
+import { getDaemonPaths } from "../../daemon/paths.ts";
+import { daemonCommand } from "./daemon.ts";
+import { debugCommand } from "./debug.ts";
+import { eventsCommand } from "./events.ts";
 import { printReplCommands } from "../help.ts";
 import {
 	resolveSlashCommand,
 	translateControlResolution,
 } from "../repl-control.ts";
+import { memoryCommand } from "./memory.ts";
+import { networkCommand } from "./network.ts";
+import { permissionsCommand } from "./permissions.ts";
 import { colors } from "../ui/colors.ts";
 import { attachCommand, renderDialogueMessage } from "./attach.ts";
 
@@ -97,6 +105,7 @@ export async function openDaemonRepl(options?: {
 			rl.pause();
 
 			try {
+				await attachToThread(session, channel, currentThreadId, true);
 				const resolved = await resolveReplInput(
 					input,
 					session,
@@ -123,6 +132,72 @@ export async function openDaemonRepl(options?: {
 							return;
 						case "show_status":
 							await printStatus(session, channel);
+							return;
+						case "show_daemon_status":
+							await daemonCommand("status");
+							return;
+						case "debug_daemon":
+							withDebugBackend((backend) =>
+								debugCommand(["daemon"], backend),
+							);
+							return;
+						case "debug_thread":
+							if (!(resolved.threadId ?? currentThreadId)) {
+								console.log(
+									`  ${colors.yellow("Provide a thread id like /debug thread <threadId>, or attach to a thread first.")}`,
+								);
+								return;
+							}
+							withDebugBackend((backend) =>
+								debugCommand(
+									[
+										"thread",
+										resolved.threadId ?? currentThreadId ?? "",
+									],
+									backend,
+								),
+							);
+							return;
+						case "show_events":
+							await withDebugBackendAsync((backend) =>
+								eventsCommand(backend.events, {
+									limit: resolved.limit ?? readOptionalLimit(resolved.query),
+								}),
+							);
+							return;
+						case "show_memory":
+							withDebugBackend((backend) =>
+								memoryCommand(backend.memory, {
+									search: resolved.query,
+									limit: 20,
+								}),
+							);
+							return;
+						case "show_permissions":
+							permissionsCommand([]);
+							return;
+						case "show_network_status":
+							await withDebugBackendAsync((backend) =>
+								networkCommand(["status"], { eventStore: backend.events }),
+							);
+							return;
+						case "show_network_policy":
+							await withDebugBackendAsync((backend) =>
+								networkCommand(["policy"], { eventStore: backend.events }),
+							);
+							return;
+						case "show_network_log":
+							await withDebugBackendAsync((backend) =>
+								networkCommand(
+									[
+										"log",
+										String(
+											resolved.limit ?? readOptionalLimit(resolved.query) ?? 20,
+										),
+									],
+									{ eventStore: backend.events },
+								),
+							);
 							return;
 						case "attach_thread":
 							currentThreadId = resolved.threadId;
@@ -305,6 +380,7 @@ async function resolveReplInput(
 					action: slashResolution.action!,
 					query: slashResolution.query,
 					threadId: slashResolution.threadId,
+					limit: slashResolution.limit,
 					interpretedAs: slashResolution.interpretedAs ?? input,
 				};
 	}
@@ -345,4 +421,43 @@ async function withTimeout<T>(
 			clearTimeout(timeoutId);
 		}
 	}
+}
+
+function withDebugBackend<T>(
+	fn: (backend: ReturnType<typeof createPersistenceBackend>) => T,
+): T {
+	return createDebugBackendUser(fn);
+}
+
+async function withDebugBackendAsync<T>(
+	fn: (backend: ReturnType<typeof createPersistenceBackend>) => Promise<T>,
+): Promise<T> {
+	const backend = createPersistenceBackend(getDaemonPaths().dbPath);
+	try {
+		return await fn(backend);
+	} finally {
+		backend.close();
+	}
+}
+
+function createDebugBackendUser<T>(
+	fn: (backend: ReturnType<typeof createPersistenceBackend>) => T,
+): T {
+	const backend = createPersistenceBackend(getDaemonPaths().dbPath);
+	try {
+		return fn(backend);
+	} finally {
+		backend.close();
+	}
+}
+
+function readOptionalLimit(value: string | undefined): number | undefined {
+	if (!value) {
+		return undefined;
+	}
+	const parsed = Number(value.trim());
+	if (!Number.isFinite(parsed)) {
+		return undefined;
+	}
+	return Math.max(1, Math.floor(parsed));
 }

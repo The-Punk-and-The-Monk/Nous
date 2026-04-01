@@ -5,11 +5,21 @@ export interface ReplSlashResolution {
 	action?:
 		| "show_commands"
 		| "show_status"
+		| "show_daemon_status"
+		| "debug_daemon"
+		| "debug_thread"
+		| "show_events"
+		| "show_memory"
+		| "show_permissions"
+		| "show_network_status"
+		| "show_network_policy"
+		| "show_network_log"
 		| "attach_thread"
 		| "detach_thread"
 		| "exit_repl";
 	query?: string;
 	threadId?: string;
+	limit?: number;
 	message?: string;
 	interpretedAs?: string;
 }
@@ -24,11 +34,21 @@ export type ReplResolvedAction =
 			action:
 				| "show_commands"
 				| "show_status"
+				| "show_daemon_status"
+				| "debug_daemon"
+				| "debug_thread"
+				| "show_events"
+				| "show_memory"
+				| "show_permissions"
+				| "show_network_status"
+				| "show_network_policy"
+				| "show_network_log"
 				| "attach_thread"
 				| "detach_thread"
 				| "exit_repl";
 			query?: string;
 			threadId?: string;
+			limit?: number;
 			interpretedAs: string;
 			source: "slash" | "model";
 	  }
@@ -68,6 +88,106 @@ export function resolveSlashCommand(input: string): ReplSlashResolution | undefi
 				action: "show_status",
 				interpretedAs: "/status",
 			};
+		case "daemon":
+			if (!query || query === "status") {
+				return {
+					kind: "execute",
+					action: "show_daemon_status",
+					interpretedAs: "/daemon status",
+				};
+			}
+			return {
+				kind: "clarify",
+				message: "Supported daemon REPL commands: /daemon status",
+			};
+		case "debug": {
+			const [subject, ...restParts] = rest;
+			const restQuery = restParts.join(" ").trim();
+			if (subject === "daemon") {
+				return {
+					kind: "execute",
+					action: "debug_daemon",
+					interpretedAs: "/debug daemon",
+				};
+			}
+			if (subject === "thread") {
+				return {
+					kind: "execute",
+					action: "debug_thread",
+					threadId: restQuery || undefined,
+					interpretedAs: restQuery
+						? `/debug thread ${restQuery}`
+						: "/debug thread",
+				};
+			}
+			return {
+				kind: "clarify",
+				message:
+					"Supported debug REPL commands: /debug daemon, /debug thread [threadId]",
+			};
+		}
+		case "events": {
+			const limit = query ? Number(query) : undefined;
+			return {
+				kind: "execute",
+				action: "show_events",
+				limit:
+					typeof limit === "number" && Number.isFinite(limit)
+						? Math.max(1, Math.floor(limit))
+						: undefined,
+				interpretedAs: query ? `/events ${query}` : "/events",
+			};
+		}
+		case "memory":
+			return {
+				kind: "execute",
+				action: "show_memory",
+				query: query || undefined,
+				interpretedAs: query ? `/memory ${query}` : "/memory",
+			};
+		case "permissions":
+			return {
+				kind: "execute",
+				action: "show_permissions",
+				interpretedAs: "/permissions",
+			};
+		case "network": {
+			const [subcommand, ...networkRest] = rest;
+			const networkQuery = networkRest.join(" ").trim();
+			if (!subcommand || subcommand === "status") {
+				return {
+					kind: "execute",
+					action: "show_network_status",
+					interpretedAs: "/network status",
+				};
+			}
+			if (subcommand === "policy") {
+				return {
+					kind: "execute",
+					action: "show_network_policy",
+					interpretedAs: "/network policy",
+				};
+			}
+			if (subcommand === "log") {
+				const limit = networkQuery ? Number(networkQuery) : undefined;
+				return {
+					kind: "execute",
+					action: "show_network_log",
+					limit:
+						typeof limit === "number" && Number.isFinite(limit)
+							? Math.max(1, Math.floor(limit))
+							: undefined,
+					interpretedAs: networkQuery
+						? `/network log ${networkQuery}`
+						: "/network log",
+				};
+			}
+			return {
+				kind: "clarify",
+				message:
+					"Supported network REPL commands: /network status, /network policy, /network log [N]",
+			};
+		}
 		case "attach":
 			if (!query) {
 				return {
@@ -142,6 +262,81 @@ function toResolvedAction(
 						kind: "execute",
 						action: "show_status",
 						interpretedAs: "/status",
+						source: "model",
+					};
+				case "daemon.status":
+					return {
+						kind: "execute",
+						action: "show_daemon_status",
+						interpretedAs: "/daemon status",
+						source: "model",
+					};
+				case "debug.daemon":
+					return {
+						kind: "execute",
+						action: "debug_daemon",
+						interpretedAs: "/debug daemon",
+						source: "model",
+					};
+				case "debug.thread":
+					return {
+						kind: "execute",
+						action: "debug_thread",
+						threadId: resolution.threadId,
+						interpretedAs: resolution.threadId
+							? `/debug thread ${resolution.threadId}`
+							: "/debug thread",
+						source: "model",
+					};
+				case "events.list":
+					return {
+						kind: "execute",
+						action: "show_events",
+						query: resolution.query,
+						interpretedAs: resolution.query
+							? `/events ${resolution.query}`
+							: "/events",
+						source: "model",
+					};
+				case "memory.browse":
+					return {
+						kind: "execute",
+						action: "show_memory",
+						query: resolution.query,
+						interpretedAs: resolution.query
+							? `/memory ${resolution.query}`
+							: "/memory",
+						source: "model",
+					};
+				case "permissions.show":
+					return {
+						kind: "execute",
+						action: "show_permissions",
+						interpretedAs: "/permissions",
+						source: "model",
+					};
+				case "network.status":
+					return {
+						kind: "execute",
+						action: "show_network_status",
+						interpretedAs: "/network status",
+						source: "model",
+					};
+				case "network.policy":
+					return {
+						kind: "execute",
+						action: "show_network_policy",
+						interpretedAs: "/network policy",
+						source: "model",
+					};
+				case "network.log":
+					return {
+						kind: "execute",
+						action: "show_network_log",
+						query: resolution.query,
+						interpretedAs: resolution.query
+							? `/network log ${resolution.query}`
+							: "/network log",
 						source: "model",
 					};
 				case "thread.attach":

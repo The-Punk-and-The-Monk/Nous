@@ -93,7 +93,12 @@ export class DaemonClientSession {
 				if (parsed.id && this.pending.has(parsed.id)) {
 					const pending = this.pending.get(parsed.id);
 					this.pending.delete(parsed.id);
-					pending?.resolve(parsed);
+					if (parsed.type === "error") {
+						const message = readDaemonErrorMessage(parsed);
+						pending?.reject(new Error(message));
+					} else {
+						pending?.resolve(parsed);
+					}
 					continue;
 				}
 				for (const listener of this.listeners) {
@@ -111,6 +116,19 @@ export class DaemonClientSession {
 			this.pending.delete(id);
 		}
 	}
+}
+
+function readDaemonErrorMessage(message: DaemonEnvelope): string {
+	const payload = message.payload;
+	if (
+		payload &&
+		typeof payload === "object" &&
+		!Array.isArray(payload) &&
+		typeof (payload as { message?: unknown }).message === "string"
+	) {
+		return (payload as { message: string }).message;
+	}
+	return "Daemon request failed.";
 }
 
 export async function sendDaemonRequest(

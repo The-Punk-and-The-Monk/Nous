@@ -23,6 +23,11 @@ describe("CLI help and discovery rendering", () => {
 
 		expect(output).toContain("/commands [query]");
 		expect(output).toContain("/detach");
+		expect(output).toContain("/debug daemon");
+		expect(output).toContain("/events [N]");
+		expect(output).toContain("/memory [search]");
+		expect(output).toContain("/permissions");
+		expect(output).toContain("/network status");
 		expect(output).toContain("requires an attached thread");
 		expect(output).toContain("nous debug daemon");
 	});

@@ -140,8 +140,10 @@ export async function main(args: string[]): Promise<void> {
 	}
 
 	if (command === "events") {
-		const limit = Number(args[1]) || 50;
-		eventsCommand(backend.events, { limit });
+		const follow = args.includes("--follow");
+		const limitArg = args.find((arg, index) => index > 0 && arg !== "--follow");
+		const limit = Number(limitArg) || 50;
+		await eventsCommand(backend.events, { limit, follow });
 		backend.close();
 		return;
 	}

@@ -256,8 +256,10 @@ export class NousDaemon {
 			for (const line of lines) {
 				const trimmed = line.trim();
 				if (!trimmed) continue;
+				let requestId: string | undefined;
 				try {
 					const message = JSON.parse(trimmed) as ClientEnvelope;
+					requestId = message.id;
 					if (this.nousConfig.sensors.enabled) {
 						this.perception.observeScope(message.channel.scope);
 					}
@@ -273,6 +275,7 @@ export class NousDaemon {
 				} catch (error) {
 					socket.write(
 						`${JSON.stringify({
+							id: requestId,
 							type: "error",
 							timestamp: now(),
 							payload: { message: (error as Error).message },

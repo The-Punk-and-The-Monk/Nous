@@ -5657,3 +5657,145 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - Debug visibility is helpful, but there is still no first-class user/operator action surface for accepting/rejecting/expiring merge candidates.
   - If merge governance keeps expanding, Nous will likely need a dedicated control-surface/catalog entry rather than growing debug output indefinitely.
+
+### Session: Fix REPL control-routing error correlation and broaden the REPL command surface
+- Context / Trigger:
+  - The user reported that ordinary non-slash REPL input such as:
+    - `你好`
+    - `跟我聊聊天`
+    repeatedly failed with:
+    - `REPL input failed: Natural-language control routing timed out.`
+  - The user also asked for a richer REPL command surface so more of the existing CLI inspection/control actions are available directly inside the REPL.
+- Problem:
+  - A direct diagnostic against the same debug environment showed that the daemon-side control-routing path was not merely "slow":
+    - the provider call itself could fail quickly with `LLMError: Connection error.`
+    - in the current debug setup this came from the OpenAI-compatible path using:
+      - `OPENAI_BASE_URL=https://newapi.omgteam.me/v1`
+      - `OPENAI_MODEL=gpt-5.4`
+  - But the REPL did not surface that real provider error correctly.
+  - The bug chain was:
+    1. REPL sends `resolve_control_input`
+    2. daemon catches provider/router failure
+    3. daemon writes an `error` envelope **without** the original request id
+    4. `DaemonClientSession` therefore cannot match the response to the pending request
+    5. the request hangs until the client-side `withTimeout(...)` expires
+    6. the user sees a misleading timeout instead of the real cause
+  - Separately, the REPL still exposed only a very small slash-command surface compared with the existing CLI inspection commands.
+- Options considered:
+  - Option A: only raise the timeout again.
+    - Rejected because the most important bug was incorrect error attribution, not only the timeout threshold.
+  - Option B: fix request/error correlation first, then broaden REPL slash controls using already-existing CLI command handlers.
+    - Chosen because it addresses both the misleading failure mode and the REPL-surface gap without changing the core control-routing contract.
+- Decision:
+  - Fix daemon/client request correlation so request-scoped daemon errors propagate immediately back to the REPL.
+  - Keep the non-slash contract unchanged:
+    - slash commands are local deterministic controls
+    - all other input still routes through daemon-side LLM control resolution first
+  - Broaden REPL slash controls by wiring existing CLI inspection commands into the REPL:
+    - daemon status
+    - debug daemon
+    - debug thread
+    - events
+    - memory
+    - permissions
+    - network status / policy / log
+- Changes made:
+  - Updated `packages/infra/src/daemon/server.ts`
+    - when request handling fails, the daemon now includes the originating request id in its `error` envelope when available
+  - Updated `packages/infra/src/daemon/client.ts`
+    - pending requests now reject immediately when a matching `error` envelope arrives
+    - extracted daemon error-message parsing helper
+  - Updated `packages/infra/src/cli/repl-control.ts`
+    - expanded slash-command parsing for:
+      - `/daemon status`
+      - `/debug daemon`
+      - `/debug thread [threadId]`
+      - `/events [N]`
+      - `/memory [search]`
+      - `/permissions`
+      - `/network status`
+      - `/network policy`
+      - `/network log [N]`
+    - mapped the corresponding control-surface operations back into REPL-local actions
+  - Updated `packages/infra/src/cli/commands/repl.ts`
+    - wired the new REPL actions to the existing command handlers and local persistence backend
+    - improved `/debug thread` behavior when no thread id/current attachment exists
+  - Updated `packages/infra/src/control/catalog.ts`
+    - added REPL syntaxes for the newly exposed inspect/network/daemon commands so discovery/help stays aligned
+  - Added `packages/infra/tests/daemon-client.test.ts`
+    - verifies matching daemon error envelopes reject pending client requests instead of hanging
+  - Updated tests:
+    - `packages/infra/tests/repl-control.test.ts`
+    - `packages/infra/tests/cli-help.test.ts`
+    - to cover the broader REPL slash surface
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/daemon-client.test.ts packages/infra/tests/repl-control.test.ts packages/infra/tests/cli-help.test.ts packages/infra/tests/control-intent-router.test.ts` ✅
+- Impact / Result:
+  - The misleading REPL timeout symptom is now corrected at the transport boundary:
+    - real daemon/provider errors should surface as their actual message instead of degrading into a generic timeout
+  - The REPL now exposes a substantially richer local command surface without abandoning the slash-only deterministic control rule.
+  - Discovery/help output now reflects those extra REPL commands.
+- Open questions / follow-ups:
+  - The deeper provider-side problem may still remain for the user’s chosen debug endpoint if the upstream `gpt-5.4` control-routing request really fails or stalls.
+  - REPL sessions still do not fully auto-recover semantic session state after a daemon restart; the safest current practice remains reopening the REPL after a daemon restart if you want a guaranteed fresh attached session.
+  - Nous still lacks a true live daemon-log tail surface; current debug is snapshot-oriented plus persisted event inspection, not full streaming text logs.
+
+### Session: Add REPL session re-attach and `events --follow`, and confirm the real control-routing failure mode
+- Context / Trigger:
+  - After the previous fix, two follow-up needs remained from the user’s testing feedback:
+    1. after daemon restart, it should be clearer whether the REPL must be restarted
+    2. there should be at least one real-time-ish debug surface rather than only snapshots
+  - In parallel, the timeout report needed one more layer of diagnosis:
+    - was the problem really a timeout
+    - or a hidden provider error
+- Problem:
+  - A direct standalone diagnostic of `ControlIntentRouter.route("跟我聊聊天")` under `debug_local/env.txt` showed a concrete provider failure:
+    - provider = `openai`
+    - model = `gpt-5.4`
+    - base URL = `https://newapi.omgteam.me/v1`
+    - actual error = `LLMError: Connection error.`
+  - So the user-facing timeout symptom was not the whole story:
+    - the control-routing model call can genuinely fail upstream
+    - and that needs to be distinguishable from a pure client-side timeout
+  - Separately, REPL sessions still lost daemon-side attach/subscription state across daemon restarts unless the user manually reopened the REPL.
+  - And while `nous debug ...` existed, there was still no simple live-ish "tail the runtime" surface.
+- Options considered:
+  - Option A: stop after the request-id error-correlation fix and document the rest.
+    - Rejected because the daemon-restart UX and live-debug gap would still remain obvious during dogfooding.
+  - Option B: add a bounded recovery + observability slice now:
+    - re-attach the REPL session before each input
+    - add `nous events --follow`
+    - keep full daemon text-log streaming for a later iteration
+    - Chosen because it improves practical testing/debugging without overcommitting to a full logging subsystem yet.
+- Decision:
+  - Keep the daemon/provider failure diagnosis explicit in the engineering trace:
+    - the current debug endpoint can fail inside the model call itself with `Connection error.`
+  - Improve REPL resilience by re-attaching before each input is processed.
+  - Add a follow mode to the persisted event log surface:
+    - `nous events --follow`
+    - intended for use in a separate terminal while the main REPL remains interactive
+- Changes made:
+  - Updated `packages/infra/src/cli/commands/repl.ts`
+    - re-attaches the daemon session before each input so daemon restarts no longer automatically force a fresh REPL process just to restore attach/subscription state
+  - Updated `packages/infra/src/cli/commands/events.ts`
+    - made the command async
+    - added `follow` mode with polling over the persisted event store
+  - Updated `packages/infra/src/cli/app.ts`
+    - added CLI parsing for `nous events --follow`
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/infra/tests/daemon-client.test.ts packages/infra/tests/repl-control.test.ts packages/infra/tests/cli-help.test.ts packages/infra/tests/control-intent-router.test.ts` ✅
+- Impact / Result:
+  - There is now a clearer answer to the bug:
+    - the visible timeout symptom was masking a real upstream/provider connection failure in at least one reproduced routing call
+  - REPL sessions are more resilient to daemon restarts because they proactively re-attach before processing input.
+  - Nous now has a first live-ish debug path:
+    - `nous events --follow`
+    - useful in a second terminal for watching persisted runtime activity in near real time
+- Open questions / follow-ups:
+  - `events --follow` is a persisted event tail, not a full daemon text-log tail.
+  - A fuller logging system would still benefit from:
+    - daemon log files under `logs/`
+    - a dedicated `daemon logs --follow` surface
+    - possibly request-scoped control-routing diagnostics that explicitly log provider/model latency and failure class.
