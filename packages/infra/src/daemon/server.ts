@@ -41,7 +41,10 @@ import { ControlIntentRouter } from "../control/control-intent-router.ts";
 import { LocalProcedureSeedStore } from "../evolution/local-procedure-seed.ts";
 import { DecisionResponseInterpreter } from "../intake/decision-response-interpreter.ts";
 import { buildUserStateGrounding } from "../intake/grounding.ts";
-import { InteractionModeClassifier } from "../intake/interaction-mode-classifier.ts";
+import {
+	type InteractionModeDecision,
+	InteractionModeClassifier,
+} from "../intake/interaction-mode-classifier.ts";
 import {
 	type ThreadInputDisposition,
 	ThreadInputRouter,
@@ -911,11 +914,7 @@ export class NousDaemon {
 			text: string;
 			channel: Channel;
 		},
-		modeDecision: {
-			mode: InteractionMode;
-			rationale: string;
-			confidence: string;
-		},
+		modeDecision: InteractionModeDecision,
 	): Promise<void> {
 		const executionContext = this.buildExecutionContext(payload);
 		const recentThreadMessages: LLMMessage[] = this.backend.messages
@@ -978,11 +977,7 @@ export class NousDaemon {
 			text: string;
 			channel: Channel;
 		},
-		modeDecision: {
-			mode: InteractionMode;
-			rationale: string;
-			confidence: string;
-		},
+		modeDecision: InteractionModeDecision,
 	): Promise<void> {
 		const capsule = this.buildHandoffCapsule(payload);
 		const content = [
