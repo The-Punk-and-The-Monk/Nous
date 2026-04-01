@@ -5789,6 +5789,770 @@ Messages are the atomic unit of human-Nous communication. Losing a message is as
 
 ---
 
+## Planning, Flow, and Work Governance Draft
+
+The next architectural step for Nous is not "make the planner smarter."
+
+The real problem is broader:
+
+- explicit user requests create plans
+- long-running work needs replanning, pause/resume, and dependency handling
+- proactive cognition will increasingly create **silent internal work**
+- some proactive outputs should merge into existing ongoing work rather than spawning duplicates
+- some work needs different model strengths at different stages
+- some work will eventually need multiple coordinated model runs, not one monolithic loop
+
+So the correct design question is:
+
+> **What is the governance surface for all Nous work, whether explicit or proactive, foreground or background, single-model or multi-model?**
+
+### Why this matters now
+
+Today, Nous already has strong pieces of the puzzle:
+
+- `Intent`
+- `Task`
+- revisable task DAGs
+- `DecisionQueue`
+- dialogue continuity
+- ambient/proactive candidate generation
+- daemon continuity
+
+But the current center of gravity is still:
+
+- one intent
+- one task DAG
+- one scheduler
+- one provider/model injected through the same runtime spine
+
+That is enough for bounded execution, but not yet enough for:
+
+- long-lived background work with parent-level ownership
+- proactive work that should attach to existing responsibility rather than duplicate it
+- typed distinctions between:
+  - hard dependency
+  - soft dependency
+  - duplication
+  - supersession
+  - merge candidate
+- task/model allocation across multiple cognitive roles
+- multimodal inputs entering the same planning/governance plane
+
+### User-side requirement
+
+From the user side, the desired behavior is:
+
+1. Nous can accept a request and form a plan.
+2. Nous can keep that plan alive over time.
+3. Nous can update the plan safely when scope changes.
+4. Nous can add proactive sub-work without fragmenting the user experience.
+5. Nous can avoid duplicate proactive nudges/tasks when the underlying responsibility is already in motion.
+6. Nous can use different models or model groups when the work actually benefits from that split.
+7. The user can still understand:
+   - what the current work is
+   - what depends on what
+   - what merged into what
+   - what is blocked
+   - what was silently dropped, deferred, or digested
+
+### Three architecture drafts
+
+We should make the design space explicit rather than pretending there is only one obvious answer.
+
+#### Draft A — Intent-Local Revisable DAG
+
+**Shape**
+
+- every request/proactive action becomes an `Intent`
+- every intent owns one revisable `Plan`
+- the plan is a DAG of `Task`s
+- all governance remains intent-local
+
+**What this solves**
+
+- normal explicit planning
+- dependency order inside one request
+- replanning after scope updates
+- bounded foreground/background work
+
+**What it introduces**
+
+- no clean parent record above multiple related intents
+- proactive work has to either:
+  - create a new intent every time
+  - or mutate an existing intent too aggressively
+- duplication/merge becomes ambiguous because intent is both:
+  - the work owner
+  - and the only grouping boundary
+
+**Why this is insufficient for Nous**
+
+This shape is still too request-centric. It works for command runners, but not for a persistent personal assistant that accumulates partially overlapping obligations over time.
+
+#### Draft B — One Global Work Graph
+
+**Shape**
+
+- all work in the instance lives in one global graph
+- explicit requests, proactive tasks, reminders, follow-ups, and maintenance all become graph nodes
+- dependencies and duplicates are graph relations
+- threads and intents become projections over the graph
+
+**What this solves**
+
+- one universal substrate
+- easy cross-work dependency modeling in theory
+- merge/dedup slots are natural
+- background and proactive work unify structurally
+
+**What it introduces**
+
+- graph governance becomes the whole system too early
+- user-facing traceability becomes harder, not easier
+- too much of the product semantics gets pushed into one abstract graph layer
+- local-first MVP complexity rises sharply
+
+**Why this is too early for Nous**
+
+This is structurally elegant, but it is too close to "premature swarm complexity" at the local instance level. Nous still needs simpler human-legible owners than a universal graph.
+
+#### Draft C — Hybrid Flow + Intent + Plan Graph
+
+**Shape**
+
+- `Flow` becomes the parent governance record for ongoing work
+- a flow may contain one or more `Intent`s over time
+- each intent may still own a revisable local `Plan` (task DAG)
+- flows, intents, and tasks are linked by typed relations
+- merge is not an automatic mutation; it is first modeled as an explicit governance proposal/object
+
+**What this solves**
+
+- preserves human-legible ownership
+- gives proactive work a place to attach without forcing thread merge
+- keeps intent-local planning simple
+- creates a higher-level place for:
+  - blocked summary
+  - ownership
+  - merge candidates
+  - cross-intent dependency
+  - model/team allocation summary
+
+**Why this is the right direction for Nous**
+
+This is the best fit for the current north star:
+
+- local-first
+- personal-assistant continuity
+- future collective growth
+- no premature swarm complexity
+
+So Draft C should be the architectural direction.
+
+### Chosen direction
+
+The chosen direction is:
+
+> **Flow-governed work, intent-local planning, typed cross-work relations, and explicit merge proposals rather than implicit merging.**
+
+Concretely:
+
+- `Flow` = the durable governance owner of a coherent piece of work
+- `Intent` = one execution episode or revision-bearing request inside a flow
+- `PlanGraph` = the revisable task graph for one intent
+- `Task` = atomic executable unit
+- `TaskRelation` / `FlowRelation` = typed links between work units
+- `MergeCandidate` = an explicit proposal that two work items are duplicates / should merge / should supersede
+
+### New object slots Nous should reserve now
+
+#### 1. `Flow`
+
+`Flow` is the parent work record above intents.
+
+It should answer:
+
+- what larger piece of work is this part of?
+- what thread(s) or channel(s) are associated with it?
+- is it active, blocked, quiet, complete, or abandoned?
+- what is the current blocked reason?
+- what intents/tasks currently belong to it?
+
+Minimal draft:
+
+```ts
+interface Flow {
+  id: string;
+  kind: "explicit_request" | "proactive_followup" | "maintenance" | "ambient_watch";
+  title: string;
+  summary: string;
+  ownerThreadId?: string;
+  status: "active" | "blocked" | "quiet" | "completed" | "abandoned";
+  source: "human" | "ambient" | "scheduler";
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+  blockedReason?: string;
+  primaryIntentId?: string;
+  relatedIntentIds: string[];
+  relatedTaskIds: string[];
+  metadata?: Record<string, unknown>;
+}
+```
+
+**Important distinction:** a flow is not the same as a thread.
+
+- thread = communication continuity
+- flow = work continuity
+
+One flow may surface in one primary thread, an ambient thread, or multiple surfaces over time without forcing thread merge.
+
+#### 2. `PlanGraph`
+
+The existing "plan = DAG" idea remains valid, but only as an intent-local planning object.
+
+It should become more explicit:
+
+```ts
+interface PlanGraph {
+  id: string;
+  intentId: string;
+  flowId: string;
+  status: "draft" | "active" | "superseded" | "completed";
+  topology: "single" | "serial" | "parallel" | "dag";
+  planningDepth: "none" | "light" | "full";
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+This keeps "planning" as a real object instead of only a transient emission from the planner.
+
+#### 3. `TaskEdge` and typed relations
+
+`dependsOn: string[]` is too weak long-term.
+
+Nous needs typed relations such as:
+
+```ts
+type TaskEdgeKind =
+  | "hard_dependency"
+  | "soft_dependency"
+  | "blocks"
+  | "supersedes"
+  | "duplicate_candidate"
+  | "same_flow"
+  | "same_deliverable";
+```
+
+Why:
+
+- some tasks truly cannot run before others
+- some tasks can run independently but should probably wait
+- some tasks are likely duplicates but we do not yet want to auto-merge
+- some tasks should simply roll up into the same deliverable
+
+This typed relation layer is where future merge/governance logic should attach.
+
+#### 4. `MergeCandidate`
+
+Task merge is too semantically fuzzy to auto-apply early.
+
+So Nous should reserve an explicit object:
+
+```ts
+interface MergeCandidate {
+  id: string;
+  leftKind: "flow" | "intent" | "task" | "thread";
+  leftId: string;
+  rightKind: "flow" | "intent" | "task" | "thread";
+  rightId: string;
+  proposedAction: "merge" | "supersede" | "keep_separate" | "link_only";
+  rationale: string;
+  confidence: number;
+  producedBy: "attention_filter" | "reflection" | "conflict_analyzer" | "manual";
+  status: "proposed" | "accepted" | "rejected" | "expired";
+  createdAt: string;
+}
+```
+
+This is the right first slot because it lets Nous reason about merge **without** pretending it can already perform merge safely.
+
+#### 5. `FlowThreadBinding`
+
+Instead of thread merge as a first move, Nous should reserve a binding relation:
+
+```ts
+interface FlowThreadBinding {
+  flowId: string;
+  threadId: string;
+  role: "primary" | "ambient" | "decision_surface" | "delivery_surface";
+}
+```
+
+This matters because many "should these threads merge?" questions are actually:
+
+- same work, different communication lane
+- same work, different delivery style
+- same work, same assistant responsibility, but not same conversational surface
+
+So the first move is thread-to-flow governance, not automatic thread merge.
+
+#### 6. `CognitiveOperation`
+
+Planning and model allocation should not be driven directly from caller code.
+
+Every LLM use should first declare **what kind of cognitive operation it is**.
+
+Minimal seed:
+
+```ts
+type CognitiveOperation =
+  | "control_routing"
+  | "thread_scope_routing"
+  | "decision_interpretation"
+  | "intent_parse"
+  | "task_contract"
+  | "plan_generation"
+  | "plan_revision"
+  | "execution_main"
+  | "execution_review"
+  | "reflection"
+  | "memory_digest"
+  | "merge_assessment"
+  | "media_describe_image"
+  | "media_transcribe_audio"
+  | "media_describe_video";
+```
+
+This is the necessary precondition for model assignment.
+
+#### 7. `InferenceAllocationPlan`
+
+The real question is not "do we have a router module."
+
+The real question is:
+
+> given this flow/intent/plan/task/cognitive operation, what inference shape should Nous allocate?
+
+That answer should be objectified:
+
+```ts
+interface InferenceAllocationPlan {
+  operation: CognitiveOperation;
+  mode: "single_model" | "fallback_chain" | "serial_team" | "parallel_team" | "dag_team";
+  primaryProfileId: string;
+  fallbackProfileIds?: string[];
+  workerAssignments?: Array<{
+    role: string;
+    profileId: string;
+    responsibility: string;
+  }>;
+  rationale: string;
+}
+```
+
+This gives Nous a place to later assign:
+
+- one small fast model for control routing
+- a larger model for planning
+- a cheaper specialist for retrieval expansion
+- a stronger reviewer for final verification
+
+without forcing the whole runtime to think in terms of one provider/model.
+
+#### 8. `InputEnvelope` / multimodal content parts
+
+Today Nous still treats turn input as mostly `text`.
+
+That is architecturally too small for the intended future.
+
+Nous should reserve a typed input object now:
+
+```ts
+type InputPart =
+  | { type: "text"; text: string }
+  | { type: "image"; path?: string; mimeType?: string; alt?: string }
+  | { type: "audio"; path?: string; mimeType?: string; transcriptHint?: string }
+  | { type: "video"; path?: string; mimeType?: string; transcriptHint?: string }
+  | { type: "file"; path: string; mimeType?: string }
+  | { type: "screen_snapshot"; path: string; capturedAt: string }
+  | { type: "screen_recording"; path: string; capturedAt: string; durationMs?: number };
+
+interface TurnInputEnvelope {
+  id: string;
+  threadId?: string;
+  source: "human" | "sensor" | "system";
+  parts: InputPart[];
+  createdAt: string;
+}
+```
+
+This is important because multimodality is not just "different providers."
+It changes:
+
+- intake
+- memory ingestion
+- provenance
+- retrieval
+- planning
+- verification
+
+### How planning should work in the chosen design
+
+Planning should be reasoned about as **governed work graph management**, not as one one-shot decomposition call.
+
+#### Layer 1: Intake produces contract + depth + flow decision
+
+At intake, Nous should decide:
+
+- does this create a new flow?
+- attach to an existing flow?
+- propose a merge candidate?
+- stay as a message-only proactive output?
+
+This means intake becomes:
+
+1. parse/ground intent
+2. determine task contract
+3. determine execution depth
+4. determine flow action:
+   - `create_flow`
+   - `attach_flow`
+   - `propose_merge`
+   - `message_only`
+
+#### Layer 2: Each intent gets a local plan graph
+
+Inside the chosen flow:
+
+- a new intent may create a new `PlanGraph`
+- a scope revision may supersede the current plan graph
+- completed tasks remain evidence, not mutable graph members
+
+This keeps long planning honest:
+
+- no pretending the old plan never existed
+- no loss of why replan happened
+
+#### Layer 3: Cross-intent governance lives at the flow layer
+
+This is where Nous should handle:
+
+- duplicate proactive follow-ups
+- delayed reminders that overlap with ongoing explicit work
+- "this new thing probably belongs to the same larger responsibility"
+- blocked summary for the user
+
+#### Layer 4: Scheduler works on executable tasks, not abstract flow semantics
+
+The scheduler should remain task-centric, but it should read more than `dependsOn`.
+
+It should respect:
+
+- hard dependency edges
+- flow-level blocked state
+- pending revisions
+- merge candidates marked as "hold_for_review"
+- execution budgets
+- model/team allocation constraints
+
+### How proactive work joins the same governance plane
+
+This is the key point from your clarification.
+
+When proactive work becomes actionable, it should not create a second-class hidden system.
+
+Instead:
+
+- low-value proactive outputs can remain `ProactiveCandidate` notifications
+- actionable proactive outputs should create or attach to a `Flow`
+- if they overlap with an existing active flow, Nous should prefer:
+  - attach
+  - or propose merge/supersession
+  - not naive duplication
+
+Example:
+
+- existing explicit flow:
+  - "refactor auth migration"
+- proactive reminder:
+  - "follow up on auth migration notes"
+
+This should not automatically become a second independent responsibility.
+It should more often become:
+
+- same flow
+- new intent inside the flow
+- or a merge candidate if confidence is not high enough
+
+### Multi-model and multi-model-team planning
+
+The chosen design should not assume every plan runs on one model.
+
+But Nous should also not start with distributed swarm semantics.
+
+#### Default topology choice for Nous
+
+Nous should default to **centered orchestration**:
+
+- one local orchestrator owns the flow
+- it allocates model roles or agent roles
+- workers do not negotiate among themselves in v1/v1.5
+
+Supported topologies should be:
+
+1. `single_model`
+2. `serial_team`
+3. `parallel_team`
+4. `dag_team`
+
+Not yet:
+
+- peer-to-peer planner federation inside one local flow
+- model workers rewriting the orchestration topology on their own
+
+#### Why centered orchestration is correct for Nous
+
+- it preserves auditability
+- it preserves human legibility
+- it aligns with local-first governance
+- it avoids premature swarm complexity
+
+#### Example allocation
+
+For one large engineering task, the allocation might be:
+
+- `intent_parse` -> small fast structured model
+- `plan_generation` -> strong reasoning model
+- `parallel_team`
+  - worker A: codebase explorer
+  - worker B: test investigator
+  - worker C: implementation worker
+- `execution_review` -> stronger reviewer model
+
+This is not one "router" call. It is a staged `InferenceAllocationPlan`.
+
+### External reference comparison
+
+#### OpenClaw
+
+OpenClaw's recent `tasks + flows` direction is useful because it identified a real problem:
+
+- detached work needs a durable ledger
+- child work needs a parent-level owner
+- background runs must route results back through the correct parent/session
+
+That solves a real orchestration problem.
+
+What it introduces:
+
+- a strong bias toward gateway/session-centric ownership
+- plugin/provider ecosystem complexity as a primary architecture driver
+
+For Nous, the underlying problem is real, but the ownership center should differ.
+
+- OpenClaw: session/gateway/flow centric
+- Nous: personal-assistant continuity, thread + flow + intent centric
+
+So Nous should borrow:
+
+- the parent flow ledger idea
+- task-to-flow linkage
+- blocked/repairable flow status
+
+But should not copy:
+
+- gateway/plugin-centered ontology
+- provider/plugin sprawl as the center of planning architecture
+
+#### Claude Code
+
+Claude Code is useful because it already distinguishes:
+
+- main loop model
+- fallback model
+- advisor model
+- teammate model override
+- background teammate tasks
+
+That solves a real problem:
+
+- not every cognitive role should use the same model
+
+What it introduces:
+
+- model selection logic can leak into many UI/runtime branches
+- task ownership is still more "run/session/tool" oriented than "persistent assistant obligation"
+
+For Nous, we should borrow:
+
+- role-based model assignment
+- agent/team model override slots
+- visible task ownership/progress surfaces
+
+But we should differ by:
+
+- grounding model assignment in `CognitiveOperation` + `Flow` contracts
+- not in ad hoc per-feature overrides only
+
+#### Codex
+
+Codex is useful in a different way.
+
+It treats run-level inference parameters as first-class runtime objects:
+
+- `model`
+- `model_reasoning_effort`
+- `input_modalities`
+- thread start / resume parameters
+
+That solves a real problem:
+
+- model capabilities and input modalities must be part of the runtime contract
+
+What it does not solve for Nous:
+
+- long-lived planning governance
+- proactive work integration
+- merge governance
+- persistent assistant obligations
+
+So Nous should borrow:
+
+- explicit inference parameter objects
+- explicit modality capability gating
+
+But should differ by:
+
+- embedding them into a planning/governance architecture, not only a run API
+
+### Draft review pass 1
+
+**Question:** does Draft C actually solve explicit + proactive work under one governance surface?
+
+Yes, because:
+
+- proactive work no longer needs a separate hidden task world
+- explicit and proactive work can both attach to flows
+- plans remain intent-local, so local execution stays understandable
+
+Weakness still present:
+
+- flow attachment confidence and merge confidence remain hard semantic problems
+
+Decision after pass 1:
+
+- keep explicit `MergeCandidate`
+- do not auto-merge early
+
+### Draft review pass 2
+
+**Question:** does Draft C leave a real place for multi-model and multi-model-team execution?
+
+Yes, because:
+
+- `CognitiveOperation` separates the purpose of each LLM call
+- `InferenceAllocationPlan` separates allocation from execution
+- topology is explicit (`single`, `serial`, `parallel`, `dag`)
+
+Weakness still present:
+
+- no actual `ModelCapabilityProfile` object has been formalized in code yet
+
+Decision after pass 2:
+
+- the architecture should explicitly reserve model capability/profile objects before implementation starts
+
+### Draft review pass 3
+
+**Question:** does Draft C mishandle thread merge by tying work merge to conversation merge?
+
+No, because:
+
+- `FlowThreadBinding` decouples work continuity from communication continuity
+- merge can happen at task/intent/flow level without forcing thread merge
+
+Weakness still present:
+
+- some duplicate conversational surfaces may still need future archive/supersede rules
+
+Decision after pass 3:
+
+- thread merge should remain a later governance concern
+- thread-to-flow binding is the first correct slot
+
+### Whole-architecture review pass 1
+
+**Question:** does this direction still satisfy the north star and current architectural center?
+
+Yes.
+
+It improves:
+
+- local-first governed runtime
+- persistent assistant continuity
+- proactive work governance
+- future collective growth
+
+And it avoids:
+
+- premature swarm complexity
+- global graph absolutism
+- plugin/provider sprawl becoming the architecture center
+
+### Whole-architecture review pass 2
+
+**Question:** can the current implementation plausibly migrate toward this without a rewrite?
+
+Yes, because the current code already has the right seeds:
+
+- `Intent`
+- revisable task DAGs
+- `DecisionQueue`
+- daemon continuity
+- proactive candidates
+- thread continuity
+
+What is missing is mostly the middle governance layer:
+
+- `Flow`
+- typed relation objects
+- merge proposal objects
+- inference allocation objects
+- multimodal input envelope
+
+So the migration path is additive, not destructive.
+
+### Recommended implementation order after this draft
+
+To keep the architecture honest, the next build order should be:
+
+1. **core contracts first**
+   - `Flow`
+   - typed task/flow relations
+   - `MergeCandidate`
+   - `CognitiveOperation`
+   - `InferenceAllocationPlan`
+   - `TurnInputEnvelope`
+2. **daemon/orchestrator projections**
+   - flow creation / flow attachment
+   - active-flow summary surfaces
+   - merge proposal production only
+3. **planner integration**
+   - persist `PlanGraph`
+   - topology and plan revisions as first-class objects
+4. **inference allocation**
+   - control routing separated from parser/planner/reflection
+   - model profiles and per-operation assignment
+5. **multimodal intake**
+   - image/file first
+   - audio/video later
+
+This ordering preserves the architecture slots before filling them with runtime behavior.
+
+---
+
 ## Roadmap, Resource Planning & Growth Strategy
 
 This section bridges architecture into execution: what to build first, what resources are needed at each stage, and how Nous bootstraps its own growth — using itself.

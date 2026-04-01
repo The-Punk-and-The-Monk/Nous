@@ -5188,3 +5188,129 @@ For significant sessions, capture:
   - Users who send ordinary non-slash input are allowed to wait for the actual intended LLM routing path rather than tripping a too-short client timeout.
 - Open questions / follow-ups:
   - If real-world routing latency still feels too high, the right next move is likely protocol redesign or better router efficiency, not pushing the timeout back down into “fast-fail” territory.
+
+### Session: Re-architect planning as flow-governed work management instead of one-shot task decomposition
+- Context / Trigger:
+  - The user pushed the architecture discussion to the right depth:
+    - planning is not only about explicit user-request DAGs
+    - proactive/background work will also create plans/tasks
+    - future Nous will need different models or model groups for different work stages
+    - task merge, duplicate suppression, and thread/work governance need slots even if they are not implemented yet
+  - That exposed a structural gap in the current architecture draft:
+    - it had strong `Intent -> Plan -> Task` language
+    - but it did not yet provide a parent governance surface above multiple related intents/tasks over time
+- Problem:
+  - The current architecture and codebase are still centered on:
+    - one intent
+    - one revisable task DAG
+    - one scheduler
+    - one provider/model injected through the same runtime spine
+  - That is sufficient for bounded execution, but weak for:
+    - long-lived background work
+    - proactive tasks attaching to existing obligations instead of duplicating them
+    - typed dependency vs soft relation vs duplicate/merge candidate distinctions
+    - model/team allocation across cognitive roles
+    - multimodal input entering the same planning/governance system
+    - thread/work continuity questions such as “same work, different thread” vs “same thread, different work”
+- External references studied:
+  - `/Users/joey/Projects/openclaw`
+    - why it chose flows/tasks: detached/background/subagent work needed a shared durable control plane and parent owner context
+    - what problem that solves: durable ledger, parent-child visibility, blocked/repairable background jobs
+    - what new problem it introduces: session/gateway/plugin centricity becomes the organizing force
+    - why Nous should differ: Nous needs personal-assistant continuity, so `thread + flow + intent` should be the work center, not gateway/plugin ownership
+  - `/Users/joey/Projects/claude-code-sourcemap`
+    - why it distinguishes main loop, fallback, advisor, teammate model overrides: different cognitive roles need different models
+    - what problem that solves: better cost/quality tradeoffs and multi-agent specialization
+    - what new problem it introduces: model selection logic can leak into many feature branches without a higher-order contract
+    - why Nous should differ: Nous should ground model assignment in typed `CognitiveOperation` and work-governance contracts, not only ad hoc per-feature overrides
+  - `/Users/joey/Projects/codex`
+    - why it objectifies `model`, `model_reasoning_effort`, and `input_modalities`: runtime inference parameters and modality support must be first-class request/thread data
+    - what problem that solves: explicit capability gating, especially for image-capable vs text-only paths
+    - what new problem it does not solve for Nous: long-lived planning governance, proactive work integration, merge governance
+    - why Nous should differ: Nous should borrow the runtime parameter object idea, but place it under a larger planning/governance architecture
+- Options considered:
+  - Draft A: keep planning intent-local only (`Intent -> revisable DAG -> Task`)
+    - Rejected as insufficient because proactive overlap, background continuity, and merge governance remain too request-centric.
+  - Draft B: move immediately to one universal global work graph
+    - Rejected as too abstract/heavy for the current local-first stage and too close to premature swarm complexity.
+  - Draft C: introduce a hybrid:
+    - `Flow` as the parent governance record
+    - intent-local `PlanGraph`
+    - typed relations / merge proposals
+    - explicit inference allocation objects
+    - Chosen because it preserves human-legible ownership while creating the right slots for long-lived/proactive/multi-model growth.
+- Decision:
+  - Re-center the planning architecture around:
+    - `Flow` above `Intent`
+    - intent-local `PlanGraph`
+    - typed `TaskEdge` / relation semantics
+    - `MergeCandidate` as a first-class non-destructive governance object
+    - `FlowThreadBinding` instead of premature thread merge
+    - `CognitiveOperation` as the precursor to model assignment
+    - `InferenceAllocationPlan` as the typed place for single-model / fallback / serial-team / parallel-team / DAG-team decisions
+    - `TurnInputEnvelope` / multimodal input parts as the correct future-facing intake slot
+  - Keep the default collaboration topology **centered**:
+    - local orchestrator owns the flow
+    - workers/models are allocated under that orchestration
+    - no peer-to-peer planner swarm in the local runtime yet
+  - Treat merge as:
+    - something Nous should reason about now
+    - but only auto-apply later, after much stronger evidence and governance
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added `## Planning, Flow, and Work Governance Draft`
+    - documented three architecture drafts (intent-local DAG, global work graph, hybrid flow+intent+plan graph)
+    - selected the hybrid direction and explained why
+    - added reserved object slots for:
+      - `Flow`
+      - `PlanGraph`
+      - typed `TaskEdge`
+      - `MergeCandidate`
+      - `FlowThreadBinding`
+      - `CognitiveOperation`
+      - `InferenceAllocationPlan`
+      - `TurnInputEnvelope`
+    - added proactive/work-governance integration guidance
+    - added external reference comparison
+    - added 3 draft review passes plus 2 whole-architecture review passes
+    - added a recommended additive implementation order
+- Review loops completed in this session:
+  - Draft review pass 1:
+    - checked whether explicit + proactive work truly land on one governance surface
+    - result: yes, if merge remains proposal-first
+  - Draft review pass 2:
+    - checked whether multi-model / multi-model-team execution has a real typed slot
+    - result: yes, via `CognitiveOperation` + `InferenceAllocationPlan`
+  - Draft review pass 3:
+    - checked whether work merge incorrectly forces thread merge
+    - result: no, if thread-to-flow binding is the first slot
+  - Whole-architecture review pass 1:
+    - checked north-star alignment
+    - result: compatible with local-first personal-assistant primacy, avoids premature swarm
+  - Whole-architecture review pass 2:
+    - checked migration path from current code
+    - result: additive evolution is plausible because the repo already has `Intent`, revisable task DAGs, daemon continuity, `DecisionQueue`, and proactive seeds
+- Validation:
+  - No code/runtime behavior changed in this iteration; validation was architectural consistency review against:
+    - existing `ARCHITECTURE.md`
+    - current orchestrator/runtime object model
+    - external reference code/docs
+- Impact / Result:
+  - The repo now has a materially stronger answer to “what planning is”:
+    - not a one-shot planner call
+    - but a flow-governed work-management system
+  - Nous now has reserved architecture slots for:
+    - long planning
+    - background/proactive internal work
+    - merge reasoning
+    - multi-model / model-team assignment
+    - multimodal intake
+  - This reduces the risk that future implementation drifts into:
+    - ad hoc proactive tasks
+    - provider-local model hacks
+    - thread/work conflation
+    - silent duplicate work
+- Open questions / follow-ups:
+  - `Flow` is the next most important missing core object; until it exists in code, the architecture remains ahead of implementation here.
+  - `TaskEdge` vs generic relation objects should likely be narrowed further before coding, so the scheduler and merge/governance layers do not overload one relation type with too many meanings.
+  - `InferenceAllocationPlan` still needs a sibling object for model capability/profiles before runtime assignment can become principled in code.
