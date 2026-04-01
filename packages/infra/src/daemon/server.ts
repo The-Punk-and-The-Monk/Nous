@@ -646,6 +646,7 @@ export class NousDaemon {
 			}
 			if (modeDecision.mode === "chat") {
 				this.storeConversationTurnMemory(payload);
+				this.storeRelationshipPreferenceMemory(payload);
 				await this.handleChatModeMessage(payload, modeDecision);
 				return;
 			}
@@ -3055,6 +3056,28 @@ export class NousDaemon {
 		});
 	}
 
+	private storeRelationshipPreferenceMemory(payload: {
+		threadId: string;
+		text: string;
+		channel: Channel;
+		messageId?: string;
+	}): void {
+		const tags = parseRelationshipPreferenceTags(payload.text);
+		if (tags.length === 0) {
+			return;
+		}
+		this.memory.storeManualNote({
+			content: payload.text,
+			factType: "user_preference",
+			threadId: payload.threadId,
+			scope: payload.channel.scope,
+			tags,
+			sourceRefs: payload.messageId
+				? [{ kind: "message", id: payload.messageId }]
+				: undefined,
+		});
+	}
+
 	private storeIntentOutcomeMemory(
 		intentId: string,
 		outcome: "intent.achieved" | "escalation",
@@ -3779,4 +3802,71 @@ function buildRestoredWorkRequest(
 
 function hasGrantedCapabilitySet(capabilities: CapabilitySet): boolean {
 	return Object.values(capabilities).some((value) => value !== false);
+}
+
+function parseRelationshipPreferenceTags(text: string): string[] {
+	const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+	const tags = new Set<string>();
+
+	if (
+		normalized.includes("digest") ||
+		normalized.includes("batch proactive") ||
+		text.includes("摘要") ||
+		text.includes("合并提醒")
+	) {
+		tags.add("relationship:delivery:digest");
+	}
+	if (
+		normalized.includes("notification") ||
+		normalized.includes("notify me") ||
+		text.includes("通知我")
+	) {
+		tags.add("relationship:delivery:notification");
+	}
+	if (
+		normalized.includes("in the thread") ||
+		normalized.includes("reply in chat") ||
+		text.includes("在对话里说") ||
+		text.includes("在线程里说")
+	) {
+		tags.add("relationship:delivery:thread");
+	}
+
+	if (
+		normalized.includes("don't auto-execute") ||
+		normalized.includes("do not auto-execute") ||
+		normalized.includes("ask first") ||
+		text.includes("不要自动执行") ||
+		text.includes("先问我")
+	) {
+		tags.add("relationship:auto_execute:false");
+	}
+	if (
+		normalized.includes("you can auto-execute") ||
+		normalized.includes("feel free to auto-execute") ||
+		text.includes("可以直接做") ||
+		text.includes("可以自动执行")
+	) {
+		tags.add("relationship:auto_execute:true");
+	}
+
+	if (
+		normalized.includes("don't be too proactive") ||
+		normalized.includes("less proactive") ||
+		normalized.includes("be minimally proactive") ||
+		text.includes("别太主动") ||
+		text.includes("少打扰")
+	) {
+		tags.add("relationship:initiative:minimal");
+	}
+	if (
+		normalized.includes("be more proactive") ||
+		normalized.includes("more proactive") ||
+		text.includes("可以更主动") ||
+		text.includes("更主动一点")
+	) {
+		tags.add("relationship:initiative:high");
+	}
+
+	return [...tags];
 }

@@ -362,6 +362,36 @@ For significant sessions, capture:
 - Open questions / next steps:
   - If future product semantics want `converted` items to cool down differently from `delivered` items, that distinction should become explicit instead of reusing one shared window.
 
+### Session: Let chat-mode preference notes produce relationship memory directly
+
+- Context / Trigger:
+  - After making relationship-aware proactive runtime significantly more real, one remaining usability gap was obvious: learned relationship preferences still depended on explicit semantic note creation rather than ordinary conversation.
+
+- Problem:
+  - A user could tell Nous “use digests”, “don’t auto-execute”, or “don’t be too proactive”, but unless that preference was separately written into governed memory, the new runtime seam would not learn from it.
+
+- Decision:
+  - Add a narrow, heuristic producer only for explicit relationship-preference phrasing in chat-mode turns.
+  - Keep the producer bounded to a small set of supported tags:
+    - delivery preference
+    - auto-execution preference
+    - initiative level
+  - Persist those as `user_preference` semantic notes so the existing relationship-aware runtime can immediately use them.
+
+- Changes made:
+  - `packages/infra/src/daemon/server.ts`
+    - chat-mode thread handling now stores structured relationship-preference memory when explicit preference phrasing is detected
+    - added bounded parsing for digest/notification/thread delivery, auto-execute yes/no, and initiative minimal/high
+  - `packages/infra/tests/daemon-interaction-mode.test.ts`
+    - added regression coverage proving a chat-mode preference note becomes relationship-boundary overrides in memory
+
+- Impact / Result:
+  - Relationship-aware proactive runtime is now reachable through ordinary conversation, not only through manual semantic note creation.
+  - The current producer remains intentionally narrow and explicit, which keeps it explainable and low-risk.
+
+- Open questions / next steps:
+  - If Nous later learns richer tone/intimacy preferences, that should likely become a dedicated preference interpreter rather than accumulating ad hoc string heuristics in the daemon.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass

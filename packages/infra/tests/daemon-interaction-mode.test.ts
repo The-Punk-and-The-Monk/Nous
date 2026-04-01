@@ -96,6 +96,56 @@ describe("NousDaemon interaction-mode handling", () => {
 		}
 	});
 
+	test("stores relationship preference memory from a chat-mode preference note", async () => {
+		const daemon = createDaemon(
+			new ScriptedProvider([
+				"Got it — I'll keep low-risk proactive reminders in digests, avoid auto-executing them, and stay restrained.",
+			]),
+		);
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			const thread = internals.dialogue.ensureThread({
+				threadId: "thread_pref",
+				title: "Preference thread",
+				channelId: "channel_cli",
+			});
+
+			const reply = await internals.controller.handle(
+				makeEnvelope({
+					id: "req_pref",
+					type: "send_message",
+					payload: {
+						threadId: thread.id,
+						text: "For low-risk proactive reminders, prefer digest delivery, don't auto-execute them, and don't be too proactive.",
+					},
+				}),
+			);
+			expect(reply?.type).toBe("ack");
+
+			await waitFor(() => {
+				const snapshot = internals.dialogue.getThreadSnapshot({
+					threadId: thread.id,
+				});
+				return Boolean(
+					snapshot?.messages.some(
+						(message) => message.metadata?.interactionMode === "chat",
+					),
+				);
+			});
+
+			const overrides = internals.memory.deriveRelationshipBoundaryOverrides({
+				scope: DEMO_SCOPE,
+				threadId: thread.id,
+			});
+			expect(overrides.interruptionPolicy?.preferredDelivery).toBe("digest");
+			expect(overrides.autonomyPolicy?.allowAmbientAutoExecution).toBe(false);
+			expect(overrides.proactivityPolicy?.initiativeLevel).toBe("minimal");
+		} finally {
+			await daemon.shutdown();
+		}
+	});
+
 	test("creates a handoff capsule without starting new work", async () => {
 		const daemon = createDaemon(new ScriptedProvider([]));
 
@@ -401,6 +451,14 @@ interface DaemonInternals {
 			sourceSurfaceKind?: string;
 			relevantFacts?: string[];
 		}): { id: string };
+		deriveRelationshipBoundaryOverrides(input?: {
+			scope?: ChannelScope;
+			threadId?: string;
+		}): {
+			interruptionPolicy?: { preferredDelivery?: string };
+			autonomyPolicy?: { allowAmbientAutoExecution?: boolean };
+			proactivityPolicy?: { initiativeLevel?: string };
+		};
 	};
 	submitAmbientIntent(
 		threadId: string,
