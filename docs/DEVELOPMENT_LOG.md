@@ -5799,3 +5799,107 @@ For significant sessions, capture:
     - daemon log files under `logs/`
     - a dedicated `daemon logs --follow` surface
     - possibly request-scoped control-routing diagnostics that explicitly log provider/model latency and failure class.
+
+### Session: Point the debug environment at the verified working OpenAI wire path
+- Context / Trigger:
+  - After the user ran the suggested manual curl probe against `debug_local/env.txt`, the result made the failure boundary much clearer:
+    - `POST /chat/completions` succeeded with `200`
+    - but Nous’s direct provider call in the same environment still failed with `LLMError: Connection error.`
+  - Combined with previous diagnostics, the most practical explanation is:
+    - the chosen OpenAI-compatible gateway can serve the chat-completions path for this setup
+    - but the Responses path that Nous currently defaults to in direct OpenAI mode is not reliable here
+- Problem:
+  - As long as `debug_local/env.txt` continued to rely on the default `responses` wire path, this user-facing debug environment would stay biased toward failure even though the same gateway clearly accepted `chat/completions`.
+  - That would keep REPL/control-routing dogfooding noisy and misleading:
+    - Nous would look broken
+    - but the issue would really be the chosen wire protocol for this debug target
+- Options considered:
+  - Option A: leave the debug env unchanged and wait for a more general provider fallback implementation.
+    - Rejected because the local testing environment already had enough evidence for a practical, low-risk configuration fix.
+  - Option B: explicitly pin the debug environment to `chat_completions`, the path the user directly verified as working.
+    - Chosen because `debug_local/env.txt` is a repo-local test environment, not a universal production policy.
+- Decision:
+  - Add `OPENAI_WIRE_API=chat_completions` to `debug_local/env.txt`.
+  - Treat this as a targeted debug-environment fix:
+    - not a statement that Responses should be abandoned globally
+    - but a statement that this local test target should use the wire path already proven to work
+- Changes made:
+  - Updated `debug_local/env.txt`
+    - added `export OPENAI_WIRE_API=chat_completions`
+- Validation:
+  - Manual evidence already gathered before this change:
+    - direct `curl` to `POST /chat/completions` returned `200`
+    - direct Nous provider call on the default Responses path failed with `LLMError: Connection error.`
+  - The next practical validation step is restarting the debug daemon under the updated env and re-testing the REPL.
+- Impact / Result:
+  - The repo-local debug environment is now aligned with the wire path that was actually demonstrated to work against the chosen gateway.
+  - This should materially improve day-to-day REPL and control-routing testing on the user's machine.
+- Open questions / follow-ups:
+  - The broader runtime still needs a principled strategy for provider/wire fallback rather than relying only on env pinning.
+  - If the gateway later gains reliable Responses support, this debug env can be revisited.
+
+### Session: Add a repo-local transport diagnostic script and de-duplicate debug env loading
+- Context / Trigger:
+  - The user asked for a dedicated diagnostic script instead of continuing to debug transport behavior ad hoc in chat.
+  - The same discussion also made one repo-local ergonomics problem obvious:
+    - `debug_local/channel_cli.sh`
+    - `debug_local/daemon_start.sh`
+    - `debug_local/daemon_stop.sh`
+    - `debug_local/daemon_server.sh`
+    were all duplicating the same environment block instead of sourcing the canonical `debug_local/env.txt`.
+- Problem:
+  - Diagnosing the current OpenAI-compatible connectivity problem required repeatedly checking four different layers:
+    - env values
+    - proxy variables
+    - `curl`
+    - Bun `fetch`
+    - Nous provider call
+  - Without one script, this stayed too manual and too easy to mis-run.
+  - At the same time, duplicate env blocks across debug scripts risked silent drift:
+    - daemon might use one config
+    - REPL another
+    - diagnosis a third
+- Options considered:
+  - Option A: keep using one-off shell snippets in chat.
+    - Rejected because the diagnostic process is now recurring and should live in the repo.
+  - Option B: add a single repo-local transport diagnostic script and make all debug helpers source `env.txt`.
+    - Chosen because it gives the user one stable diagnostic entrypoint and one canonical debug environment source.
+- Decision:
+  - Add `debug_local/diagnose_openai_transport.sh`.
+  - Make the existing debug launcher scripts source `debug_local/env.txt` instead of hardcoding duplicate exports.
+  - Keep the diagnostic script focused on the currently relevant dimension:
+    - `chat/completions`
+    - proxy presence/absence
+    - Bun/Nous transport behavior
+  - Do **not** pull general proxy support into the main product architecture in this iteration.
+- Changes made:
+  - Added `debug_local/diagnose_openai_transport.sh`
+    - sources `debug_local/env.txt` by default
+    - prints sanitized environment summary
+    - prints current proxy variables
+    - probes `chat/completions` with:
+      - `curl` in the current environment
+      - `curl` with proxy disabled
+      - Bun `fetch`
+      - Nous provider `.chat(...)`
+  - Updated:
+    - `debug_local/channel_cli.sh`
+    - `debug_local/daemon_start.sh`
+    - `debug_local/daemon_stop.sh`
+    - `debug_local/daemon_server.sh`
+    - so they all source `debug_local/env.txt`
+  - Marked the debug helper scripts executable
+- Validation:
+  - `bash -n debug_local/diagnose_openai_transport.sh debug_local/channel_cli.sh debug_local/daemon_start.sh debug_local/daemon_stop.sh debug_local/daemon_server.sh` ✅
+- Impact / Result:
+  - The repo now has a repeatable, local diagnostic surface for transport problems that separates:
+    - endpoint behavior
+    - proxy dependence
+    - Bun transport behavior
+    - Nous provider behavior
+  - The debug launcher scripts now all consume the same canonical environment source, reducing false-negative / false-positive debugging caused by env drift.
+- Open questions / follow-ups:
+  - The diagnostic script helps classify the problem, but it does not fix Bun/OpenAI SDK proxy behavior.
+  - If transport problems remain common in this environment, the next step is either:
+    - an explicit Bun/OpenAI proxy shim for local debug use
+    - or a stronger product-side health-check surface that fails early with a better diagnosis.
