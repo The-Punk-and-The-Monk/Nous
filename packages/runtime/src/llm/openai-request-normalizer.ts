@@ -173,6 +173,8 @@ export function summarizeOpenAIChatRequest(
 	return {
 		provider: providerName,
 		baseURL: client.baseURL ?? "default",
+		organizationHeaderEnabled: client.organization !== null,
+		projectHeaderEnabled: client.project !== null,
 		model: params.model,
 		maxTokens: "max_tokens" in params ? params.max_tokens : undefined,
 		temperature: "temperature" in params ? params.temperature : undefined,
@@ -198,6 +200,8 @@ export function summarizeOpenAIResponsesRequest(
 	return {
 		provider: providerName,
 		baseURL: client.baseURL ?? "default",
+		organizationHeaderEnabled: client.organization !== null,
+		projectHeaderEnabled: client.project !== null,
 		model: params.model,
 		maxTokens: params.max_output_tokens,
 		temperature: params.temperature,

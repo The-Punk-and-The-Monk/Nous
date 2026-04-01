@@ -5903,3 +5903,94 @@ For significant sessions, capture:
   - If transport problems remain common in this environment, the next step is either:
     - an explicit Bun/OpenAI proxy shim for local debug use
     - or a stronger product-side health-check surface that fails early with a better diagnosis.
+
+### Session: Suppress official OpenAI org/project headers on compatible base URLs
+- Context / Trigger:
+  - The user ran `./debug_local/diagnose_openai_transport.sh` and surfaced a more specific transport split:
+    - `curl` to `POST /chat/completions` succeeded
+    - Bun `fetch` to the same endpoint succeeded
+    - but Nous `provider.chat(...)` against the same base URL still failed, now with `403 Your request was blocked`
+  - The failure no longer looked like a generic proxy issue, because both proxy-on and proxy-off curl probes succeeded.
+- Problem:
+  - Nous’s direct `OpenAIProvider` path uses the official OpenAI SDK client even when `OPENAI_BASE_URL` points at a non-official OpenAI-compatible gateway.
+  - In that path, provider selection can still inject `organization` / `project` from env or `~/.nous/secrets/providers.json`.
+  - The OpenAI SDK then automatically emits:
+    - `OpenAI-Organization`
+    - `OpenAI-Project`
+  - These headers were absent from the user’s successful `curl` / `fetch` probes and are plausible blockers for third-party gateways or upstream WAF rules.
+- Options considered:
+  - Option A: treat this as a proxy-only problem and keep investigating network plumbing.
+    - Rejected because the reproduced evidence already showed successful direct HTTP requests from the same environment.
+  - Option B: automatically remap every non-official `OPENAI_BASE_URL` to `OpenAICompatProvider`.
+    - Rejected for this iteration because it would be a broader provider-policy change and could unexpectedly alter Responses-vs-chat behavior.
+  - Option C: keep `OpenAIProvider`, but suppress official-only org/project header injection whenever the base URL is not an official OpenAI host.
+    - Chosen because it directly targets the observed divergence while preserving the current provider-selection model.
+- Decision:
+  - Detect official-vs-compatible OpenAI endpoints by host, not only for Responses compatibility policy but also for chat-completions logging and direct-provider header behavior.
+  - When `OpenAIProvider` is pointed at a non-official base URL:
+    - force `organization` to `null`
+    - force `project` to `null`
+    - thereby preventing the SDK from sending `OpenAI-Organization` / `OpenAI-Project`
+  - Improve diagnostics so transport logs and the debug script explicitly reveal whether those headers are enabled.
+- Changes made:
+  - Updated `packages/runtime/src/llm/openai.ts`
+    - resolves `OPENAI_BASE_URL` consistently
+    - suppresses `organization` / `project` for non-official base URLs
+  - Updated `packages/runtime/src/llm/openai-compat-profile.ts`
+    - exports official-host detection
+    - correctly marks chat-completions requests to custom base URLs as compatible endpoints in profile metadata/logging
+  - Updated `packages/runtime/src/llm/openai-shared.ts`
+    - widened client option types so `organization` / `project` can be explicitly `null`
+  - Updated `packages/runtime/src/llm/openai-request-normalizer.ts`
+    - logs whether organization/project headers are enabled
+  - Updated `debug_local/diagnose_openai_transport.sh`
+    - provider probe now prints:
+      - resolved client base URL
+      - whether organization/project headers are enabled
+  - Updated `packages/runtime/tests/openai-responses-provider.test.ts`
+    - added coverage for:
+      - non-official base URLs dropping org/project headers
+      - official base URLs retaining them
+- Validation:
+  - `bun x tsc --noEmit` ✅
+  - `bun test packages/runtime/tests/openai-responses-provider.test.ts` ✅
+- Impact / Result:
+  - Nous’s direct OpenAI path is less likely to trip third-party OpenAI-compatible gateways with official-only account-scoping headers.
+  - Future transport failures in this area are easier to classify because both debug logs and the diagnostic script now expose whether those headers were active.
+  - This keeps the architectural distinction intact:
+    - official OpenAI endpoints still receive official account-scoping headers
+    - compatible gateways do not inherit them accidentally
+- Open questions / follow-ups:
+  - ~~If the user’s gateway still blocks the SDK after org/project suppression, the next likely suspect is SDK-specific telemetry headers such as `X-Stainless-*` or `User-Agent`.~~
+  - ~~If that happens, Nous may need a second compatibility mode that strips more SDK-added headers or swaps to a thinner fetch-based transport for specific compatible endpoints.~~
+  - Resolved in the session below.
+
+### Session: Strip SDK telemetry headers for compatible endpoints (403 fix)
+- Context / Trigger:
+  - After the previous session suppressed `OpenAI-Organization` / `OpenAI-Project` headers for non-official endpoints, the diagnostic still showed `403 Your request was blocked` from `newapi.omgteam.me` (behind Cloudflare).
+  - curl and bun `fetch` worked fine; only the OpenAI SDK path failed.
+- Problem:
+  - The OpenAI Node SDK v6 injects `User-Agent: OpenAI/JS 6.33.0` and six `X-Stainless-*` telemetry headers on every request.
+  - The third-party API gateway’s Cloudflare WAF identified the `OpenAI/JS` User-Agent as a disallowed client and returned HTTP 403.
+  - Stripping only `X-Stainless-*` headers was insufficient; the `User-Agent` header was the actual trigger for the block.
+- Options considered:
+  - Option A: override `defaultHeaders` with `undefined` values to suppress SDK headers.
+    - Rejected: SDK v6 ignores `undefined` in `defaultHeaders`; the headers still ship.
+  - Option B: inject a custom `fetch` function that strips all SDK-added non-essential headers before the request leaves the process.
+    - Chosen: clean, composable, and doesn’t require patching the SDK or forking transport code.
+  - Option C: replace the SDK with raw `fetch` for compatible endpoints.
+    - Rejected: too large a change; the SDK’s retry, streaming, and type-safe response parsing are still valuable.
+- Decision:
+  - For non-official endpoints (`!isOfficialOpenAIBaseURL`), inject a custom `fetch` wrapper into the SDK client that strips `User-Agent` and all `X-Stainless-*` headers while preserving `Authorization`, `Content-Type`, and `Accept`.
+- Changes made:
+  - Updated `packages/runtime/src/llm/openai-shared.ts`
+    - imported `isOfficialOpenAIBaseURL`
+    - constructor now injects `stripSdkHeadersFetch` as the SDK’s `fetch` for compatible endpoints
+    - added `stripSdkHeadersFetch` helper that removes `User-Agent` and `X-Stainless-*` prefixed headers
+- Validation:
+  - `diagnose_openai_transport.sh` — all four probes (curl ×2, bun fetch, Nous provider) now return HTTP 200.
+- Impact / Result:
+  - Nous can now successfully call OpenAI-compatible APIs behind Cloudflare WAF or other gateways that block SDK-specific User-Agent strings.
+  - Official OpenAI endpoints are unaffected — they still receive the full SDK header set.
+- Open questions / follow-ups:
+  - If a future compatible gateway requires a specific User-Agent, the fetch wrapper could be extended to set a custom value rather than omitting it entirely.

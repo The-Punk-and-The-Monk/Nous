@@ -136,6 +136,9 @@ run_nous_provider_probe() {
 	bun -e '
 		import { createLLMProviderFromEnv } from "./packages/infra/src/cli/provider.ts";
 		const { provider, providerName } = createLLMProviderFromEnv(process.env);
+		const client = (provider && typeof provider === "object" && "client" in provider)
+			? (provider as { client?: { baseURL?: string; organization?: string | null; project?: string | null } }).client
+			: undefined;
 		const start = Date.now();
 		try {
 			const response = await provider.chat({
@@ -150,6 +153,9 @@ run_nous_provider_probe() {
 				.join("\n");
 			console.log(JSON.stringify({
 				providerName,
+				clientBaseURL: client?.baseURL,
+				organizationHeaderEnabled: client?.organization != null,
+				projectHeaderEnabled: client?.project != null,
 				ms: Date.now() - start,
 				stopReason: response.stopReason,
 				text,
@@ -158,6 +164,9 @@ run_nous_provider_probe() {
 		} catch (error) {
 			console.error(JSON.stringify({
 				providerName,
+				clientBaseURL: client?.baseURL,
+				organizationHeaderEnabled: client?.organization != null,
+				projectHeaderEnabled: client?.project != null,
 				ms: Date.now() - start,
 				error: String(error),
 			}, null, 2));

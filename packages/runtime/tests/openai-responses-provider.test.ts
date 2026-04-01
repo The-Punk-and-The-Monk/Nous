@@ -463,6 +463,50 @@ describe("OpenAI responses wire", () => {
 		expect(capturedParams?.reasoning).toEqual({ effort: "medium" });
 	});
 
+	test("non-official OpenAI base urls suppress official organization/project headers", () => {
+		const provider = new OpenAIProvider({
+			apiKey: "test-key",
+			baseURL: "https://newapi.example/v1",
+			organization: "org_123",
+			project: "proj_123",
+		});
+
+		const client = (
+			provider as unknown as {
+				client: {
+					baseURL: string;
+					organization: string | null;
+					project: string | null;
+				};
+			}
+		).client;
+
+		expect(client.baseURL).toContain("https://newapi.example/v1");
+		expect(client.organization).toBeNull();
+		expect(client.project).toBeNull();
+	});
+
+	test("official OpenAI endpoints retain organization/project headers", () => {
+		const provider = new OpenAIProvider({
+			apiKey: "test-key",
+			baseURL: "https://api.openai.com/v1",
+			organization: "org_123",
+			project: "proj_123",
+		});
+
+		const client = (
+			provider as unknown as {
+				client: {
+					organization: string | null;
+					project: string | null;
+				};
+			}
+		).client;
+
+		expect(client.organization).toBe("org_123");
+		expect(client.project).toBe("proj_123");
+	});
+
 	test("OpenAI compat still defaults to chat-completions wire unless overridden", () => {
 		const provider = new OpenAICompatProvider({
 			baseURL: "http://localhost:1234/v1",

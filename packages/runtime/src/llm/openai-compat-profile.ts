@@ -23,10 +23,9 @@ export function resolveOpenAICompatProfile(params: {
 	baseURL?: string;
 	wireApi: OpenAIWireApi;
 }): OpenAICompatProfile {
-	const endpointKind =
-		params.wireApi === "responses" && !isOfficialOpenAIBaseURL(params.baseURL)
-			? "compatible"
-			: "official";
+	const endpointKind = isOfficialOpenAIBaseURL(params.baseURL)
+		? "official"
+		: "compatible";
 
 	if (params.wireApi === "responses" && endpointKind === "compatible") {
 		return {
@@ -65,7 +64,10 @@ export function resolveOpenAICompatProfile(params: {
 	}
 
 	return {
-		id: "openai-chat-default",
+		id:
+			endpointKind === "compatible"
+				? "openai-chat-compatible"
+				: "openai-chat-default",
 		providerName: params.providerName,
 		wireApi: params.wireApi,
 		endpointKind,
@@ -248,7 +250,7 @@ function supportsResponsesReasoning(model: string): boolean {
 	return /^(gpt-5|o[1-9]|o3|o4)/i.test(model.trim());
 }
 
-function isOfficialOpenAIBaseURL(baseURL?: string): boolean {
+export function isOfficialOpenAIBaseURL(baseURL?: string): boolean {
 	if (!baseURL || !baseURL.trim()) {
 		return true;
 	}

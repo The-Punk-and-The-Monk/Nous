@@ -8,6 +8,7 @@ import type {
 import { LLMError, createLogger } from "@nous/core";
 import OpenAI from "openai";
 import {
+	isOfficialOpenAIBaseURL,
 	resolveOpenAICompatProfile,
 	shouldFallbackOpenAIResponsesJsonSchema,
 	type OpenAICompatProfile,
@@ -45,8 +46,8 @@ export interface OpenAIProviderBaseOptions {
 	clientOptions: {
 		apiKey?: string;
 		baseURL?: string;
-		organization?: string;
-		project?: string;
+		organization?: string | null;
+		project?: string | null;
 		timeout?: number;
 		defaultHeaders?: Record<string, string>;
 	};
@@ -63,7 +64,13 @@ export class OpenAIProviderBase implements LLMProvider {
 
 	constructor(options: OpenAIProviderBaseOptions) {
 		this.name = options.providerName;
-		this.client = new OpenAI(options.clientOptions);
+		const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
+			...options.clientOptions,
+		};
+		if (!isOfficialOpenAIBaseURL(clientOptions.baseURL)) {
+			clientOptions.fetch = stripSdkHeadersFetch;
+		}
+		this.client = new OpenAI(clientOptions);
 		this.model = options.model;
 		this.maxRetries = options.maxRetries ?? 3;
 		this.wireApi = options.wireApi ?? "responses";
@@ -362,4 +369,31 @@ export class OpenAIProviderBase implements LLMProvider {
 			throw err;
 		}
 	}
+}
+
+const STRIPPED_HEADER_PREFIXES = ["x-stainless-"];
+const STRIPPED_HEADER_NAMES = new Set(["user-agent"]);
+
+function stripSdkHeadersFetch(
+	url: RequestInfo | URL,
+	init?: RequestInit,
+): Promise<Response> {
+	if (init?.headers) {
+		const original =
+			init.headers instanceof Headers
+				? init.headers
+				: new Headers(init.headers as Record<string, string>);
+		const cleaned = new Headers();
+		original.forEach((value, key) => {
+			const lk = key.toLowerCase();
+			if (
+				!STRIPPED_HEADER_NAMES.has(lk) &&
+				!STRIPPED_HEADER_PREFIXES.some((p) => lk.startsWith(p))
+			) {
+				cleaned.set(key, value);
+			}
+		});
+		init = { ...init, headers: cleaned };
+	}
+	return fetch(url, init);
 }

@@ -81,6 +81,44 @@ describe("createLLMProviderFromEnv", () => {
 		expect(providerName).toBe("openai");
 	});
 
+	test("suppresses org/project headers when secrets target a non-official OpenAI base url", () => {
+		const root = mkdtempSync(join(tmpdir(), "nous-provider-compat-org-"));
+		tempDirs.push(root);
+		const home = join(root, ".nous");
+		mkdirSync(join(home, "secrets"), { recursive: true });
+		writeFileSync(
+			join(home, "secrets", "providers.json"),
+			JSON.stringify({
+				providers: {
+					openai: {
+						apiKey: "file-openai-key",
+						organization: "org-from-file",
+						project: "proj-from-file",
+					},
+				},
+			}),
+		);
+
+		const { provider } = createLLMProviderFromEnv({
+			NOUS_HOME: home,
+			OPENAI_BASE_URL: "https://newapi.example/v1",
+		});
+
+		const client = (
+			provider as {
+				client: {
+					baseURL: string;
+					organization: string | null;
+					project: string | null;
+				};
+			}
+		).client;
+
+		expect(client.baseURL).toContain("https://newapi.example/v1");
+		expect(client.organization).toBeNull();
+		expect(client.project).toBeNull();
+	});
+
 	test("environment variables override file-based provider secrets", () => {
 		const root = mkdtempSync(join(tmpdir(), "nous-provider-env-"));
 		tempDirs.push(root);
