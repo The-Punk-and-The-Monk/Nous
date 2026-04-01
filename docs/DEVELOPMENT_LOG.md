@@ -5048,3 +5048,57 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - This still means ordinary non-slash input depends on the control-routing LLM hop before task submission.
   - If that latency or fragility remains undesirable in practice, the next improvement should likely be a protocol-level redesign of control-plane vs task-plane submission rather than another local heuristic layer.
+
+### Session: Add iteration-level debug-daemon restart contract wired to `debug_local/env.txt`
+- Context / Trigger:
+  - The user added a new operational requirement for normal Nous development flow:
+    - after **every iteration completion**
+    - restart the daemon
+    - using the environment defined in `debug_local/env.txt`
+  - The goal is practical, not cosmetic:
+    - make each landed iteration immediately testable in the user’s preferred local debug environment
+    - reduce drift between “code committed” and “what the user can actually try next”
+- Problem:
+  - The repository contract previously said:
+    - commit after each iteration
+    - send a notification
+    - continue
+  - But it did **not** operationalize the user’s local test loop:
+    - which daemon environment should be used
+    - when daemon restart should happen relative to commit/notification
+    - what command should be run consistently
+  - Leaving this as only chat knowledge would make future iterations easy to execute inconsistently.
+- Options considered:
+  - Option A: add only a textual note in `AGENTS.md` telling future work to “remember to restart the daemon.”
+    - Rejected because it still leaves the concrete restart path implicit and easy to drift.
+  - Option B: add both:
+    - an explicit `AGENTS.md` instruction
+    - and a repo-local helper that sources `debug_local/env.txt` and restarts the daemon consistently
+    - Chosen because this turns the testing instruction into an actual operational surface rather than a memory burden.
+- Decision:
+  - Update the standard iteration loop in `AGENTS.md` so that after each commit, Nous should:
+    1. restart the local test daemon using `debug_local/env.txt`
+    2. then send the macOS notification
+  - Add `scripts/restart_debug_daemon.sh` as the preferred helper for this step.
+  - Require explicit mention if daemon restart fails, rather than silently skipping it.
+- Changes made:
+  - Updated `AGENTS.md`
+    - inserted daemon restart into the canonical iteration loop
+    - pointed the preferred path at `scripts/restart_debug_daemon.sh`
+    - documented that `debug_local/env.txt` is the default environment source
+  - Added `scripts/restart_debug_daemon.sh`
+    - sources `debug_local/env.txt` by default
+    - prints non-secret environment summary (`NOUS_HOME`, `OPENAI_BASE_URL`, `OPENAI_MODEL`)
+    - stops any existing daemon best-effort
+    - starts the daemon
+    - prints daemon status after restart
+- Validation:
+  - `bash -n scripts/restart_debug_daemon.sh` pending in this same session
+  - live daemon restart attempt should be performed after this iteration commit, per the new repo rule
+- Impact / Result:
+  - The repository now carries the user’s preferred “commit → restart test daemon → notify” loop as durable operating memory.
+  - Future iterations have a single obvious restart path instead of depending on remembered shell snippets.
+  - This makes the repo more faithful to actual dogfooding/testing workflow rather than just code-edit workflow.
+- Open questions / follow-ups:
+  - In the current Codex sandbox, honest daemon restart may still fail because local socket/port listening has known restrictions.
+  - If that happens, the helper/instruction remains correct for the user’s real machine, but the failure should still be surfaced explicitly in the log/response.

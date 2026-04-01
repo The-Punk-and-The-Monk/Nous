@@ -109,8 +109,19 @@ The standard iteration loop is:
 5. validate with the smallest honest checks first
 6. update `docs/DEVELOPMENT_LOG.md` in the same work session
 7. commit with a clear, detailed message
-8. send a macOS notification for that iteration
-9. continue into the next iteration
+8. restart the local test daemon using `debug_local/env.txt`
+9. send a macOS notification for that iteration
+10. continue into the next iteration
+
+Preferred daemon-restart path after each iteration commit:
+
+```bash
+scripts/restart_debug_daemon.sh
+```
+
+- The helper should source `debug_local/env.txt` by default so the daemon comes back under the user's preferred local test environment.
+- If the helper cannot be used, manually source `debug_local/env.txt` first, then restart the daemon.
+- If the daemon restart fails, mention that explicitly in the development log/response instead of silently skipping it.
 
 Do **not** wait for user confirmation between normal iterations unless a real hard blocker exists.
 
