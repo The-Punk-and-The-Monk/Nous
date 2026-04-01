@@ -20,6 +20,7 @@ export interface ProactiveCandidateQuery {
 	cooldownKey?: string;
 	createdAfter?: string;
 	createdBefore?: string;
+	deliveredAfter?: string;
 	limit?: number;
 }
 

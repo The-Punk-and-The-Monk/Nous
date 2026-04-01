@@ -259,6 +259,10 @@ export class SQLiteProactiveStore implements ProactiveStore {
 			conditions.push("created_at <= ?");
 			params.push(query.createdBefore);
 		}
+		if (query.deliveredAfter) {
+			conditions.push("delivered_at >= ?");
+			params.push(query.deliveredAfter);
+		}
 
 		const where =
 			conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

@@ -182,5 +182,11 @@ describe("SQLiteProactiveStore", () => {
 		const delivered = store.getCandidateById("cand_delivered");
 		expect(delivered?.status).toBe("delivered");
 		expect(delivered?.deliveredAt).toBe("2026-03-31T03:00:10.000Z");
+		expect(
+			store.listCandidates({
+				statuses: ["delivered"],
+				deliveredAfter: "2026-03-31T03:00:00.000Z",
+			}),
+		).toHaveLength(1);
 	});
 });

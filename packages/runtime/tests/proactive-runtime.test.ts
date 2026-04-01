@@ -344,6 +344,75 @@ describe("ProactiveRuntimeService", () => {
 
 		expect(deliverable).toHaveLength(0);
 	});
+
+	test("counts delivered candidates by deliveredAt instead of createdAt", () => {
+		const db = initDatabase();
+		const memory = new MemoryService({
+			store: new SQLiteMemoryStore(db),
+			agentId: "nous",
+		});
+		const store = new SQLiteProactiveStore(db);
+		const service = new ProactiveRuntimeService({
+			store,
+			memory,
+			now: () => "2026-03-31T08:00:00.000Z",
+		});
+		const globalBoundary: RelationshipBoundary = {
+			assistantStyle: {
+				warmth: "balanced",
+				directness: "balanced",
+			},
+			proactivityPolicy: {
+				initiativeLevel: "balanced",
+				allowedKinds: ["suggestion", "offer", "reminder", "ambient_intent"],
+				blockedKinds: [],
+				requireApprovalForKinds: ["ambient_intent"],
+			},
+			interruptionPolicy: {
+				maxUnpromptedMessagesPerDay: 1,
+				preferredDelivery: "thread",
+			},
+			autonomyPolicy: {
+				allowOffersWithoutPrompt: true,
+				allowAmbientAutoExecution: false,
+			},
+		};
+
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_cross_day_delivered",
+				status: "delivered",
+				createdAt: "2026-03-30T23:59:00.000Z",
+				deliveredAt: "2026-03-31T00:10:00.000Z",
+				sourceThreadIds: ["thread_cross_day"],
+				scope: {
+					projectRoot: "/repo/a",
+					workingDirectory: "/repo/a",
+				},
+				cooldownKey: "cand_cross_day_delivered",
+			}),
+		);
+		store.createCandidate(
+			makeCandidate({
+				id: "cand_cross_day_queued",
+				status: "queued",
+				sourceThreadIds: ["thread_cross_day_2"],
+				scope: {
+					projectRoot: "/repo/a",
+					workingDirectory: "/repo/a",
+				},
+				cooldownKey: "cand_cross_day_queued",
+			}),
+		);
+
+		const deliverable = service.drainDeliverableCandidates(
+			globalBoundary,
+			4,
+			(candidate) => globalBoundary,
+		);
+
+		expect(deliverable).toHaveLength(0);
+	});
 });
 
 function makeAgenda(
@@ -412,6 +481,7 @@ function makeCandidate(
 		rationale:
 			overrides.rationale ??
 			"Past memory suggests package metadata changes often deserve a quick follow-up.",
+		proposedIntentText: overrides.proposedIntentText,
 		confidence: overrides.confidence ?? 0.82,
 		valueScore: overrides.valueScore ?? 0.8,
 		interruptionCost: overrides.interruptionCost ?? 0.2,
@@ -419,6 +489,7 @@ function makeCandidate(
 		recommendedMode: overrides.recommendedMode ?? "async_notify",
 		requiresApproval: overrides.requiresApproval ?? false,
 		cooldownKey: overrides.cooldownKey ?? "signal:/repo/app:package.json",
+		expiresAt: overrides.expiresAt,
 		sourceSignalIds: overrides.sourceSignalIds ?? ["sig_1"],
 		sourceMemoryIds: overrides.sourceMemoryIds ?? ["mem_1"],
 		sourceIntentIds: overrides.sourceIntentIds ?? [],
@@ -430,6 +501,7 @@ function makeCandidate(
 			workingDirectory: "/repo/app",
 		},
 		createdAt: overrides.createdAt ?? "2026-03-31T08:00:01.000Z",
+		deliveredAt: overrides.deliveredAt,
 		metadata: overrides.metadata ?? { agendaOrigin: "signal" },
 	};
 }

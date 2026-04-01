@@ -198,7 +198,7 @@ export class ProactiveRuntimeService {
 		const deliveredTodayByQuotaKey = new Map<string, number>();
 		for (const candidate of this.options.store.listCandidates({
 			statuses: ["delivered", "converted"],
-			createdAfter: startOfDay(referenceTime),
+			deliveredAfter: startOfDay(referenceTime),
 		})) {
 			const quotaKey = buildCandidateQuotaKey(candidate, resolveBoundary);
 			deliveredTodayByQuotaKey.set(

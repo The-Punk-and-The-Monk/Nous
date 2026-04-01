@@ -304,6 +304,38 @@ For significant sessions, capture:
 - Open questions / next steps:
   - If future behavior needs per-thread exceptions inside one project, it should be modeled explicitly rather than reusing the quota key precedence as an implicit contract.
 
+### Session: Count proactive daily quotas by delivery day instead of creation day
+
+- Context / Trigger:
+  - After fixing project-first quota aggregation, architect review surfaced one more correctness edge case: daily quota accounting still filtered delivered candidates by `createdAt`, not by the day they were actually delivered.
+
+- Problem:
+  - A candidate created before midnight but delivered after midnight could be excluded from the next day's quota accounting, undercounting the real number of proactive interruptions already sent that day.
+
+- Decision:
+  - Extend proactive candidate queries with `deliveredAfter`.
+  - Make runtime daily quota accounting count delivered/converted candidates by `deliveredAt`.
+  - Add persistence + runtime regressions for the cross-day case.
+
+- Changes made:
+  - `packages/persistence/src/interfaces/proactive-store.ts`
+    - added `deliveredAfter` to proactive candidate queries
+  - `packages/persistence/src/sqlite/proactive-store.sqlite.ts`
+    - added `delivered_at >= ?` filtering for candidate queries
+  - `packages/runtime/src/proactive/agenda.ts`
+    - daily proactive quota accounting now uses `deliveredAfter: startOfDay(...)`
+  - `packages/persistence/tests/proactive-store.test.ts`
+    - added regression coverage for `deliveredAfter`
+  - `packages/runtime/tests/proactive-runtime.test.ts`
+    - added regression coverage proving a candidate created yesterday but delivered today still consumes today's quota
+
+- Impact / Result:
+  - Daily proactive-volume control is now aligned with actual interruption delivery rather than candidate creation timing.
+  - The scoped proactive quota model is more robust across midnight/session boundaries.
+
+- Open questions / next steps:
+  - If future delivery policies distinguish between `delivered` and `converted` for quota semantics, that split should be made explicit rather than piggybacking on the same daily bucket.
+
 ## 2026-04-01
 
 ### Session: Finish the layered continuity retreat verification pass
