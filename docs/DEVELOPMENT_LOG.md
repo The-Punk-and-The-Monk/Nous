@@ -7202,3 +7202,60 @@ For significant sessions, capture:
   - The codebase still contains many `intent*` identifiers (`types`, stores, daemon maps, orchestrator modules); these now need a staged implementation migration.
   - `MemoryService` still returns flat hint strings in live code; `RecallPack` remains the next major runtime-boundary refactor.
   - Dialogue metadata still includes `activeIntentId` / `activeWorkItemId`; those should be demoted or removed once the code migration starts.
+
+### Session: Enrich README to present Nous as a persistent personal-assistant runtime
+- Context / Trigger:
+  - After the continuity / WorkItem convergence docs landed, the user asked to strengthen `README.md` so the project’s public presentation better matches the actual architecture and current product story.
+- Problem:
+  - The previous README was serviceable but too thin for the current state of the repo.
+  - It listed some runtime features, but it did not clearly explain:
+    - what Nous is trying to become
+    - why it is different from generic agent frameworks
+    - how the daemon / work / memory / proactive pieces fit together
+    - what is already real versus still under construction
+  - It also still reflected older terminology in the package overview and did not surface the new WorkItem / continuity framing prominently enough.
+- Alternatives considered:
+  - Option A: keep the README short and only patch a few stale terms.
+    - Rejected because the user explicitly wanted a stronger showcase surface, not a tiny maintenance pass.
+  - Option B: turn the README into a mini-architecture book.
+    - Rejected because the repo already has `ARCHITECTURE.md`; the README should sell and orient, not duplicate the full design document.
+  - Option C: rewrite the README as a stronger project front door — clear thesis, differentiators, current status, quick start, and doc map — while staying honest about what is not finished yet.
+    - Chosen because it best improves the project’s presentation layer without overselling maturity.
+- Decision:
+  - Reframe the README around Nous as a **local-first, persistent personal-assistant runtime**.
+  - Surface the current architectural center and differentiators:
+    - daemon-first persistence
+    - WorkItem / Plan / Task / Decision governance
+    - memory as semantic continuity
+    - proactive cognition
+    - local-first governance
+    - evolution path
+  - Add a clearer “current status” section separating implemented reality from still-in-progress areas.
+  - Add a more practical quick-start path using repo-local `bun bin/nous.ts ...` commands while still acknowledging installed `nous` CLI usage.
+  - Update the repository map and doc links so the README becomes a better navigation entry point.
+- Changes made:
+  - Updated `README.md`
+    - rewrote the opening value proposition and project positioning
+    - added North Star + current architectural center
+    - added a “Why Nous is different” section
+    - added an architecture-at-a-glance section using the current mainline vocabulary
+    - expanded current status into “already implemented / strongest current product truth / still under construction”
+    - added a more useful quick-start path
+    - refreshed repository map and reading guide
+    - explicitly noted the ongoing `intent*` → `WorkItem*` convergence in code
+- Validation:
+  - `git diff --check -- README.md docs/DEVELOPMENT_LOG.md` ✅
+  - manual preview of `README.md` top-to-bottom via `sed` ✅
+  - keyword sanity check on main framing terms (`WorkItem`, `RecallPack`, local-first, proactive, etc.) ✅
+  - no typecheck / tests run because this iteration changed documentation only
+- Impact / Result:
+  - The README now presents Nous more like the project it is actually becoming, instead of a thin placeholder.
+  - New readers should understand much faster that Nous is:
+    - daemon-first
+    - personal-assistant-first
+    - governance-heavy
+    - memory/proactive oriented
+    - still honest about current gaps
+- Open questions / follow-ups:
+  - A future pass could add diagrams / screenshots / GIFs once the CLI / debug surfaces stabilize visually.
+  - Once the code-level `WorkItem` migration progresses, the README repository map can become even cleaner and drop the current legacy naming note.
