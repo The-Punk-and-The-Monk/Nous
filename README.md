@@ -74,6 +74,41 @@ Three forms of continuity are explicitly separated in current mainline architect
 
 This split is one of the central current design decisions in the repo.
 
+```mermaid
+flowchart TB
+    U[Human / Sensor input] --> D[Dialogue layer\nchannel · surface session · thread · outbox]
+    D --> W[Work intake plane\nchat/work/handoff · WorkItem · Decision]
+    W --> O[Orchestration plane\nplan · schedule · route · context]
+    O --> R[Runtime + memory plane\nReAct · tools · retrieval · proactive reflection]
+    R --> P[Persistence plane\nevents · tasks · messages · memory]
+    P --> D
+
+    M[Layered memory] -. semantic continuity .-> W
+    M -. semantic continuity .-> R
+    D -. transport continuity .-> D
+    W -. execution continuity .-> O
+```
+
+## Why this is not just another agent framework
+
+| Dimension | Generic chat+tools agent | Nous |
+|---|---|---|
+| Runtime model | foreground session | long-lived daemon runtime |
+| Continuity model | keep recent turns and hope | transport / execution / semantic continuity split |
+| Work model | message-centric | `WorkItem -> Plan -> Task -> Decision` |
+| Memory role | prompt context helper | semantic continuity authority moving toward `RecallPack` |
+| Proactivity | optional notification logic | perception + agenda + reflection + governed candidate delivery |
+| Governance | often implicit | explicit permissions, decisions, pause/resume/cancel, outbox replay |
+| Product center | chatbot / coding copilot / orchestration tool | persistent personal assistant first |
+
+Another way to say it:
+
+- **Codex / Claude Code** are excellent foreground work sessions
+- **OpenClaw** is strong at multi-surface gateway/session routing
+- **Nous** is trying to fuse OS-grade substrate + governed work + memory continuity + proactive assistant behavior
+
+That does make Nous architecturally heavier than a thin tool-calling loop. That is intentional.
+
 ## Current status
 
 Nous is no longer only an architecture document. The current local-first runtime slice is real.

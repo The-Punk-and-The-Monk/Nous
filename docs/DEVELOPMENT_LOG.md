@@ -7259,3 +7259,59 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - A future pass could add diagrams / screenshots / GIFs once the CLI / debug surfaces stabilize visually.
   - Once the code-level `WorkItem` migration progresses, the README repository map can become even cleaner and drop the current legacy naming note.
+
+### Session: Add a visual architecture block and stronger framework contrast to README
+- Context / Trigger:
+  - After the README rewrite landed, the user asked for another pass to make the showcase surface stronger.
+  - The immediate follow-up target was to add:
+    - a clearer architecture diagram
+    - a stronger “why this is not just another agent framework” comparison surface
+- Problem:
+  - The refreshed README already had better positioning and onboarding, but it still relied mostly on prose.
+  - New readers could understand the text, yet they still had to mentally reconstruct:
+    - how the major layers relate
+    - where continuity lives
+    - why Nous is architecturally heavier than a normal chat+tools runtime
+- Alternatives considered:
+  - Option A: leave the README textual and wait for future screenshots / diagrams.
+    - Rejected because the requested improvement was specifically about strengthening the project’s presentation surface now.
+  - Option B: add a large, dense architecture diagram copied from `ARCHITECTURE.md`.
+    - Rejected because the README should stay front-door readable rather than becoming a compressed architecture manual.
+  - Option C: add one lightweight diagram plus one focused comparison section that clarifies Nous’s product/architecture stance in a few seconds.
+    - Chosen because it improves comprehension quickly without overwhelming the reader.
+- Decision:
+  - Add a compact Mermaid diagram showing:
+    - dialogue layer
+    - work intake plane
+    - orchestration
+    - runtime + memory
+    - persistence
+    - continuity split cues
+  - Add a concise comparison table contrasting generic chat+tools agents with Nous on:
+    - runtime model
+    - continuity model
+    - work model
+    - memory role
+    - proactivity
+    - governance
+    - product center
+  - Add a short human-readable comparison line referencing Codex / Claude Code / OpenClaw to make the positioning more legible to technically literate readers.
+- Changes made:
+  - Updated `README.md`
+    - inserted a Mermaid architecture overview diagram under the architecture section
+    - added a “Why this is not just another agent framework” comparison section
+    - added a short comparative framing line for Codex / Claude Code / OpenClaw / Nous
+- Validation:
+  - `git diff --check -- README.md docs/DEVELOPMENT_LOG.md` ✅
+  - manual README preview via `sed` to confirm Markdown / Mermaid / table readability ✅
+  - no typecheck / tests run because this iteration changed documentation only
+- Impact / Result:
+  - The README now communicates the architecture faster to new readers.
+  - Nous’s differentiation is clearer at a glance:
+    - not just chat + tools
+    - not just multi-surface routing
+    - not just foreground coding sessions
+    - but a daemon-first, governance-heavy, memory/proactive personal-assistant runtime
+- Open questions / follow-ups:
+  - Mermaid rendering depends on the reader surface (GitHub is fine; some other renderers may degrade to source text).
+  - A later README pass could still add screenshots / terminal captures once the visual surfaces stabilize.
