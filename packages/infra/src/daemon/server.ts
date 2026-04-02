@@ -310,7 +310,7 @@ export class NousDaemon {
 	private handleProgress(event: ProgressEvent): void {
 		const intentId = String(event.data.intentId ?? "");
 		if (!intentId) return;
-		const threadId = this.threadByIntentId.get(intentId);
+		const threadId = this.resolveThreadIdForIntent(intentId);
 		if (!threadId) return;
 		const turnState = this.turnStateByIntentId.get(intentId);
 		if (event.type === "intent.approval_requested") {
@@ -502,7 +502,7 @@ export class NousDaemon {
 
 		await this.requestIntentCancellation({
 			intentId: intent.id,
-			threadId: payload.threadId ?? this.threadByIntentId.get(intent.id),
+			threadId: payload.threadId ?? this.resolveThreadIdForIntent(intent.id),
 			reason: payload.reason?.trim() || "Cancelled by user",
 		});
 	}
@@ -517,7 +517,7 @@ export class NousDaemon {
 			params.reason,
 		);
 		const threadId =
-			params.threadId ?? this.threadByIntentId.get(params.intentId);
+			params.threadId ?? this.resolveThreadIdForIntent(params.intentId);
 		if (threadId) {
 			this.cancelOutstandingDecisionsForIntent(
 				params.intentId,
@@ -555,7 +555,7 @@ export class NousDaemon {
 	}): Promise<void> {
 		this.orchestrator.pauseIntent(params.intentId, params.reason);
 		const threadId =
-			params.threadId ?? this.threadByIntentId.get(params.intentId);
+			params.threadId ?? this.resolveThreadIdForIntent(params.intentId);
 		if (threadId) {
 			this.requeueOutstandingDecisionsForIntent(
 				params.intentId,
@@ -576,7 +576,7 @@ export class NousDaemon {
 			params.reason,
 		);
 		const threadId =
-			params.threadId ?? this.threadByIntentId.get(params.intentId);
+			params.threadId ?? this.resolveThreadIdForIntent(params.intentId);
 		if (!threadId) {
 			return;
 		}
@@ -1818,47 +1818,75 @@ export class NousDaemon {
 	}
 
 	private getLatestControllableIntentForThread(threadId: string) {
-		const snapshot = this.dialogue.getThreadSnapshot({ threadId });
-		if (!snapshot) {
-			return undefined;
-		}
-
-		const intentIds = Array.isArray(snapshot.thread.metadata?.intentIds)
-			? snapshot.thread.metadata.intentIds.map((value) => String(value))
-			: [];
-		for (const intentId of [...intentIds].reverse()) {
-			const intent = this.backend.intents.getById(intentId);
-			if (
-				!intent ||
-				(intent.status !== "active" && intent.status !== "paused")
-			) {
-				continue;
-			}
-			return intent;
-		}
-		return undefined;
+		return this.getTrackedIntentsForThread(threadId).find(
+			(intent) => intent.status === "active" || intent.status === "paused",
+		);
 	}
 
 	private getLatestTrackedIntentForThread(threadId: string) {
-		const snapshot = this.dialogue.getThreadSnapshot({ threadId });
-		if (!snapshot) {
-			return undefined;
+		return this.getTrackedIntentsForThread(threadId).find(
+			(intent) =>
+				intent.status !== "achieved" && intent.status !== "abandoned",
+		);
+	}
+
+	private getTrackedIntentsForThread(threadId: string): Intent[] {
+		const trackedIntentIds = new Set<string>();
+		for (const binding of this.backend.work.listFlowThreadBindings({ threadId })) {
+			const flow = this.backend.work.getFlowById(binding.flowId);
+			if (!flow) {
+				continue;
+			}
+			if (flow.primaryIntentId) {
+				trackedIntentIds.add(flow.primaryIntentId);
+			}
+			for (const intentId of flow.relatedIntentIds) {
+				trackedIntentIds.add(intentId);
+			}
 		}
 
-		const intentIds = Array.isArray(snapshot.thread.metadata?.intentIds)
+		for (const [intentId, trackedThreadId] of this.threadByIntentId.entries()) {
+			if (trackedThreadId === threadId) {
+				trackedIntentIds.add(intentId);
+			}
+		}
+
+		const snapshot = this.dialogue.getThreadSnapshot({ threadId });
+		const metadataIntentIds = Array.isArray(snapshot?.thread.metadata?.intentIds)
 			? snapshot.thread.metadata.intentIds.map((value) => String(value))
 			: [];
-		for (const intentId of [...intentIds].reverse()) {
-			const intent = this.backend.intents.getById(intentId);
-			if (!intent) {
-				continue;
-			}
-			if (intent.status === "achieved" || intent.status === "abandoned") {
-				continue;
-			}
-			return intent;
+		for (const intentId of metadataIntentIds) {
+			trackedIntentIds.add(intentId);
 		}
-		return undefined;
+
+		return [...trackedIntentIds]
+			.map((intentId) => this.backend.intents.getById(intentId))
+			.filter((intent): intent is Intent => Boolean(intent))
+			.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+	}
+
+	private resolveThreadIdForIntent(intentId: string): string | undefined {
+		const intent = this.backend.intents.getById(intentId);
+		if (intent?.flowId) {
+			const bindings = this.backend.work.listFlowThreadBindings({
+				flowId: intent.flowId,
+			});
+			const preferredBinding = bindings.find(
+				(binding) =>
+					binding.role === "primary" ||
+					binding.role === "decision_surface" ||
+					binding.role === "delivery_surface",
+			);
+			if (preferredBinding?.threadId) {
+				return preferredBinding.threadId;
+			}
+			const flow = this.backend.work.getFlowById(intent.flowId);
+			if (flow?.ownerThreadId) {
+				return flow.ownerThreadId;
+			}
+		}
+
+		return this.threadByIntentId.get(intentId);
 	}
 
 	private readDecisionMetadataString(
@@ -3086,7 +3114,7 @@ export class NousDaemon {
 		if (!text) return;
 
 		const scope = this.intentScopeById.get(intentId);
-		const threadId = this.threadByIntentId.get(intentId);
+		const threadId = this.resolveThreadIdForIntent(intentId);
 		const outputs = this.intentOutputsById.get(intentId) ?? [];
 		const taskSummaries = this.intentTaskSummariesById.get(intentId) ?? [];
 		const usedToolNames = this.intentToolNamesById.get(intentId) ?? [];

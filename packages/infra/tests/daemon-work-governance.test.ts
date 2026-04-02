@@ -122,6 +122,40 @@ describe("NousDaemon work-governance integration", () => {
 			await daemon.shutdown();
 		}
 	});
+
+	test("can recover the active intent for a thread from flow bindings even if thread metadata intentIds are missing", async () => {
+		const daemon = createDaemon(new NoopProvider());
+
+		try {
+			const internals = daemon as unknown as DaemonInternals;
+			const thread = internals.dialogue.ensureThread({
+				threadId: "thread_flow_lookup",
+				title: "Flow lookup thread",
+				channelId: "channel_cli",
+			});
+			internals.backend.intents.create(makeIntent("intent_flow_lookup"));
+
+			internals.trackIntentForThread(
+				"intent_flow_lookup",
+				thread.id,
+				"Inspect auth changes",
+				BASE_SCOPE,
+			);
+
+			internals.backend.messages.updateThread(thread.id, {
+				metadata: {
+					channelIds: ["channel_cli"],
+					originChannel: "channel_cli",
+					surfaceKind: "cli",
+				},
+			});
+
+			const resolved = internals.getLatestControllableIntentForThread(thread.id);
+			expect(resolved?.id).toBe("intent_flow_lookup");
+		} finally {
+			await daemon.shutdown();
+		}
+	});
 });
 
 const ORIGINAL_ENV = {
@@ -150,6 +184,12 @@ interface DaemonInternals {
 			create(intent: Intent): void;
 			getById(id: string): Intent | undefined;
 		};
+		messages: {
+			updateThread(
+				id: string,
+				fields: { metadata?: Record<string, unknown> },
+			): void;
+		};
 		work: {
 			getFlowById(id: string): { ownerThreadId?: string; primaryIntentId?: string; relatedIntentIds: string[] } | undefined;
 			listMergeCandidates(query: {
@@ -168,6 +208,9 @@ interface DaemonInternals {
 		text: string,
 		scope: typeof BASE_SCOPE,
 	): void;
+	getLatestControllableIntentForThread(
+		threadId: string,
+	): { id: string } | undefined;
 }
 
 function createDaemon(llm: LLMProvider): NousDaemon {

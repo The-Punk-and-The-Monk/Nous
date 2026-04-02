@@ -157,6 +157,12 @@ interface AmbientIntent extends Intent {
 
 It is a parent grouping / governance object above intents.
 
+Current assessment:
+
+- keep `Flow`
+- do **not** make it the primary execution-continuity identity
+- use it as a persisted grouping / thread-binding / merge-governance helper
+
 ### `PlanGraph`
 
 `PlanGraph` remains intent-local.

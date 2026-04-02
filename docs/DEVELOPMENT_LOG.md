@@ -7388,3 +7388,49 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - Some historical documents/log entries still mention the abandoned `WorkItem` experiment; those are now historical record rather than active design guidance.
   - `Flow` / `PlanGraph` still exist as secondary governance/grouping layers; current execution continuity remains `Intent`-first.
+
+### Session: Start shrinking thread metadata authority for execution continuity
+- Context / Trigger:
+  - After the `Intent` convergence, the next requested step was to continue the three-part follow-through:
+    1. clean remaining active doc language
+    2. reassess `Flow`
+    3. begin shrinking `threadByIntentId + thread.metadata.intentIds` as execution-continuity authority
+- Problem:
+  - Even after removing `WorkItem`, the daemon still treated thread metadata (`intentIds`) and the in-memory `threadByIntentId` map as the main way to recover “current intent for this thread”.
+  - That kept too much execution continuity glued to the dialogue projection layer.
+- Decision:
+  - Keep `Flow` as a **secondary persisted grouping / thread-binding helper**, not as the primary execution identity.
+  - Start shrinking thread-projection authority by changing daemon intent lookup to prefer:
+    - `flow_thread_bindings`
+    - `flow.ownerThreadId`
+    - only then fall back to `threadByIntentId`
+  - Keep `intentIds` metadata for now as a compatibility / debug projection, but stop treating it as the first source of truth.
+- Changes made:
+  - Updated `packages/infra/src/daemon/server.ts`
+    - added `getTrackedIntentsForThread(threadId)`
+      - prefers persisted flow-thread bindings and flow-owned intent lists
+      - then falls back to the in-memory `threadByIntentId`
+      - finally falls back to thread metadata `intentIds`
+    - added `resolveThreadIdForIntent(intentId)`
+      - prefers flow bindings / flow owner thread
+      - falls back to `threadByIntentId`
+    - switched key work-governance paths to use the new helper instead of directly reading `threadByIntentId`
+      - progress projection
+      - cancel / pause / resume resolution
+      - intent outcome memory thread resolution
+    - changed `getLatestControllableIntentForThread()` and `getLatestTrackedIntentForThread()` to use the new tracked-intent helper instead of directly trusting thread metadata
+  - Updated `packages/infra/tests/daemon-work-governance.test.ts`
+    - added a regression test proving the daemon can still recover the active intent from persisted flow bindings even after thread metadata `intentIds` is cleared
+  - Updated `docs/INTENT_CONTINUITY_CONVERGENCE.md`
+    - clarified the `Flow` assessment explicitly: keep it as a secondary grouping/thread-binding/merge-governance helper, not the primary execution identity
+- Validation:
+  - `bun test packages/infra/tests/daemon-work-governance.test.ts packages/orchestrator/tests/orchestrator-work-governance.test.ts packages/persistence/tests/work-store.test.ts` ✅ (6 pass)
+  - previous targeted continuity/naming tests still green ✅
+  - `bun x tsc --noEmit` ✅
+  - `git diff --check` ✅
+- Impact / Result:
+  - Execution continuity is now slightly less dependent on thread metadata projections.
+  - `Flow` now pulls some honest weight as a persisted binding/grouping layer without becoming the primary runtime truth.
+  - This is only a first shrink step — the runtime still keeps `threadByIntentId` and still writes `intentIds` for compatibility/debugging.
+- Open questions / follow-ups:
+  - If we want to shrink further, the next step is likely to move more progress / delivery / debug resolution onto persisted binding queries and reduce the runtime map to a cache rather than a fallback authority.
