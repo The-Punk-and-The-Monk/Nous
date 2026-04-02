@@ -8,10 +8,10 @@ import type {
 import { LLMError, createLogger } from "@nous/core";
 import OpenAI from "openai";
 import {
+	type OpenAICompatProfile,
 	isOfficialOpenAIBaseURL,
 	resolveOpenAICompatProfile,
 	shouldFallbackOpenAIResponsesJsonSchema,
-	type OpenAICompatProfile,
 } from "./openai-compat-profile.ts";
 import {
 	buildResponsesRequestVariants,
@@ -67,7 +67,7 @@ export class OpenAIProviderBase implements LLMProvider {
 		const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
 			...options.clientOptions,
 		};
-		if (!isOfficialOpenAIBaseURL(clientOptions.baseURL)) {
+		if (!isOfficialOpenAIBaseURL(clientOptions.baseURL ?? undefined)) {
 			clientOptions.fetch = stripSdkHeadersFetch;
 		}
 		this.client = new OpenAI(clientOptions);
@@ -174,10 +174,7 @@ export class OpenAIProviderBase implements LLMProvider {
 						const stream = await this.client.responses.create(variant.params);
 						const response = await collectResponsesStream(stream, this.name);
 						log.debug("OpenAI responses response received", {
-							...summarizeOpenAIResponsesResponse(
-								response,
-								this.compatProfile,
-							),
+							...summarizeOpenAIResponsesResponse(response, this.compatProfile),
 							attempt: attempt + 1,
 							wireApi: this.wireApi,
 							compatProfile: this.compatProfile.id,
@@ -382,11 +379,15 @@ export class OpenAIProviderBase implements LLMProvider {
 
 const STRIPPED_HEADER_PREFIXES = ["x-stainless-"];
 const STRIPPED_HEADER_NAMES = new Set(["user-agent"]);
+type FetchUrl = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+type FetchResponse = Awaited<ReturnType<typeof fetch>>;
 
 function stripSdkHeadersFetch(
-	url: RequestInfo | URL,
-	init?: RequestInit,
-): Promise<Response> {
+	url: FetchUrl,
+	init?: FetchInit,
+): Promise<FetchResponse> {
+	let nextInit = init;
 	if (init?.headers) {
 		const original =
 			init.headers instanceof Headers
@@ -402,7 +403,7 @@ function stripSdkHeadersFetch(
 				cleaned.set(key, value);
 			}
 		});
-		init = { ...init, headers: cleaned };
+		nextInit = { ...init, headers: cleaned };
 	}
-	return fetch(url, init);
+	return fetch(url, nextInit);
 }
