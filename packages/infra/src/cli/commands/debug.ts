@@ -58,7 +58,7 @@ function debugThread(threadId: string, backend: PersistenceBackend): void {
 	const pendingOutbox = backend.messages
 		.getPendingOutbox()
 		.filter((entry) => entry.threadId === threadId);
-	const intentIds = readIntentIds(thread);
+	const intentIds = resolveIntentIdsForThread(thread, backend);
 	const intents = intentIds
 		.map((intentId) => backend.intents.getById(intentId))
 		.filter((intent): intent is Intent => Boolean(intent));
@@ -392,12 +392,46 @@ function collectRecentEvents(
 	return [...seen.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
-function readIntentIds(thread: DialogueThread): string[] {
-	const values = thread.metadata?.intentIds;
-	if (!Array.isArray(values)) {
-		return [];
+function resolveIntentIdsForThread(
+	thread: DialogueThread,
+	backend: PersistenceBackend,
+): string[] {
+	const intentIds = new Set<string>();
+
+	for (const binding of backend.work.listFlowThreadBindings({
+		threadId: thread.id,
+	})) {
+		const flow = backend.work.getFlowById(binding.flowId);
+		if (!flow) {
+			continue;
+		}
+		if (flow.primaryIntentId) {
+			intentIds.add(flow.primaryIntentId);
+		}
+		for (const intentId of flow.relatedIntentIds) {
+			intentIds.add(intentId);
+		}
 	}
-	return values.filter((value): value is string => typeof value === "string");
+
+	for (const flow of backend.work.listFlows({ ownerThreadId: thread.id })) {
+		if (flow.primaryIntentId) {
+			intentIds.add(flow.primaryIntentId);
+		}
+		for (const intentId of flow.relatedIntentIds) {
+			intentIds.add(intentId);
+		}
+	}
+
+	const metadataIntentIds = Array.isArray(thread.metadata?.intentIds)
+		? thread.metadata.intentIds.filter(
+				(value): value is string => typeof value === "string",
+			)
+		: [];
+	for (const intentId of metadataIntentIds) {
+		intentIds.add(intentId);
+	}
+
+	return [...intentIds];
 }
 
 function collectRecentTurns(messages: DialogueMessage[]): TurnDebugView[] {

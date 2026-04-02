@@ -188,7 +188,8 @@ describe("NousDaemon clarification resume flow", () => {
 					String(message.metadata?.presentation) === "answer",
 				),
 			).toBe(true);
-			expect(snapshot?.thread.metadata?.intentIds).toEqual([intentId]);
+			expect(snapshot?.thread.metadata?.intentIds).toBeUndefined();
+			expect(snapshot?.thread.metadata?.activeIntentId).toBe(intentId);
 		} finally {
 			await daemon.shutdown();
 		}

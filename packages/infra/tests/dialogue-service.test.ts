@@ -169,7 +169,7 @@ describe("DialogueService", () => {
 		expect(status.pendingOutboxCount).toBe(1);
 	});
 
-	test("linkIntentToThread persists intentIds in thread metadata", async () => {
+	test("linkIntentToThread persists only the active intent projection", async () => {
 		const stores = createFixture();
 		const service = new DialogueService({ messageStore: stores.messageStore });
 		const channel = makeChannel();
@@ -182,7 +182,7 @@ describe("DialogueService", () => {
 		const snapshot = service.getThreadSnapshot({
 			threadId: ack.payload.threadId,
 		});
-		expect(snapshot?.thread.metadata?.intentIds).toEqual(["intent_demo"]);
+		expect(snapshot?.thread.metadata?.intentIds).toBeUndefined();
 		expect(snapshot?.thread.metadata?.activeIntentId).toBe("intent_demo");
 	});
 

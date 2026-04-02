@@ -60,9 +60,6 @@ function seedThreadFixture(
 		status: "active",
 		createdAt: "2026-04-01T10:00:00.000Z",
 		updatedAt: "2026-04-01T10:00:00.000Z",
-		metadata: {
-			intentIds: ["intent_auth"],
-		},
 	};
 	const intent: Intent = {
 		id: "intent_auth",
@@ -157,6 +154,12 @@ function seedThreadFixture(
 	backend.work.createFlow(flow);
 	backend.work.createPlanGraph(planGraph);
 	backend.work.createMergeCandidate(mergeCandidate);
+	backend.work.bindFlowThread({
+		flowId: flow.id,
+		threadId: thread.id,
+		role: "primary",
+		createdAt: "2026-04-01T10:00:00.000Z",
+	});
 	for (const task of tasks) {
 		backend.tasks.create(task);
 	}

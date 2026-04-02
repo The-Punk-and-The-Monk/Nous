@@ -200,6 +200,7 @@ The main execution shape is still:
 - `Flow` is optional higher-level governance/grouping, not the main runtime identity
 - semantic continuity still belongs in memory/retrieval, not thread metadata
 - attach/handoff remain transport/packaging operations, not semantic truth sources
+- cumulative `thread.metadata.intentIds` should not be treated as persisted execution truth; at most, a thread may carry a lightweight active-intent debug/UI projection
 
 ---
 

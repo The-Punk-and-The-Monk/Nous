@@ -7434,3 +7434,47 @@ For significant sessions, capture:
   - This is only a first shrink step — the runtime still keeps `threadByIntentId` and still writes `intentIds` for compatibility/debugging.
 - Open questions / follow-ups:
   - If we want to shrink further, the next step is likely to move more progress / delivery / debug resolution onto persisted binding queries and reduce the runtime map to a cache rather than a fallback authority.
+
+### Session: Stop persisting cumulative `intentIds` on thread metadata
+- Context / Trigger:
+  - After reducing thread-metadata authority conceptually, the next natural follow-through was to stop treating `thread.metadata.intentIds` as something that should keep accumulating in storage.
+  - The user had explicitly asked to keep going on shrinking projection authority after the `Intent` convergence.
+- Problem:
+  - `DialogueService.linkIntentToThread()` was still writing cumulative `intentIds` into thread metadata.
+  - The debug command was still reading linked intents from that metadata first.
+  - This meant the repo was still persisting a thread-centric projection of execution continuity even though execution truth had already been clarified as `Intent`-first and `Flow`-assisted.
+- Decision:
+  - Stop persisting cumulative `intentIds` in `DialogueService.linkIntentToThread()`.
+  - Keep only `activeIntentId` as a lightweight projection for now.
+  - Teach `debug thread` to resolve linked intents primarily from:
+    - `flow_thread_bindings`
+    - `flow.ownerThreadId`
+    - then only fall back to legacy thread metadata `intentIds`
+  - Leave metadata fallback in place for compatibility with old data, but no longer write it in new flows.
+- Changes made:
+  - Updated `packages/infra/src/daemon/dialogue-service.ts`
+    - `linkIntentToThread()` no longer accumulates `metadata.intentIds`
+    - still sets `activeIntentId`
+  - Updated `packages/infra/src/cli/commands/debug.ts`
+    - replaced raw metadata `intentIds` lookup with `resolveIntentIdsForThread(thread, backend)`
+    - new resolver prefers persisted flow bindings and flow-owned intent lists
+    - metadata `intentIds` is now a legacy fallback only
+  - Updated tests:
+    - `packages/infra/tests/dialogue-service.test.ts`
+    - `packages/infra/tests/daemon-clarification-flow.test.ts`
+    - `packages/infra/tests/debug-command.test.ts`
+      - debug fixture now uses `flow_thread_bindings` instead of thread metadata `intentIds`
+  - Updated docs:
+    - `ARCHITECTURE.md` thread protocol snippet now shows `activeIntentId?` as an optional debug/UI projection instead of cumulative `intentIds`
+    - `docs/INTENT_CONTINUITY_CONVERGENCE.md` now explicitly states that cumulative thread `intentIds` should not be treated as persisted execution truth
+- Validation:
+  - `bun test packages/infra/tests/dialogue-service.test.ts packages/infra/tests/daemon-clarification-flow.test.ts packages/infra/tests/debug-command.test.ts packages/infra/tests/daemon-work-governance.test.ts packages/infra/tests/daemon-interaction-mode.test.ts packages/core/tests/intent-shape.test.ts packages/runtime/tests/work-continuity-restoration.test.ts packages/orchestrator/tests/orchestrator-work-governance.test.ts packages/persistence/tests/work-store.test.ts` ✅ (34 pass)
+  - `bun x tsc --noEmit` ✅
+  - `git diff --check` ✅
+- Impact / Result:
+  - Thread metadata is now less likely to drift into a fake persisted execution ledger.
+  - `debug thread` still works, but now understands linked intents via persisted work bindings rather than thread metadata projection.
+  - This makes the dialogue layer more honest: thread storage is not where intent history should accrete as execution truth.
+- Open questions / follow-ups:
+  - `activeIntentId` still exists as a projection. If we keep shrinking, the next question is whether even that should become fully derived instead of persisted.
+  - `getTrackedIntentsForThread()` in daemon still keeps metadata `intentIds` as a final fallback for legacy rows; we can remove that only after we are comfortable dropping compatibility with old persisted threads.

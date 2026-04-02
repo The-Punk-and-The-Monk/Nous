@@ -3864,7 +3864,7 @@ interface DialogueThread {
   id: string;
   topic: string;                    // Auto-inferred or user-named
   channelIds: string[];             // Which channels have participated
-  intentIds: string[];              // Which intents were born from this thread
+  activeIntentId?: string;          // Optional UI/debug projection only — not execution truth
   status: "active" | "idle" | "resolved";
   createdAt: string;
   lastActivityAt: string;

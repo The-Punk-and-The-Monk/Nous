@@ -414,11 +414,6 @@ export class DialogueService {
 	linkIntentToThread(threadId: string, intentId: string): void {
 		const thread = this.requireThread(threadId);
 		const metadata = { ...(thread.metadata ?? {}) };
-		const intentIds = new Set(
-			Array.isArray(metadata.intentIds) ? (metadata.intentIds as string[]) : [],
-		);
-		intentIds.add(intentId);
-		metadata.intentIds = [...intentIds];
 		metadata.activeIntentId = intentId;
 		this.config.messageStore.updateThread(threadId, {
 			updatedAt: this.clock(),
