@@ -7138,3 +7138,67 @@ For significant sessions, capture:
   - REPL chat commands no longer fail with 400 schema errors.
 - Open questions / follow-ups:
   - Any new structured output schema must list all properties in `required`. Could add a build-time or test-time check to enforce this.
+
+### Session: Converge continuity architecture around memory and retire `Intent` as a mainline noun
+- Context / Trigger:
+  - The user challenged the current continuity model and argued that:
+    - dialogue should stop carrying arbitrary continuity authority
+    - work should stop carrying arbitrary continuity guesses
+    - semantic continuity should be modeled in memory via layered recall + context injection
+    - proactive behavior should split into dialogue-time injection and deeper background reflection
+    - all memory families should decay
+  - The user also called out the duplication between `Intent` and `WorkItem` and asked to cut one.
+- Problem:
+  - The architecture had improved compared with earlier thread-magic designs, but continuity authority was still too scattered across:
+    - dialogue/thread concepts
+    - live daemon routing maps
+    - work restoration logic
+    - memory retrieval
+    - handoff / attach semantics
+  - The mainline document also still carried both `Intent` and `WorkItem`, which encouraged ontology drift and made future migration harder.
+- Alternatives considered:
+  - Option A: keep the current layered-continuity framing and only clarify terminology.
+    - Rejected because it would leave semantic continuity authority distributed across too many runtime seams.
+  - Option B: push **all** continuity into memory and strip dialogue/work layers down to nothing.
+    - Rejected because transport continuity and live execution continuity are still real runtime responsibilities.
+  - Option C: separate continuity into transport / execution / semantic layers, make memory the semantic authority, and make `WorkItem` the only governed-work noun.
+    - Chosen because it removes the ontology duplication without collapsing distinct runtime duties into one bucket.
+- Decision:
+  - Mainline architecture now explicitly splits continuity into:
+    - transport continuity (`Channel` / `SurfaceSession` / `DialogueThread` / outbox / replay)
+    - execution continuity (`WorkItem` / `Plan` / `Task` / `Decision`)
+    - semantic continuity (layered memory + retrieval + `RecallPack`)
+  - `WorkItem` is now the only governed-work noun in mainline architecture.
+  - `Intent` / `AmbientIntent` are treated as legacy current-code names to be migrated away, not parallel architectural concepts.
+  - `MemoryService` is now documented as converging toward a structured `RecallPack` boundary and deeper continuity-bearing memory families (`RelationshipMemory`, `UserModelMemory`, `SocialHypothesisMemory`, `WatchpointMemory`).
+  - Flow/planning architecture is explicitly aligned toward `Flow + WorkItem + PlanGraph`.
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - added a canonical naming decision that retires `Intent` as a mainline architecture noun
+    - added `SurfaceSession` and `RecallPack` to core vocabulary
+    - reframed dialogue as transport-only continuity owner
+    - renamed L0 to **Work Intake Plane** and `Intent Planner` to **Work Planner** in the mainline layer model
+    - replaced the core object definition section with `WorkItem` / `AmbientWorkItem`
+    - added the “semantic continuity belongs to memory” / `RecallPack` section
+    - added the explicit transport vs execution vs semantic continuity split
+    - aligned major flow-governance sections toward `WorkItem`
+  - Added `docs/WORKITEM_MEMORY_CONVERGENCE.md`
+    - captured the new canonical object model
+    - listed the exact `ARCHITECTURE.md` rewrite map
+    - recorded a repo-specific multi-phase migration path
+    - documented the naming migration map from `Intent*` to `WorkItem*`
+- Validation:
+  - `rg` sanity checks on `ARCHITECTURE.md` to confirm the new canonical `WorkItem` framing and remove the mainline `Intent` duplicates from the newly updated sections ✅
+  - manual review of the new convergence document and edited architecture sections ✅
+  - no typecheck / tests run because this iteration changed documentation only
+- Impact / Result:
+  - The repo now has an explicit architectural answer to “where continuity really lives?”
+  - Future implementation work has a cleaner target:
+    - dialogue no longer owns semantic continuity
+    - work no longer relies on thread affinity as truth
+    - memory becomes the single semantic continuity boundary
+  - The long-running `Intent` vs `WorkItem` duplication is now closed at the architecture-doc level, which reduces future migration ambiguity.
+- Open questions / follow-ups:
+  - The codebase still contains many `intent*` identifiers (`types`, stores, daemon maps, orchestrator modules); these now need a staged implementation migration.
+  - `MemoryService` still returns flat hint strings in live code; `RecallPack` remains the next major runtime-boundary refactor.
+  - Dialogue metadata still includes `activeIntentId` / `activeWorkItemId`; those should be demoted or removed once the code migration starts.
