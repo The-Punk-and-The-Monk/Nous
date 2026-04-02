@@ -88,7 +88,7 @@ export interface StoreManualMemoryNoteInput {
 }
 
 export interface PromoteWorkContinuationInput {
-	workItemId: string;
+	intentId: string;
 	summary: string;
 	threadId?: string;
 	scope?: ChannelScope;
@@ -429,7 +429,7 @@ export class MemoryService {
 		const confidence = clampConfidence(input.confidence ?? 0.82);
 		const content = [
 			`Structured work continuation: ${input.summary.trim()}`,
-			`Work item: ${input.workItemId}`,
+			`Intent: ${input.intentId}`,
 			relevantFacts.length > 0
 				? `Relevant facts: ${relevantFacts.join(" | ")}`
 				: undefined,
@@ -444,7 +444,7 @@ export class MemoryService {
 			content,
 			factType: "generalized_pattern",
 			threadId: input.threadId,
-			intentId: input.workItemId,
+			intentId: input.intentId,
 			scope: input.scope,
 			tags: dedupeStrings([
 				"work_continuity",
@@ -454,7 +454,7 @@ export class MemoryService {
 			]),
 			sourceRefs: compactRefs([
 				input.threadId ? { kind: "thread", id: input.threadId } : undefined,
-				{ kind: "intent", id: input.workItemId },
+				{ kind: "intent", id: input.intentId },
 				...(input.sourceRefs ?? []),
 			]),
 			parentMemoryIds: input.parentMemoryIds,

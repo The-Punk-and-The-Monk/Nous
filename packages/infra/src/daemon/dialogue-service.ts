@@ -420,7 +420,6 @@ export class DialogueService {
 		intentIds.add(intentId);
 		metadata.intentIds = [...intentIds];
 		metadata.activeIntentId = intentId;
-		metadata.activeWorkItemId = intentId;
 		this.config.messageStore.updateThread(threadId, {
 			updatedAt: this.clock(),
 			metadata,

@@ -1133,7 +1133,7 @@ export class NousDaemon {
 			id: prefixedId("handoff"),
 			sourceSurfaceId: payload.channel.id,
 			sourceThreadId: payload.threadId,
-			sourceWorkItemId: activeIntent?.id,
+			sourceIntentId: activeIntent?.id,
 			summary:
 				activeIntent?.goal.summary ??
 				`Continue this thread from ${payload.channel.type} without assuming implicit work continuation.`,
@@ -3102,7 +3102,7 @@ export class NousDaemon {
 		});
 		if (outcome === "intent.achieved" && scope && intent) {
 			this.memory.promoteWorkContinuation({
-				workItemId: intentId,
+				intentId: intentId,
 				summary: intent.goal.summary || text,
 				threadId,
 				scope,

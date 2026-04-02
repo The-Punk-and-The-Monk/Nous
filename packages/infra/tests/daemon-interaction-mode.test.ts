@@ -386,7 +386,7 @@ describe("NousDaemon interaction-mode handling", () => {
 					threadId: thread.id,
 				});
 				return Boolean(
-					snapshot?.thread.metadata?.activeWorkItemId &&
+					snapshot?.thread.metadata?.activeIntentId &&
 						snapshot.messages.some(
 							(message) => message.metadata?.trustReceipt !== undefined,
 						),
@@ -396,10 +396,7 @@ describe("NousDaemon interaction-mode handling", () => {
 			const snapshot = internals.dialogue.getThreadSnapshot({
 				threadId: thread.id,
 			});
-			expect(snapshot?.thread.metadata?.activeWorkItemId).toBeTruthy();
-			expect(snapshot?.thread.metadata?.activeIntentId).toBe(
-				snapshot?.thread.metadata?.activeWorkItemId,
-			);
+			expect(snapshot?.thread.metadata?.activeIntentId).toBeTruthy();
 			expect(
 				internals.backend.decisions.getPendingByThread(thread.id),
 			).toHaveLength(0);
@@ -475,7 +472,7 @@ describe("NousDaemon interaction-mode handling", () => {
 		try {
 			const internals = daemon as unknown as DaemonInternals;
 			internals.memory.promoteWorkContinuation({
-				workItemId: "intent_auth_restore",
+				intentId: "intent_auth_restore",
 				summary: "Inspect auth refresh regression",
 				threadId: "thread_origin",
 				scope: DEMO_SCOPE,
@@ -505,7 +502,7 @@ describe("NousDaemon interaction-mode handling", () => {
 					threadId: thread.id,
 				});
 				return Boolean(
-					snapshot?.thread.metadata?.activeWorkItemId &&
+					snapshot?.thread.metadata?.activeIntentId &&
 						snapshot.messages.some(
 							(message) => message.metadata?.restorationMemoryId,
 						),
@@ -515,7 +512,7 @@ describe("NousDaemon interaction-mode handling", () => {
 			const snapshot = internals.dialogue.getThreadSnapshot({
 				threadId: thread.id,
 			});
-			expect(snapshot?.thread.metadata?.activeWorkItemId).toBeTruthy();
+			expect(snapshot?.thread.metadata?.activeIntentId).toBeTruthy();
 			expect(
 				snapshot?.messages.some(
 					(message) => message.metadata?.restorationMemoryId !== undefined,
@@ -597,7 +594,7 @@ interface DaemonInternals {
 	};
 	memory: {
 		promoteWorkContinuation(input: {
-			workItemId: string;
+			intentId: string;
 			summary: string;
 			threadId?: string;
 			scope?: ChannelScope;

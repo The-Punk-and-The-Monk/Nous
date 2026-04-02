@@ -11,7 +11,7 @@ describe("work continuity restoration", () => {
 		const service = new MemoryService({ store, agentId: "nous" });
 
 		const entry = service.promoteWorkContinuation({
-			workItemId: "intent_123",
+			intentId: "intent_123",
 			summary: "Inspect auth refresh regression",
 			threadId: "thread_123",
 			scope: {
@@ -54,7 +54,7 @@ describe("work continuity restoration", () => {
 		const store = new SQLiteMemoryStore(initDatabase());
 		const service = new MemoryService({ store, agentId: "nous" });
 		const entry = service.promoteWorkContinuation({
-			workItemId: "intent_auth",
+			intentId: "intent_auth",
 			summary: "Inspect auth refresh regression",
 			threadId: "thread_auth",
 			scope: {
@@ -69,7 +69,7 @@ describe("work continuity restoration", () => {
 				projectRoot: "/repo/other",
 				workingDirectory: "/repo/other",
 			},
-			workItemId: "intent_auth",
+			intentId: "intent_auth",
 			permissionGranted: true,
 			boundaryAccepted: true,
 		});
@@ -84,7 +84,7 @@ describe("work continuity restoration", () => {
 		const store = new SQLiteMemoryStore(initDatabase());
 		const service = new MemoryService({ store, agentId: "nous" });
 		const entry = service.promoteWorkContinuation({
-			workItemId: "intent_auth",
+			intentId: "intent_auth",
 			summary: "Inspect auth refresh regression",
 			threadId: "thread_auth",
 			scope: {
@@ -99,7 +99,7 @@ describe("work continuity restoration", () => {
 				projectRoot: "/repo/auth",
 				workingDirectory: "/repo/auth",
 			},
-			workItemId: "intent_auth",
+			intentId: "intent_auth",
 			permissionGranted: false,
 			boundaryAccepted: true,
 		});
@@ -115,7 +115,7 @@ describe("work continuity restoration", () => {
 		const store = new SQLiteMemoryStore(initDatabase());
 		const service = new MemoryService({ store, agentId: "nous" });
 		const entry = service.promoteWorkContinuation({
-			workItemId: "intent_auth",
+			intentId: "intent_auth",
 			summary: "Inspect auth refresh regression",
 			threadId: "thread_auth",
 			scope: {
@@ -130,7 +130,7 @@ describe("work continuity restoration", () => {
 				projectRoot: "/repo/auth",
 				workingDirectory: "/repo/auth",
 			},
-			workItemId: "intent_auth",
+			intentId: "intent_auth",
 			permissionGranted: true,
 			boundaryAccepted: true,
 		});

@@ -7315,3 +7315,76 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - Mermaid rendering depends on the reader surface (GitHub is fine; some other renderers may degrade to source text).
   - A later README pass could still add screenshots / terminal captures once the visual surfaces stabilize.
+
+### Session: Remove the `WorkItem` alias layer and converge active architecture back on `Intent`
+- Context / Trigger:
+  - The user dug into execution continuity and then explicitly rejected the `WorkItem` direction:
+    - in live code, `WorkItem` was only a type alias for `Intent`
+    - the name was too narrow because not every meaningful user interaction should be framed as a “work item”
+    - they asked to directly execute the convergence back to `Intent`
+- Problem:
+  - The repo had drifted into a worse state than before:
+    - code still fundamentally ran on `Intent`
+    - active docs/README had been rewritten around `WorkItem`
+    - thread metadata and API surfaces still carried duplicate `activeWorkItemId` / `workItem` / `sourceWorkItemId` naming even though no separate runtime object existed
+  - This created a false abstraction boundary: two names for one thing, plus extra metadata/API noise.
+- Cleanup plan:
+  - Pass 1: remove duplicate alias/export surfaces (`WorkItem`, `AmbientWorkItem`, duplicate `workItem` fields)
+  - Pass 2: remove duplicate dialogue/handoff metadata names (`activeWorkItemId`, `sourceWorkItemId`, `workItemId` where the object is plainly an intent)
+  - Pass 3: converge active docs/README back to `Intent`
+  - Pass 4: reinforce with targeted tests + typecheck
+- Alternatives considered:
+  - Option A: keep `WorkItem` as the architectural term and tolerate the code aliasing for now.
+    - Rejected because it preserves a fake abstraction boundary and keeps docs drifting away from the real runtime model.
+  - Option B: introduce a true separate `WorkItem` runtime object before renaming back.
+    - Rejected because the user explicitly wanted the opposite direction, and current implementation evidence does not justify another abstraction layer.
+  - Option C: remove the alias layer now, keep the continuity architecture work, and converge active docs/code-facing APIs back on `Intent`.
+    - Chosen.
+- Decision:
+  - `Intent` is again the only active governed-work noun.
+  - `WorkItem` / `AmbientWorkItem` alias exports are removed.
+  - `TaskIntake.workItem` is removed; `TaskIntake.intent` remains.
+  - `DialogueThreadMetadata.activeWorkItemId` is removed; `activeIntentId` remains.
+  - Handoff / restoration / promoted continuity helpers now use `sourceIntentId` / `intentId` naming consistently.
+  - Active architecture docs and README are converged back to `Intent`; the renamed continuity note now records why the `WorkItem` experiment was rolled back.
+- Changes made:
+  - Updated `packages/core/src/index.ts`
+    - removed `WorkItem`, `AmbientWorkItem`, `WorkItemStatus` exports
+  - Updated `packages/core/src/types/intent.ts`
+    - removed the `WorkItem` / `AmbientWorkItem` alias types
+  - Updated `packages/core/src/types/task-intake.ts`
+    - removed the duplicate `workItem` field from `TaskIntake`
+  - Updated `packages/core/src/types/dialogue.ts`
+    - removed `activeWorkItemId` from thread metadata
+  - Updated `packages/core/src/types/interaction.ts`
+    - renamed handoff capsule field to `sourceIntentId`
+  - Updated `packages/orchestrator/src/intent/parser.ts`
+    - stopped returning duplicate `workItem: intent`
+  - Updated `packages/infra/src/daemon/dialogue-service.ts`
+    - stopped writing `activeWorkItemId`
+  - Updated `packages/infra/src/daemon/server.ts`
+    - switched handoff / promoted continuity calls back to `sourceIntentId` / `intentId`
+  - Updated `packages/runtime/src/memory/service.ts`
+  - Updated `packages/runtime/src/memory/work-continuity.ts`
+    - renamed `workItemId`-style continuation inputs back to `intentId`
+  - Updated targeted tests:
+    - `packages/infra/tests/dialogue-service.test.ts`
+    - `packages/infra/tests/daemon-interaction-mode.test.ts`
+    - `packages/runtime/tests/work-continuity-restoration.test.ts`
+  - Replaced `packages/core/tests/work-item-alias.test.ts` with `packages/core/tests/intent-shape.test.ts`
+  - Updated active docs:
+    - `ARCHITECTURE.md`
+    - `README.md`
+    - renamed and rewrote `docs/WORKITEM_MEMORY_CONVERGENCE.md` -> `docs/INTENT_CONTINUITY_CONVERGENCE.md`
+    - updated `docs/gpt54-xhght-layered-continuity-critique.md`
+- Validation:
+  - `bun test packages/core/tests/intent-shape.test.ts packages/infra/tests/dialogue-service.test.ts packages/infra/tests/daemon-interaction-mode.test.ts packages/runtime/tests/work-continuity-restoration.test.ts` ✅ (24 pass)
+  - `bun x tsc --noEmit` ✅
+  - `git diff --check` on all changed files ✅
+- Impact / Result:
+  - The code-facing API surface is simpler and more honest again: `Intent` is the runtime truth.
+  - The continuity work is preserved without the extra naming layer.
+  - Active docs now match the actual implementation much more closely.
+- Open questions / follow-ups:
+  - Some historical documents/log entries still mention the abandoned `WorkItem` experiment; those are now historical record rather than active design guidance.
+  - `Flow` / `PlanGraph` still exist as secondary governance/grouping layers; current execution continuity remains `Intent`-first.

@@ -17,7 +17,6 @@ export interface DialogueThreadMetadata extends Record<string, unknown> {
 	channelIds?: string[];
 	intentIds?: string[];
 	activeIntentId?: string;
-	activeWorkItemId?: string;
 	handoffCapsuleId?: string;
 	surfaceKind?: DialogueThreadSurfaceKind;
 	originChannel?: string;

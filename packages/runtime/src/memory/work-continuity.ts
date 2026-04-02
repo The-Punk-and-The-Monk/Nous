@@ -3,7 +3,7 @@ import type { ChannelScope, MemoryEntry } from "@nous/core";
 export interface WorkContinuationRestorationInput {
 	memoryEntry?: MemoryEntry;
 	scope?: ChannelScope;
-	workItemId?: string;
+	intentId?: string;
 	permissionGranted: boolean;
 	boundaryAccepted: boolean;
 }
@@ -110,12 +110,12 @@ function matchesLiveScene(
 		return false;
 	}
 
-	const memoryWorkItemId =
+	const memoryIntentId =
 		typeof metadata.intentId === "string" ? metadata.intentId : undefined;
 	if (
-		input.workItemId &&
-		memoryWorkItemId &&
-		input.workItemId !== memoryWorkItemId
+		input.intentId &&
+		memoryIntentId &&
+		input.intentId !== memoryIntentId
 	) {
 		return false;
 	}

@@ -41,7 +41,7 @@ Nous is trying to combine those with a stronger operating model:
    Work continues even when the terminal closes.
 
 2. **Governed work objects**
-   Mainline architecture uses **WorkItem → Plan → Task → Decision** rather than collapsing all work into one chat thread.
+   Mainline architecture uses **Intent → Plan → Task → Decision** rather than collapsing all work into one chat thread.
 
 3. **Memory as semantic continuity**
    Threads own replay and delivery; memory increasingly owns “what is this actually related to?” via layered retrieval and the emerging `RecallPack` direction.
@@ -60,7 +60,7 @@ Nous is trying to combine those with a stronger operating model:
 Nous is organized as a layered runtime rather than a single monolithic agent loop:
 
 - **Dialogue layer** — channels, surface sessions, dialogue threads, replay, outbox delivery
-- **Work intake plane** — interaction mode classification, WorkItem formation, decision gating
+- **Intent plane** — interaction mode classification, intent formation, decision gating
 - **Orchestration plane** — planning, scheduling, routing, context assembly
 - **Runtime + memory plane** — ReAct execution, tool system, retrieval, proactive reflection
 - **Persistence plane** — event/task/message/memory storage
@@ -69,7 +69,7 @@ Nous is organized as a layered runtime rather than a single monolithic agent loo
 Three forms of continuity are explicitly separated in current mainline architecture:
 
 - **transport continuity** → channel / thread / outbox / replay
-- **execution continuity** → WorkItem / Plan / Task / Decision
+- **execution continuity** → Intent / Plan / Task / Decision
 - **semantic continuity** → layered memory / retrieval / `RecallPack`
 
 This split is one of the central current design decisions in the repo.
@@ -77,7 +77,7 @@ This split is one of the central current design decisions in the repo.
 ```mermaid
 flowchart TB
     U[Human / Sensor input] --> D[Dialogue layer\nchannel · surface session · thread · outbox]
-    D --> W[Work intake plane\nchat/work/handoff · WorkItem · Decision]
+    D --> W[Intent plane\nchat/work/handoff · Intent · Decision]
     W --> O[Orchestration plane\nplan · schedule · route · context]
     O --> R[Runtime + memory plane\nReAct · tools · retrieval · proactive reflection]
     R --> P[Persistence plane\nevents · tasks · messages · memory]
@@ -95,7 +95,7 @@ flowchart TB
 |---|---|---|
 | Runtime model | foreground session | long-lived daemon runtime |
 | Continuity model | keep recent turns and hope | transport / execution / semantic continuity split |
-| Work model | message-centric | `WorkItem -> Plan -> Task -> Decision` |
+| Work model | message-centric | `Intent -> Plan -> Task -> Decision` |
 | Memory role | prompt context helper | semantic continuity authority moving toward `RecallPack` |
 | Proactivity | optional notification logic | perception + agenda + reflection + governed candidate delivery |
 | Governance | often implicit | explicit permissions, decisions, pause/resume/cancel, outbox replay |
@@ -135,7 +135,7 @@ If you want to understand Nous **today**, the best summary is:
 ### Still actively under construction
 
 - deeper `RecallPack`-style semantic continuity in live code
-- full `Intent*` → `WorkItem*` code migration
+- removing the remaining `WorkItem*` compatibility naming from active docs and APIs
 - relationship-aware proactive runtime
 - richer tool breadth
 - stronger vector / graph / metabolism memory path
@@ -269,14 +269,14 @@ bin/
   nous.ts         # CLI entry
 
 packages/
-  core/           # domain types: WorkItem / Task / Agent / Memory / protocol
+  core/           # domain types: Intent / Task / Agent / Memory / protocol
   orchestrator/   # work intake, planning, scheduling, routing
   runtime/        # agent runtime, tool system, memory, proactive reflection
   persistence/    # sqlite stores for events, tasks, messages, memory, proactive state
   infra/          # daemon, CLI, channel glue, config, control surface
 ```
 
-> Note: the codebase still contains some legacy `intent*` names during the current `WorkItem` convergence. The architecture docs now treat `WorkItem` as the canonical noun.
+> Note: a few compatibility traces from the short-lived `WorkItem` naming experiment may still appear in history/docs, but active architecture and code now converge back on `Intent`.
 
 ## Inter-Nous seed commands
 
@@ -297,7 +297,7 @@ This is intentionally narrower than the future relay / P2P architecture: V1 prov
 ## Read next
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full architecture and roadmap
-- [`docs/WORKITEM_MEMORY_CONVERGENCE.md`](./docs/WORKITEM_MEMORY_CONVERGENCE.md) — current continuity / WorkItem convergence decision
+- [`docs/INTENT_CONTINUITY_CONVERGENCE.md`](./docs/INTENT_CONTINUITY_CONVERGENCE.md) — current intent/continuity convergence decision
 - [`docs/CLI.md`](./docs/CLI.md) — CLI / REPL control surface
 - [`docs/DEVELOPMENT_LOG.md`](./docs/DEVELOPMENT_LOG.md) — engineering trace
 - [`docs/PROGRESS_MATRIX.md`](./docs/PROGRESS_MATRIX.md) — current maturity / roadmap snapshot

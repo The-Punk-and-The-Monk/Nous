@@ -350,7 +350,7 @@ OpenClaw 没有试图在对象模型上过度拟人化。
 
 这层应该由更少、更稳定的对象负责，例如：
 
-- `WorkItem` 或保留 `Intent`
+- 保留 `Intent`，不要再引入第二个近义工作对象
 - `Flow`
 - `Decision`
 
@@ -492,8 +492,8 @@ OpenClaw 没有试图在对象模型上过度拟人化。
 
 主线现在还进一步收紧为：
 
-- 架构命名目标应迁向 `WorkItem`
-- 但允许存在一个有边界的 `Intent -> WorkItem` 兼容迁移期
+- 架构命名应回到 `Intent`
+- 不再建议继续推进 `Intent -> WorkItem` 兼容迁移期
 
 ### 7.3 `Decision` 只服务工作阻塞，不接管普通对话澄清
 
@@ -603,7 +603,7 @@ interface HandoffCapsule {
   id: string;
   sourceSurfaceId?: string;
   sourceThreadId?: string;
-  sourceWorkItemId?: string;
+  sourceIntentId?: string;
   summary: string;
   relevantFacts: string[];
   pendingQuestions: string[];

@@ -81,7 +81,7 @@ export interface HandoffCapsule {
 	id: string;
 	sourceSurfaceId?: string;
 	sourceThreadId?: string;
-	sourceWorkItemId?: string;
+	sourceIntentId?: string;
 	summary: string;
 	relevantFacts: string[];
 	pendingQuestions: string[];

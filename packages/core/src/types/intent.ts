@@ -146,7 +146,3 @@ export interface AmbientIntent extends Intent {
 	confidence: number;
 	requiresApproval: boolean;
 }
-
-export type WorkItemStatus = IntentStatus;
-export type WorkItem = Intent;
-export type AmbientWorkItem = AmbientIntent;

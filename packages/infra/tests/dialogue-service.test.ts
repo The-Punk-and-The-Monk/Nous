@@ -184,7 +184,6 @@ describe("DialogueService", () => {
 		});
 		expect(snapshot?.thread.metadata?.intentIds).toEqual(["intent_demo"]);
 		expect(snapshot?.thread.metadata?.activeIntentId).toBe("intent_demo");
-		expect(snapshot?.thread.metadata?.activeWorkItemId).toBe("intent_demo");
 	});
 
 	test("stores handoff capsule metadata on the thread container", async () => {

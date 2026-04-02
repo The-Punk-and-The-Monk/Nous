@@ -231,8 +231,8 @@ The system's world is defined by these core abstractions. Getting these wrong me
 
 | Concept | Owner | Description |
 |---------|-------|-------------|
-| **WorkItem** | Human | A governed unit of work derived when an interaction enters Work Mode — owns goal, contract, execution depth, clarification state, and execution state |
-| **Plan** | Orchestrator | A decomposition of a WorkItem into a Task DAG — revisable, not final |
+| **Intent** | Human | A governed unit of work derived when an interaction enters Work Mode — owns goal, contract, execution depth, clarification state, and execution state |
+| **Plan** | Orchestrator | A decomposition of an Intent into a Task DAG — revisable, not final |
 | **Task** | Scheduler | An atomic unit of work with a full lifecycle (state machine, dependencies, retry policy) |
 | **Instance** | Infrastructure | A long-lived Nous identity — the unit that persists across channels/sessions today and may participate in collective intelligence later |
 | **Agent** | Runtime | A persistent identity with memory, capabilities, and a behavioral profile |
@@ -247,7 +247,7 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **Proactive Cognition** | Orchestration | A lower-frequency reflective loop that synthesizes signals, memory, prospective commitments, and user state into governed proactive candidates — the "background caring mind" of Nous |
 | **ProactiveCandidate** | Orchestration / Dialogue | A system-initiated candidate output: reminder, check-in, celebration, suggestion, offer, silent watchpoint, or actionable ambient task |
 | **RelationshipBoundary** | Cross-cutting | User-specific policy for proactivity, intimacy, interruption, tone, and what forms of care or initiative are welcome |
-| **Ambient WorkItem** | Orchestration | An actionable subtype of proactive output: a system-inferred work candidate that may enter work governance after the same approval / boundary checks as other work-mode inputs |
+| **Ambient Intent** | Orchestration | An actionable subtype of proactive output: a system-inferred work candidate that may enter work governance after the same approval / boundary checks as other work-mode inputs |
 | **ProcedureCandidate** | Evolution | A reusable execution pattern observed from successful runs, not yet fully validated as a stable Skill |
 | **Skill** | Evolution | A reusable execution path crystallized from successful experience — the unit of learned competence |
 | **PromptAsset** | Runtime | A versioned reusable instruction template with variables and metadata; may seed an Agent or Skill, but is not itself a Skill |
@@ -262,22 +262,22 @@ The system's world is defined by these core abstractions. Getting these wrong me
 | **SurfaceSession** | Dialogue | A live attachment of one channel/view onto one thread — owns delivery cursor, subscriptions, and transport-local presence, not semantic continuity |
 | **DialogueThread** | Dialogue | A surface conversation container that may span multiple channels — groups messages, replay, delivery, and surface-local UI state, but is not itself semantic truth or work truth |
 | **MessageOutbox** | Dialogue | Persistent queue for outbound messages — survives channel disconnects and daemon restarts |
-| **ConflictAnalysis** | Dialogue | Two-layer analysis of inter-task resource and semantic conflicts — prevents concurrent work items from breaking each other |
+| **ConflictAnalysis** | Dialogue | Two-layer analysis of inter-task resource and semantic conflicts — prevents concurrent intents from breaking each other |
 | **NousMessage** | Infrastructure | The atomic unit of inter-Nous communication — always E2E encrypted, always audit-logged |
 
-### Canonical naming decision (2026-04-02)
+### Canonical naming correction (2026-04-02)
 
-Mainline architecture now uses **WorkItem** as the only governed-work noun.
+Mainline architecture keeps **Intent** as the only governed-work noun.
 
-- `WorkItem` replaces `Intent` as the architectural term for a governed unit of work.
-- `AmbientWorkItem` replaces `AmbientIntent` as the architectural term for system-inferred governed work.
-- Existing code/package/file names that still contain `intent` are **legacy implementation names**, not a second ontology.
-- Any remaining `Intent` wording elsewhere in this document should be read as legacy current-code wording unless the passage is explicitly about migration.
+- `WorkItem` is no longer treated as a parallel architecture concept.
+- `AmbientIntent` remains the architecture term for system-inferred governed work.
+- Existing `WorkItem*` traces should be treated as short-lived compatibility artifacts to remove, not as a second ontology.
+- The interaction model stays the same: not every message becomes an intent; only work-mode inputs do.
 
-This convergence matters because Nous should not maintain two near-identical work abstractions. Mainline keeps one split of responsibility:
+This correction matters because Nous should not maintain two near-identical work abstractions. Mainline keeps one split of responsibility:
 
 - **Dialogue** owns transport continuity
-- **WorkItem** owns execution continuity
+- **Intent** owns execution continuity
 - **Memory** owns semantic continuity
 
 ---
@@ -286,14 +286,14 @@ This convergence matters because Nous should not maintain two near-identical wor
 
 | Concept | OpenClaw | LangChain | AutoGPT | Nous |
 |---------|----------|-----------|---------|------|
-| WorkItem (separate from Task) | No | No | No | Yes |
+| Intent (separate from Task) | No | No | No | Yes |
 | Plan (revisable DAG) | No | No | Partial | Yes |
 | Task state machine | Partial | No | No | Yes |
 | Agent persistence across sessions | File-based | No | No | Yes |
 | Event sourcing | No | No | No | Yes |
 | Procedural Memory | No | No | No | Yes |
 | Passive Perception (Sensors + Attention) | No | No | No | Yes |
-| Ambient WorkItem (system-initiated goals) | No | No | No | Yes |
+| Ambient Intent (system-initiated goals) | No | No | No | Yes |
 | Self-evolution (skill crystallization + gap detection + self-mutation) | No | No | No | Yes |
 | Memory metabolism (experience → skill, with RAG retrieval) | No | No | No | Yes |
 | Collective intelligence (cross-instance) | No | No | No | Yes |
@@ -309,12 +309,12 @@ This convergence matters because Nous should not maintain two near-identical wor
 │  Channel Manager · Dialogue Manager · Thread Tracker ·      │
 │  Message Outbox · Conflict Analyzer                         │
 ├─────────────────────────────────────────────────────────────┤
-│  L0 — Work Intake Plane                                     │
-│  Human Work Input · Ambient Work Input · Constraints ·      │
-│  Human Decision Queue                                       │
+│  L0 — Intent Plane                                         │
+│  Human Intent · Ambient Intent · Constraints · Human        │
+│  Decision Queue (only truly blocking decisions reach human) │
 ├─────────────────────────────────────────────────────────────┤
 │  L1 — Orchestration Plane                                   │
-│  Work Planner · Task Scheduler · Agent Router ·             │
+│  Intent Planner · Task Scheduler · Agent Router ·             │
 │  Attention Filter · Context Assembly                        │
 ├─────────────────────────────────────────────────────────────┤
 │  L2 — Runtime + Evolution Plane                             │
@@ -335,9 +335,9 @@ This convergence matters because Nous should not maintain two near-identical wor
 ```
 
 **Four data flow paths exist in parallel:**
-- **Dialogue path** (bidirectional): Channels ↔ Dialogue Manager ↔ Work Intake Plane (non-blocking, async)
-- **Request path** (top-down): Human Work Input → Orchestration → Runtime → Persistence
-- **Perception path** (bottom-up): Sensors → Perception Log → Attention Filter → Ambient WorkItem
+- **Dialogue path** (bidirectional): Channels ↔ Dialogue Manager ↔ Intent Plane (non-blocking, async)
+- **Request path** (top-down): Human Intent → Orchestration → Runtime → Persistence
+- **Perception path** (bottom-up): Sensors → Perception Log → Attention Filter → Ambient Intent
 - **Network path** (lateral): Nous Relay Client ↔ Relay Network ↔ Other Nous Instances (see Inter-Nous Communication Architecture)
 
 **Dependency rule:** Dependencies flow downward only. The Dialogue Layer sits above L0 and depends on it. L0 depends on L1, L1 on L2, etc. No upward dependencies.
@@ -347,20 +347,20 @@ This convergence matters because Nous should not maintain two near-identical wor
 - **Dialogue Manager**: Maintains surface conversation state across all channels. Persists messages inside `DialogueThread`s as surface containers. A thread may span multiple channels (start in CLI, continue in IDE), but the thread itself does **not** prove semantic or work continuity; it only owns replay, delivery, and presentation-local state. All messages are persisted to L3 Message Store — Nous never loses transport history.
 - **Thread Tracker**: Tracks active surface sessions, thread attachments, and delivery cursors. When a user sends a message, it decides whether the message should continue an existing surface container or start a new one; it must not decide semantic continuity or work identity by itself.
 - **Message Outbox**: Persistent queue for outbound messages (results, notifications, questions). When a channel is disconnected, messages accumulate in the outbox. When the channel reconnects (or any channel connects), pending messages are delivered. (See Message Delivery section below)
-- **Conflict Analyzer**: When a new work item arrives, analyzes potential conflicts with currently active work — resource conflicts (file locks, shared state), semantic conflicts (contradictory goals), and dependency ordering. Uses both static analysis (resource overlap detection) and LLM-assisted semantic analysis. (See Conflict Detection section below)
+- **Conflict Analyzer**: When a new intent arrives, analyzes potential conflicts with currently active work — resource conflicts (file locks, shared state), semantic conflicts (contradictory goals), and dependency ordering. Uses both static analysis (resource overlap detection) and LLM-assisted semantic analysis. (See Conflict Detection section below)
 
-### L0 — Work Intake Plane (`packages/orchestrator`)
-- Receives natural language goals from humans and forms governed **WorkItems** when interaction-mode classification enters Work Mode
-- Receives system-inferred work candidates from Attention Filter (**Ambient WorkItems** in architecture; current code may still use legacy `AmbientIntent` identifiers during migration)
+### L0 — Intent Plane (`packages/orchestrator`)
+- Receives natural language goals from humans and forms governed **Intents** when interaction-mode classification enters Work Mode
+- Receives system-inferred work candidates from Attention Filter (**Ambient Intents**)
 - Parses constraints and priorities
 - Maintains the **Human Decision Queue**: only decisions that are irreversible, out-of-scope, or post-max-retry reach the human
-- Ambient work candidates carry a `confidence` score — below threshold, they queue for human approval instead of auto-executing
+- Ambient intents carry a `confidence` score — below threshold, they queue for human approval instead of auto-executing
 
 ### L1 — Orchestration Plane (`packages/orchestrator`)
-- **Work Planner**: Goal → structured Task DAG
+- **Intent Planner**: Goal → structured Task DAG
 - **Task Scheduler**: Manages task state machine, dependency resolution, retry with exponential backoff
 - **Agent Router**: Matches task capability requirements to available agents
-- **Attention Filter**: Evaluates perception signals from L3 Perception Log, decides relevance and urgency, and either discards, logs for later, or promotes to an Ambient WorkItem at L0. Uses a lightweight LLM call (fast model) for semantic evaluation
+- **Attention Filter**: Evaluates perception signals from L3 Perception Log, decides relevance and urgency, and either discards, logs for later, or promotes to an Ambient Intent at L0. Uses a lightweight LLM call (fast model) for semantic evaluation
 - **Context Assembly**: Gathers environment context (CWD, OS, shell), project context (git state, directory structure, language/framework, package manager, README), and user context (memory, preferences, history) — injects a rich system prompt into every agent LLM call
 
 ### L2 — Runtime + Evolution Plane (`packages/runtime`, `packages/evolution`)
@@ -654,20 +654,30 @@ Created ──► Queued ──► Assigned ──► Running ──► Done    
                                           (human decides)
 ```
 
-### WorkItem
+### Intent
 
 ```typescript
-interface WorkItem {
+interface Intent {
   id: string;
-  rawRequest: string;              // Original natural language
-  currentUnderstanding: string;    // Latest executable understanding after clarification / revision
+  raw: string;                     // Original natural language
+  workingText?: string;            // Latest executable understanding after clarification / revision
   goal: StructuredGoal;            // Parsed structured goal
   constraints: Constraint[];       // What NOT to do, resource limits
   priority: number;
   humanCheckpoints: CheckpointPolicy; // When must the system ask the human
-  status: "active" | "blocked" | "paused" | "achieved" | "abandoned";
-  userSpaceId: string;
-  workspaceId?: string;
+  contract?: TaskContract;
+  executionDepth?: ExecutionDepthDecision;
+  clarificationQuestions?: string[];
+  status:
+    | "active"
+    | "paused"
+    | "awaiting_clarification"
+    | "awaiting_decision"
+    | "achieved"
+    | "abandoned";
+  source: "human" | "ambient";
+  createdAt: string;
+  achievedAt?: string;
 }
 ```
 
@@ -676,7 +686,7 @@ interface WorkItem {
 ```typescript
 interface Task {
   id: string;
-  workItemId: string;
+  intentId: string;
   parentTaskId?: string;           // Supports task trees
   dependsOn: string[];             // Task IDs this depends on
 
@@ -725,7 +735,7 @@ interface Event {
   id: string;
   timestamp: string;
   type: EventType;
-  entityType: "work_item" | "task" | "agent" | "tool";
+  entityType: "intent" | "task" | "agent" | "tool";
   entityId: string;
   payload: unknown;
   causedByEventId?: string;        // Causal chain
@@ -801,25 +811,25 @@ interface PerceptionSignal {
   attentionResult?: {
     relevance: number;             // 0-1 score from Attention Filter
     disposition: "discard" | "log" | "promote";  // What the filter decided
-    ambientWorkItemId?: string;    // If promoted, the resulting work item
+    ambientIntentId?: string;      // If promoted, the resulting intent
   };
 }
 ```
 
-### AmbientWorkItem
+### AmbientIntent
 
 ```typescript
-interface AmbientWorkItem extends WorkItem {
-  source: "ambient";               // Distinguishes from human-issued work items
+interface AmbientIntent extends Intent {
+  source: "ambient";               // Distinguishes from human-issued intents
   triggerSignalIds: string[];       // Which perception signals triggered this
-  confidence: number;               // 0-1, how confident the system is this work item is correct
+  confidence: number;               // 0-1, how confident the system is this intent is correct
   requiresApproval: boolean;        // If confidence < threshold, blocks for human approval
 }
 ```
 
 ### ProactiveCandidate
 
-`AmbientWorkItem` should not carry the whole burden of Nous's proactive behavior. Many valuable assistant acts are not tasks. So the system needs a wider proactive object family:
+`AmbientIntent` should not carry the whole burden of Nous's proactive behavior. Many valuable assistant acts are not tasks. So the system needs a wider proactive object family:
 
 ```typescript
 type ProactiveCandidateKind =
@@ -841,7 +851,7 @@ interface ProactiveCandidate {
   rationale: string;               // Why this is timely and useful now
 
   // If kind == "ambient_intent", this is the action-oriented path
-  proposedWorkText?: string;       // The work text that would enter the normal pipeline
+  proposedIntentText?: string;     // The intent text that would enter the normal pipeline
 
   // Decision quality
   confidence: number;              // "I am right about the need"
@@ -858,7 +868,7 @@ interface ProactiveCandidate {
   // Traceability
   sourceSignalIds: string[];
   sourceMemoryIds: string[];
-  sourceWorkItemIds: string[];
+  sourceIntentIds: string[];
   sourceThreadIds: string[];
   sourceAgendaItemIds: string[];
 
@@ -869,7 +879,7 @@ interface ProactiveCandidate {
 }
 ```
 
-**Key rule:** only `kind == "ambient_intent"` becomes a governed `WorkItem`. The other kinds route into dialogue / outbox / decision governance directly.
+**Key rule:** only `kind == "ambient_intent"` becomes a governed `Intent`. The other kinds route into dialogue / outbox / decision governance directly.
 
 **Why this object matters:** if Nous only knows how to proactively generate tasks, it becomes a workflow machine. `ProactiveCandidate` lets it also:
 
@@ -972,7 +982,7 @@ interface ReflectionAgendaItem {
   budgetClass: "cheap" | "standard" | "deep";
   sourceSignalIds: string[];
   sourceMemoryIds: string[];
-  sourceWorkItemIds: string[];
+  sourceIntentIds: string[];
   sourceThreadIds: string[];
 
   status: "queued" | "leased" | "synthesized" | "dismissed" | "expired";
@@ -1565,15 +1575,15 @@ interface RecallPack {
   userModelFacts: MemoryEntry[];
   socialHypotheses: MemoryEntry[];
   watchpoints: MemoryEntry[];
-  relatedWorkItems: Array<{
-    workItemId: string;
+  relatedIntents: Array<{
+    intentId: string;
     rationale: string;
     confidence: number;
   }>;
 }
 ```
 
-This is the architectural place where Nous should concentrate semantic continuity. Dialogue/session layers keep transport state; WorkItem/Task layers keep live execution state; `RecallPack` decides what prior meaning is relevant now.
+This is the architectural place where Nous should concentrate semantic continuity. Dialogue/session layers keep transport state; Intent/Task layers keep live execution state; `RecallPack` decides what prior meaning is relevant now.
 
 Every memory family in that pack must be **decay-aware** in two ways:
 
@@ -2163,7 +2173,7 @@ When confidence is insufficient, the fallback is:
 To keep the runtime honest, mainline separates **three different kinds of continuity**:
 
 - **Transport continuity** = channel / surface session / thread / outbox / replay
-- **Execution continuity** = WorkItem / Plan / Task / Decision / cancellation state
+- **Execution continuity** = Intent / Plan / Task / Decision / cancellation state
 - **Semantic continuity** = layered memory + retrieval + recall packing + decay-aware ranking
 
 Only **semantic continuity** answers questions like:
@@ -2216,7 +2226,7 @@ This correction refines, rather than discards, the layered architecture.
 |---------|------------------|
 | interaction-mode classification | Dialogue Layer + L0 boundary contract |
 | chat continuity | Dialogue Layer + Memory retrieval |
-| work-item inference / contract formation | L0 Work Intake Plane |
+| intent inference / contract formation | L0 Intent Plane |
 | execution depth selection | L0/L1 boundary inside Work Mode |
 | planning / routing / scheduling | L1 Orchestration Plane |
 | tool/model execution | L2 Runtime |
@@ -2286,7 +2296,7 @@ Those are all semantic in some sense, but they are **not the same layer**. They 
 #### Current design consequences
 
 1. **Understanding-heavy semantics should use LLMs, but through structured contracts**
-   - work-item parsing
+   - intent parsing
    - user-state-grounded task contract formation
    - thread reply routing
    - decision response interpretation
@@ -2622,9 +2632,9 @@ new input / ambient promotion
   └─► resolve decision and either resume, re-queue, or abandon
 ```
 
-This pattern is important because it preserves the original work-item identity before human governance happens. Nous should not lose the original task simply because a checkpoint appeared in the middle.
+This pattern is important because it preserves the original intent identity before human governance happens. Nous should not lose the original task simply because a checkpoint appeared in the middle.
 
-### Session / Thread / WorkItem / DecisionQueue Relationship Model
+### Thread / Intent / DecisionQueue Relationship Model
 
 To preserve continuity correctly, Nous must not collapse conversation, work, and blocking coordination into one object.
 
@@ -2632,7 +2642,7 @@ To preserve continuity correctly, Nous must not collapse conversation, work, and
   - the place where the human and Nous talk
   - a surface conversation container, not topic truth and not work truth
   - contains messages, lightweight chat repair, notifications, replay, and delivery
-- **WorkItem** = execution continuity
+- **Intent** = execution continuity
   - the thing Nous is trying to accomplish once an interaction enters Work Mode
   - owns goal, contract, execution depth, tasks, and execution state
   - current code may still contain legacy `intent*` identifiers during migration, but mainline architecture no longer treats `Intent` as a separate concept
@@ -2645,39 +2655,39 @@ To preserve continuity correctly, Nous must not collapse conversation, work, and
 
 #### Relationship
 
-- one `DialogueThread` may contain **multiple** work items over time
-- one work item should have one **primary thread** for human-facing coordination
+- one `DialogueThread` may contain **multiple** intents over time
+- one intent should have one **primary thread** for human-facing coordination
 - one blocking `Decision` belongs to:
-  - exactly one `work item`
+  - exactly one `intent`
   - exactly one `thread`
 - one `DecisionQueue` may contain multiple decisions over time, but MVP policy keeps only one pending decision active per thread at once
 
 So the model is not:
 
-- thread == work item
+- thread == intent
 
 It is:
 
 - thread = conversation container
-- work item = work identity
+- intent = work identity
 - decision = blocking bridge between them
 
 #### Invariants
 
-1. **Tasks belong to work items, not threads**
-2. **Messages belong to threads, not work items by default**
-3. **A work clarification reply happens in a thread, but it resumes a work item**
-4. **Ordinary chat clarification should not create a new work item or decision by default**
+1. **Tasks belong to intents, not threads**
+2. **Messages belong to threads, not intents by default**
+3. **A work clarification reply happens in a thread, but it resumes an intent**
+4. **Ordinary chat clarification should not create a new intent or decision by default**
 5. **The original request should remain preserved; the executable understanding may evolve**
 
 This implies Nous should distinguish between:
 
-- `workItem.rawRequest` — the original human request
-- `workItem.currentUnderstanding` — the latest executable understanding after clarification / revision
+- `intent.raw` — the original human request
+- `intent.workingText` — the latest executable understanding after clarification / revision
 
 #### Clarification must accumulate understanding state, not only question text
 
-The current `workItem.rawRequest + workItem.currentUnderstanding + clarificationQuestions[]` shape is enough to bootstrap clarification, but it is not the end-state architecture.
+The current `intent.raw + intent.workingText + clarificationQuestions[]` shape is enough to bootstrap clarification, but it is not the end-state architecture.
 
 If Nous only stores:
 
@@ -2697,7 +2707,7 @@ So the architecture should evolve toward an explicit clarification / understandi
 
 ```typescript
 interface ClarificationState {
-  workItemId: string;
+  intentId: string;
   originalRequest: string;
   currentUnderstanding: string;
   attempts: number;
@@ -2740,14 +2750,14 @@ So the long-term rule is:
 User request
   │
   ▼
-Thread message ──► WorkItem intake
+Thread message ──► Intent intake
                      │
                      ├─ enough information
                      │    └─► plan / execute
                      │
                      └─ clarification needed
                           ├─► create Decision(kind=clarification)
-                          ├─► workItem.status = blocked
+                          ├─► intent.status = awaiting_clarification
                           └─► ask inside the same thread
 
 User reply in same thread
@@ -2755,15 +2765,15 @@ User reply in same thread
   ▼
 Thread input router
   │
-  ├─ new work item
-  │    └─► create another work item
+  ├─ new intent
+  │    └─► create another intent
   │
   └─ clarification response
-       ├─► apply response to the original work item
-       ├─► rebuild workItem.currentUnderstanding
-       ├─► re-run intake on the same work-item identity
+       ├─► apply response to the original intent
+       ├─► rebuild intent.workingText
+       ├─► re-run intake on the same intent identity
        ├─► clear or renew blocking decision
-       └─► resume original work item
+       └─► resume original intent
 ```
 
 #### Architectural consequence
@@ -3056,7 +3066,7 @@ Dialogue + Daemon
   ▼
 Orchestrator
   - user-state grounding
-  - work-item parsing
+  - intent parsing
   - task contract formation
   - execution-depth selection
   - DecisionQueue production when blocked
@@ -3089,7 +3099,7 @@ Tool Executor
   ▼
 Persistence + Delivery
   - events
-  - task / work-item / decision state
+  - task / intent / decision state
   - memory capture
   - outbox delivery back into the thread
 ```
@@ -3110,7 +3120,7 @@ This split is deliberate.
 If we collapse all of this back into a single harness loop, Nous drifts toward a workspace-bound command runner. If we keep the layered driver chain, Nous can preserve:
 
 - thread continuity
-- work-item identity
+- intent identity
 - human governance
 - long-running execution
 - delivery continuity
@@ -3118,18 +3128,18 @@ If we collapse all of this back into a single harness loop, Nous drifts toward a
 
 ---
 
-## Runtime Flow: From WorkItem Intake to Execution
+## Runtime Flow: From Intent Intake to Execution
 
 ```
 Human: "Add dark mode to this Chrome extension"
   │
   ▼
-L0 Work Intake Plane
+L0 Intent Plane
   │  Parse goal, identify constraints
-  │  → WorkItem { goal: "add dark mode", constraints: [...] }
+  │  → Intent { goal: "add dark mode", constraints: [...] }
   │
   ▼
-L1 Work Planner
+L1 Intent Planner
   │  Decompose into Task DAG:
   │  T1: Analyze current CSS structure
   │  T2: Create theme toggle component (depends on T1)
@@ -3157,8 +3167,8 @@ L1 Task Scheduler
   │  ... continues until all tasks done
   │
   ▼
-L0 Work Intake Plane
-  │  All tasks complete → WorkItem status: achieved
+L0 Intent Plane
+  │  All tasks complete → Intent status: achieved
   │  Result summary delivered to human
 ```
 
@@ -3524,7 +3534,7 @@ This is where a stronger model belongs. Raw signals are too frequent for an expe
 
 ### Not every proactive act is an Intent
 
-`AmbientWorkItem` remains important, but it should be treated as only **one subtype** of proactive output.
+`AmbientIntent` remains important, but it should be treated as only **one subtype** of proactive output.
 
 Many valuable assistant behaviors are not tasks:
 
@@ -3588,7 +3598,7 @@ ProactiveCandidate
   │
   ├─ dialogue / notification
   ├─ DecisionQueue
-  ├─ AmbientWorkItem
+  ├─ AmbientIntent
   └─ silent_watchpoint
 ```
 
@@ -6532,18 +6542,18 @@ From the user side, the desired behavior is:
 
 We should make the design space explicit rather than pretending there is only one obvious answer.
 
-### Flow-governed work note after WorkItem convergence
+### Flow-governed work note after the naming correction
 
-The flow section below predates the WorkItem terminology convergence. From this point onward, every architectural use of `Intent` in flow/planning discussions should be read as **WorkItem** unless the text is explicitly describing current-code migration.
+The flow section below predates the terminology correction. It already uses `Intent`, which is now again the canonical governed-work noun.
 
-#### Draft A — WorkItem-Local Revisable DAG
+#### Draft A — Intent-Local Revisable DAG
 
 **Shape**
 
-- every request/proactive action becomes a `WorkItem`
-- every work item owns one revisable `Plan`
+- every request/proactive action becomes an `Intent`
+- every intent owns one revisable `Plan`
 - the plan is a DAG of `Task`s
-- all governance remains work-item-local
+- all governance remains intent-local
 
 **What this solves**
 
@@ -6554,11 +6564,11 @@ The flow section below predates the WorkItem terminology convergence. From this 
 
 **What it introduces**
 
-- no clean parent record above multiple related work items
+- no clean parent record above multiple related intents
 - proactive work has to either:
   - create a new intent every time
   - or mutate an existing intent too aggressively
-- duplication/merge becomes ambiguous because a work item is both:
+- duplication/merge becomes ambiguous because an intent is both:
   - the work owner
   - and the only grouping boundary
 
@@ -6573,7 +6583,7 @@ This shape is still too request-centric. It works for command runners, but not f
 - all work in the instance lives in one global graph
 - explicit requests, proactive tasks, reminders, follow-ups, and maintenance all become graph nodes
 - dependencies and duplicates are graph relations
-- threads and work items become projections over the graph
+- threads and intents become projections over the graph
 
 **What this solves**
 
@@ -6593,21 +6603,21 @@ This shape is still too request-centric. It works for command runners, but not f
 
 This is structurally elegant, but it is too close to "premature swarm complexity" at the local instance level. Nous still needs simpler human-legible owners than a universal graph.
 
-#### Draft C — Hybrid Flow + WorkItem + Plan Graph
+#### Draft C — Hybrid Flow + Intent + Plan Graph
 
 **Shape**
 
 - `Flow` becomes the parent governance record for ongoing work
 - a flow may contain one or more `Intent`s over time
 - each intent may still own a revisable local `Plan` (task DAG)
-- flows, work items, and tasks are linked by typed relations
+- flows, intents, and tasks are linked by typed relations
 - merge is not an automatic mutation; it is first modeled as an explicit governance proposal/object
 
 **What this solves**
 
 - preserves human-legible ownership
 - gives proactive work a place to attach without forcing thread merge
-- keeps work-item-local planning simple
+- keeps intent-local planning simple
 - creates a higher-level place for:
   - blocked summary
   - ownership
@@ -6630,22 +6640,22 @@ So Draft C should be the architectural direction.
 
 The chosen direction is:
 
-> **Flow-governed work, work-item-local planning, typed cross-work relations, and explicit merge proposals rather than implicit merging.**
+> **Flow-governed work, intent-local planning, typed cross-work relations, and explicit merge proposals rather than implicit merging.**
 
 Concretely:
 
 - `Flow` = the durable governance owner of a coherent piece of work
-- `WorkItem` = one execution episode or revision-bearing request inside a flow
-- `PlanGraph` = the revisable task graph for one work item
+- `Intent` = one execution episode or revision-bearing request inside a flow
+- `PlanGraph` = the revisable task graph for one intent
 - `Task` = atomic executable unit
 - `TaskRelation` / `FlowRelation` = typed links between work units
-- `MergeCandidate` = an explicit proposal that two work items are duplicates / should merge / should supersede
+- `MergeCandidate` = an explicit proposal that two intents/flows/tasks are duplicates / should merge / should supersede
 
 ### New object slots Nous should reserve now
 
 #### 1. `Flow`
 
-`Flow` is the parent work record above work items.
+`Flow` is the parent work record above intents.
 
 It should answer:
 
@@ -6653,7 +6663,7 @@ It should answer:
 - what thread(s) or channel(s) are associated with it?
 - is it active, blocked, quiet, complete, or abandoned?
 - what is the current blocked reason?
-- what work items/tasks currently belong to it?
+- what intents/tasks currently belong to it?
 
 Minimal draft:
 
@@ -6670,8 +6680,8 @@ interface Flow {
   createdAt: string;
   updatedAt: string;
   blockedReason?: string;
-  primaryWorkItemId?: string;
-  relatedWorkItemIds: string[];
+  primaryIntentId?: string;
+  relatedIntentIds: string[];
   relatedTaskIds: string[];
   metadata?: Record<string, unknown>;
 }
@@ -6686,14 +6696,14 @@ One flow may surface in one primary thread, an ambient thread, or multiple surfa
 
 #### 2. `PlanGraph`
 
-The existing "plan = DAG" idea remains valid, but only as a work-item-local planning object.
+The existing "plan = DAG" idea remains valid, but only as a intent-local planning object.
 
 It should become more explicit:
 
 ```ts
 interface PlanGraph {
   id: string;
-  workItemId: string;
+  intentId: string;
   flowId: string;
   status: "draft" | "active" | "superseded" | "completed";
   topology: "single" | "serial" | "parallel" | "dag";
@@ -7112,7 +7122,7 @@ Yes, because:
 
 - proactive work no longer needs a separate hidden task world
 - explicit and proactive work can both attach to flows
-- plans remain work-item-local, so local execution stays understandable
+- plans remain intent-local, so local execution stays understandable
 
 Weakness still present:
 
@@ -7277,7 +7287,7 @@ Cloud: Shared Procedural Pool (basic)    Trend Aggregator, Collective Insights
 
 | Resource | Specification | Monthly Cost | Purpose |
 |----------|--------------|-------------|---------|
-| **LLM API** | Anthropic Claude API (Sonnet for agents, Haiku for Attention Filter) | $300-500 | Agent ReAct loops, work-item parsing, memory extraction, embedding |
+| **LLM API** | Anthropic Claude API (Sonnet for agents, Haiku for Attention Filter) | $300-500 | Agent ReAct loops, intent parsing, memory extraction, embedding |
 | **Development Machine** | Already available | $0 | Local development + testing |
 | **Cloudflare** | Workers + D1 + Durable Objects + R2 | $0-5 (free tier) | Relay Network, Shared Pool, Discovery Index |
 | **Domain** | nous.dev or similar | $10/year | Relay endpoint, project website |
