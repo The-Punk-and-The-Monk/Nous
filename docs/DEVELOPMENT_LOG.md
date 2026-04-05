@@ -7588,3 +7588,55 @@ For significant sessions, capture:
   - Relationship-preference detection now obeys matcher rule-family toggles, but its semantic path is still intentionally shallow relative to interaction mode.
   - The new matcher layer currently covers the most valuable live seams; future follow-up can extend it to more proactive / control-surface / cross-instance judgment paths.
   - Repo-wide lint cleanliness for generated `.omx/` state files remains a workspace hygiene issue rather than an architecture-code issue.
+
+### Session: Add maintenance comments for continuity / matcher governance code
+
+- Context / Trigger:
+  - After the continuity + matcher-governance slice landed, the user pointed out that the code still lacked enough inline explanation for future maintainers to understand where the new layer is used and what each part is for.
+
+- Problem:
+  - The new matcher-policy and context-continuity code was structurally correct, but key files still read like raw implementation rather than maintainable contracts.
+  - Without code comments, future readers would have to rediscover:
+    - which runtime seams consume the matcher config,
+    - why `context continuity` wraps `work continuity`,
+    - why some helpers are categorical while others are scored,
+    - why daemon wiring now injects matching config into multiple subsystems.
+
+- Decision:
+  - Add focused architectural comments to the core matcher/config/continuity files rather than broad noisy line-by-line commentary.
+  - Prefer comments that explain:
+    - why the file exists,
+    - current live callers / consumers,
+    - what kind of decision the module owns,
+    - what should remain configurable vs hard-gated.
+
+- Changes made:
+  - Updated `packages/core/src/types/matching.ts`
+    - added file-level and contract-level comments describing matcher-policy purpose, consumers, and default policy intent
+  - Updated `packages/runtime/src/matching/policy.ts`
+    - added comments clarifying categorical vs scored matcher helpers and why the file stays domain-agnostic
+  - Updated `packages/runtime/src/memory/context-continuity.ts`
+    - added comments explaining the daemon restoration caller and why work continuity remains a compatibility alias under context continuity
+  - Updated `packages/runtime/src/memory/retrieval.ts`
+    - added comments clarifying that this is where retrieval policy becomes live ranking behavior
+  - Updated `packages/infra/src/config/home.ts`
+    - documented the purpose of `matching.json`
+  - Updated `packages/infra/src/daemon/conflict-manager.ts`
+    - documented why conflict analysis reuses the shared matcher vocabulary
+  - Updated `packages/infra/src/intake/interaction-mode-classifier.ts`
+    - documented the daemon-side routing role and the intended semantics of heuristic / semantic / hybrid mode
+  - Updated `packages/infra/src/daemon/server.ts`
+    - documented why matching config is injected into multiple runtime subsystems from one place
+
+- Impact / Result:
+  - The new continuity/matcher layer is now much easier to understand from code alone.
+  - Future maintainers can identify where the policy is consumed without reconstructing the architecture from grep + trial and error.
+  - The comments also reduce the risk of accidentally collapsing hard safety gates into configurable matcher behavior later.
+
+- Verification:
+  - `bun x tsc --noEmit` ✅
+  - `bun test` ✅
+  - changed-files `bunx biome check ...` ✅
+
+- Open questions / next steps:
+  - If the matcher layer expands to more proactive / control-surface paths, keep the same comment discipline so new seams remain discoverable.

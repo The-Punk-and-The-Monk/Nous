@@ -57,6 +57,12 @@ export interface NousConfig {
 		prospectiveLookaheadMs: number;
 	};
 	relationship: RelationshipBoundary;
+	/**
+	 * Shared matcher-governance config for runtime judgment seams.
+	 *
+	 * Backed by `~/.nous/config/matching.json` and optional project-local
+	 * `.nous/matching.json` so policy tuning does not require source edits.
+	 */
 	matching: NousMatchingConfig;
 }
 
@@ -155,6 +161,8 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 	writeDefaultJsonIfMissing(join(paths.configDir, "relationship.json"), {
 		relationship: DEFAULT_RELATIONSHIP_BOUNDARY as unknown as JsonValue,
 	});
+	// Keep matcher policy in its own file so operators can tune runtime judgment
+	// behavior without editing unrelated daemon/provider/sensor config.
 	writeDefaultJsonIfMissing(join(paths.configDir, "matching.json"), {
 		matching: DEFAULT_NOUS_MATCHING_CONFIG as unknown as JsonValue,
 	});

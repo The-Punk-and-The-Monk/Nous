@@ -9,6 +9,18 @@ import type {
 import { DEFAULT_NOUS_MATCHING_CONFIG } from "@nous/core";
 import { StructuredGenerationEngine } from "@nous/runtime";
 
+/**
+ * Daemon-side classifier for the chat / work / handoff boundary.
+ *
+ * Current caller:
+ * - `packages/infra/src/daemon/server.ts` before a `send_message` turn is
+ *   allowed to become governed work
+ *
+ * Policy intent:
+ * - heuristic_only: cheap, bounded lexical routing
+ * - semantic_only: let a semantic evaluator / structured signals own the route
+ * - hybrid: keep obvious fast paths cheap while still allowing richer support
+ */
 export interface InteractionModeDecision {
 	mode: InteractionMode;
 	rationale: string;
@@ -80,12 +92,16 @@ export class InteractionModeClassifier {
 			return heuristic;
 		}
 		if (this.policy.mode === "semantic_only") {
+			// Semantic-only mode is allowed to bypass lexical routing entirely when a
+			// caller wants stronger semantic interpretation to own the boundary.
 			const semantic =
 				(await this.semanticEvaluator?.evaluate(input)) ??
 				classifyInteractionModeSemantically(input, this.policy);
 			return semantic ?? buildSemanticFallbackDecision();
 		}
 		if (heuristic.mode !== "chat") {
+			// In hybrid mode, a decisive heuristic result wins immediately. This keeps
+			// obvious work/handoff routing cheap and avoids unnecessary model calls.
 			return heuristic;
 		}
 
@@ -196,6 +212,9 @@ function classifyInteractionModeSemantically(
 	input: InteractionModeClassificationInput,
 	policy: InteractionModeMatcherPolicy,
 ): InteractionModeDecision | undefined {
+	// The built-in semantic path is intentionally bounded: it reads structured
+	// runtime signals already present in state. Richer semantic interpretation can
+	// be injected through `semanticEvaluator`.
 	const text = input.text.trim();
 	const hasStructuredHandoffSignal =
 		Boolean(input.threadMetadata?.handoffCapsule) ||

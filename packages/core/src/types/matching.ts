@@ -1,5 +1,20 @@
+/**
+ * Shared matcher vocabulary for live runtime judgment seams.
+ *
+ * The goal is not to force every subsystem into identical logic; it is to make
+ * "heuristic_only / semantic_only / hybrid" mean one consistent thing across:
+ * - interaction-mode routing
+ * - context continuity restoration
+ * - memory retrieval ranking
+ * - conflict analysis
+ * - relationship-preference detection
+ */
 export type MatcherMode = "heuristic_only" | "semantic_only" | "hybrid";
 
+/**
+ * Hybrid matcher rules are intentionally broad. Each consumer reads only the
+ * fields relevant to its own judgment path instead of inventing local config.
+ */
 export interface HybridMatcherPolicy {
 	combineStrategy: "prefer_heuristic" | "prefer_semantic" | "higher_confidence";
 	strategy: "heuristic_first" | "semantic_first" | "weighted";
@@ -68,10 +83,15 @@ export type MemoryRetrievalHybridRules = ScoredMatcherWeights;
 export type MemoryRetrievalMatcherPolicy = ScoredMatcherPolicy;
 
 export interface NousMatchingConfig {
+	/** Daemon chat/work/handoff routing before thread messages enter governed work. */
 	interactionMode: InteractionModeMatcherPolicy;
+	/** Restoration from promoted memory into the current governed context/work. */
 	contextContinuity: ContextContinuityMatcherPolicy;
+	/** Hybrid lexical/semantic ranking used by memory recall/context packing. */
 	memoryRetrieval: MemoryRetrievalMatcherPolicy;
+	/** Active-work overlap / dependency / opposition judgment. */
 	conflict: ConflictMatcherPolicy;
+	/** User preference-note detection before semantic memory ingestion. */
 	relationshipPreference: RelationshipPreferenceMatcherPolicy;
 }
 
@@ -111,6 +131,13 @@ const DEFAULT_HYBRID_MATCHER_POLICY: HybridMatcherPolicy = {
 	useThreadIdentityMatch: false,
 };
 
+/**
+ * Default matcher config prefers bounded hybrid behavior:
+ * - obvious lexical routes stay cheap
+ * - semantic support exists where ambiguity or richer structure matters
+ * - conflict / relationship preference stay heuristic-first to avoid
+ *   over-eager semantic escalation in sensitive control paths
+ */
 export const DEFAULT_MATCHING_POLICY_SET: NousMatchingConfig = {
 	interactionMode: {
 		mode: "hybrid",

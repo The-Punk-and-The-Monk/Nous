@@ -1,8 +1,14 @@
-import type {
-	CategoricalMatcherPolicy,
-	ScoredMatcherPolicy,
-} from "@nous/core";
+import type { CategoricalMatcherPolicy, ScoredMatcherPolicy } from "@nous/core";
 
+/**
+ * Shared runtime helpers for matcher-policy execution.
+ *
+ * Keep this layer domain-agnostic:
+ * - categorical helpers choose among discrete outcomes like chat/work/handoff
+ * - scored helpers combine heuristic/semantic signals for thresholded matchers
+ *
+ * Callers supply the domain semantics; this file only applies configured policy.
+ */
 type MaybePromise<T> = T | Promise<T>;
 
 export interface MatcherCandidate<T> {
@@ -48,6 +54,8 @@ export async function resolveCategoricalMatcher<T>(params: {
 	fallback: () => MaybePromise<MatcherCandidate<T>>;
 	equals?: (left: T, right: T) => boolean;
 }): Promise<CategoricalMatcherResult<T>> {
+	// Single-mode policies still allow a bounded fallback so callers can stay safe
+	// when one source is unavailable.
 	const heuristic = params.heuristic;
 	const semantic = params.semantic;
 	const equals = params.equals ?? Object.is;
@@ -127,6 +135,8 @@ export function resolveScoredMatcher(params: {
 	score: number;
 	source: "heuristic" | "semantic" | "hybrid";
 } {
+	// The caller interprets the resulting score; this helper only applies the
+	// configured heuristic/semantic bias for the current matcher policy.
 	const heuristicScore = clamp01(params.heuristicScore ?? 0);
 	const semanticScore = clamp01(params.semanticScore ?? 0);
 

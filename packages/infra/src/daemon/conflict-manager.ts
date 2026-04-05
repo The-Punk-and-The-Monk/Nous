@@ -4,6 +4,13 @@ import {
 	DEFAULT_NOUS_MATCHING_CONFIG,
 } from "@nous/core";
 
+/**
+ * Conflict analysis reuses the shared matcher vocabulary so "heuristic vs
+ * semantic vs hybrid" has the same operational meaning across the runtime.
+ *
+ * This module still owns conflict-specific rules; the shared policy only decides
+ * how much trust to place in heuristic vs semantic conflict signals.
+ */
 export interface ResourceClaim {
 	key: string;
 	mode: "read" | "write";

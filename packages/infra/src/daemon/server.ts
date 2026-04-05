@@ -109,6 +109,8 @@ export class NousDaemon {
 	private isShuttingDown = false;
 
 	constructor(private readonly options: NousDaemonOptions) {
+		// All matcher-sensitive subsystems read from the same loaded config so
+		// judgment tuning happens in one place instead of scattered controller code.
 		this.conflicts = new StaticIntentConflictManager({
 			policy: this.nousConfig.matching.conflict,
 		});

@@ -5,6 +5,18 @@ import {
 	type MemoryEntry,
 } from "@nous/core";
 
+/**
+ * Context-continuity restoration is the live runtime gate that decides whether
+ * promoted memory is allowed to revive governed work in the current scene.
+ *
+ * Current caller:
+ * - daemon thread-message restoration in `packages/infra/src/daemon/server.ts`
+ *
+ * Terminology note:
+ * - `context continuity` is the umbrella term
+ * - `work continuity` remains as a narrower compatibility alias for the same
+ *   governed restoration path
+ */
 export interface ContextContinuityRestorationInput {
 	memoryEntry?: MemoryEntry;
 	scope?: ChannelScope;
@@ -33,6 +45,8 @@ export type WorkContinuationRestorationVerdict =
 export function evaluateContextContinuityRestoration(
 	input: ContextContinuityRestorationInput,
 ): ContextContinuityRestorationVerdict {
+	// Matcher policy decides how much trust to place in tags/metadata/identity
+	// matches, but permission + boundary checks remain a hard gate afterward.
 	const policy = input.policy ?? DEFAULT_NOUS_MATCHING_CONFIG.contextContinuity;
 	const structuredPromotion = isStructuredContextContinuityMemory(
 		input.memoryEntry,
@@ -99,6 +113,8 @@ export function evaluateContextContinuityRestoration(
 export function evaluateWorkContinuationRestoration(
 	input: WorkContinuationRestorationInput,
 ): WorkContinuationRestorationVerdict {
+	// Compatibility alias for older call sites/tests that still speak in the
+	// narrower work-continuity language.
 	return evaluateContextContinuityRestoration(input);
 }
 

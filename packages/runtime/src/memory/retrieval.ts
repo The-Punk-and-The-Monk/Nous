@@ -7,6 +7,13 @@ import {
 } from "@nous/core";
 import type { MemoryStore } from "@nous/persistence";
 
+/**
+ * HybridMemoryRetriever is where retrieval policy becomes live runtime behavior.
+ *
+ * The matcher config here does not decide what memory means; it decides how
+ * lexical, semantic, scope, provenance, and retention signals are blended
+ * when ranking candidates for recall/context packing.
+ */
 export interface MemoryRetrievalInput {
 	query: string;
 	agentId?: string;
@@ -93,6 +100,8 @@ export class HybridMemoryRetriever {
 	}
 
 	retrieve(input: MemoryRetrievalInput): RetrievedMemory[] {
+		// Collect a broad candidate set first, then let the configured matcher
+		// policy decide how lexical vs semantic structure affects ranking.
 		const queryEmbedding = this.embeddingModel.embedText(
 			buildQueryDocument(input.query, input.scope, input.threadId),
 		);
@@ -189,6 +198,8 @@ function scoreRetrievedMemory(
 	retentionScore: number,
 	policy: MemoryRetrievalMatcherPolicy,
 ): number {
+	// Keep weighting policy in config rather than spreading retrieval-tuning
+	// literals across the ranking flow.
 	const weights = policy.weights;
 	if (policy.mode === "heuristic_only") {
 		return (
