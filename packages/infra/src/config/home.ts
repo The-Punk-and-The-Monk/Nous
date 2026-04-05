@@ -1,7 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import type { RelationshipBoundary } from "@nous/core";
+import {
+	DEFAULT_NOUS_MATCHING_CONFIG,
+	type NousMatchingConfig,
+	type RelationshipBoundary,
+} from "@nous/core";
 
 export interface NousPaths {
 	homeDir: string;
@@ -53,6 +57,7 @@ export interface NousConfig {
 		prospectiveLookaheadMs: number;
 	};
 	relationship: RelationshipBoundary;
+	matching: NousMatchingConfig;
 }
 
 type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
@@ -149,6 +154,9 @@ export function ensureNousHome(options: NousConfigLoadOptions = {}): NousPaths {
 	});
 	writeDefaultJsonIfMissing(join(paths.configDir, "relationship.json"), {
 		relationship: DEFAULT_RELATIONSHIP_BOUNDARY as unknown as JsonValue,
+	});
+	writeDefaultJsonIfMissing(join(paths.configDir, "matching.json"), {
+		matching: DEFAULT_NOUS_MATCHING_CONFIG as unknown as JsonValue,
 	});
 	writeDefaultJsonIfMissing(join(paths.configDir, "network.json"), {
 		networkEnabled: false,
@@ -282,6 +290,7 @@ export function loadNousConfig(
 		readJson(join(paths.configDir, "sensors.json")),
 		readJson(join(paths.configDir, "ambient.json")),
 		readJson(join(paths.configDir, "relationship.json")),
+		readJson(join(paths.configDir, "matching.json")),
 		paths.projectDir
 			? readJson(join(paths.projectDir, "config.json"))
 			: undefined,
@@ -296,6 +305,9 @@ export function loadNousConfig(
 			: undefined,
 		paths.projectDir
 			? readJson(join(paths.projectDir, "relationship.json"))
+			: undefined,
+		paths.projectDir
+			? readJson(join(paths.projectDir, "matching.json"))
 			: undefined,
 	);
 	const config = merged as unknown as NousConfig;
@@ -423,4 +435,5 @@ const DEFAULT_NOUS_CONFIG: NousConfig = {
 		prospectiveLookaheadMs: 900000,
 	},
 	relationship: DEFAULT_RELATIONSHIP_BOUNDARY,
+	matching: DEFAULT_NOUS_MATCHING_CONFIG,
 };

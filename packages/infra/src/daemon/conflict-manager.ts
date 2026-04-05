@@ -1,4 +1,8 @@
-import type { ChannelScope } from "@nous/core";
+import {
+	type CategoricalMatcherPolicy,
+	type ChannelScope,
+	DEFAULT_NOUS_MATCHING_CONFIG,
+} from "@nous/core";
 
 export interface ResourceClaim {
 	key: string;
@@ -19,6 +23,10 @@ export interface ScheduleIntentInput {
 	intentId?: string;
 	text: string;
 	scope: ChannelScope;
+}
+
+export interface StaticIntentConflictManagerOptions {
+	policy?: CategoricalMatcherPolicy;
 }
 
 interface ActiveClaim {
@@ -43,6 +51,11 @@ interface ConflictInspection {
 
 export class StaticIntentConflictManager {
 	private readonly activeClaims = new Map<string, ActiveClaim[]>();
+	private readonly policy: CategoricalMatcherPolicy;
+
+	constructor(options: StaticIntentConflictManagerOptions = {}) {
+		this.policy = options.policy ?? DEFAULT_NOUS_MATCHING_CONFIG.conflict;
+	}
 
 	analyze(input: ScheduleIntentInput): ConflictDecision {
 		const inspection = this.inspect(input);
@@ -102,7 +115,7 @@ export class StaticIntentConflictManager {
 	}
 
 	private inspect(input: ScheduleIntentInput): ConflictInspection {
-		const claims = deriveResourceClaims(input.text, input.scope);
+		const claims = deriveResourceClaims(input.text, input.scope, this.policy);
 		const scopeKey = deriveScopeKey(input.scope);
 		const overlaps = new Set<string>();
 		const blockers = new Set<Promise<void>>();
@@ -113,13 +126,15 @@ export class StaticIntentConflictManager {
 
 		const activeExecutions = dedupeActiveExecutions(this.activeClaims);
 
-		for (const claim of claims) {
-			for (const active of this.activeClaims.get(claim.key) ?? []) {
-				if (active.mode === "write" || claim.mode === "write") {
-					overlaps.add(claim.key);
-					blockers.add(active.promise);
-					if (active.intentId && active.intentId !== input.intentId) {
-						relatedIntentIds.add(active.intentId);
+		if (usesHeuristicConflictSignals(this.policy)) {
+			for (const claim of claims) {
+				for (const active of this.activeClaims.get(claim.key) ?? []) {
+					if (active.mode === "write" || claim.mode === "write") {
+						overlaps.add(claim.key);
+						blockers.add(active.promise);
+						if (active.intentId && active.intentId !== input.intentId) {
+							relatedIntentIds.add(active.intentId);
+						}
 					}
 				}
 			}
@@ -130,7 +145,14 @@ export class StaticIntentConflictManager {
 			if (active.intentId && active.intentId !== input.intentId) {
 				relatedIntentIds.add(active.intentId);
 			}
-			const semantic = analyzeSemanticRelationship(input.text, active.text);
+			if (!usesSemanticConflictSignals(this.policy)) {
+				continue;
+			}
+			const semantic = analyzeSemanticRelationship(
+				input.text,
+				active.text,
+				this.policy,
+			);
 			if (semantic === "conflicting") {
 				verdict = "conflicting";
 				requiresReview = true;
@@ -168,9 +190,11 @@ export class StaticIntentConflictManager {
 export function deriveResourceClaims(
 	text: string,
 	scope: ChannelScope,
+	policy: CategoricalMatcherPolicy = DEFAULT_NOUS_MATCHING_CONFIG.conflict,
 ): ResourceClaim[] {
-	const explicitTargets = extractExplicitTargets(text, scope);
-	const mode = inferIntentMode(text);
+	const explicitTargets =
+		policy.mode === "semantic_only" ? [] : extractExplicitTargets(text, scope);
+	const mode = policy.mode === "semantic_only" ? "read" : inferIntentMode(text);
 
 	if (explicitTargets.length > 0) {
 		return explicitTargets.map((target) => ({
@@ -249,11 +273,17 @@ function dedupeActiveExecutions(
 function analyzeSemanticRelationship(
 	incomingText: string,
 	activeText: string,
+	policy: CategoricalMatcherPolicy,
 ): "independent" | "dependent" | "conflicting" {
 	const incoming = classifyIntent(incomingText);
 	const active = classifyIntent(activeText);
 
-	if (incoming.target && active.target && incoming.target !== active.target) {
+	if (
+		policy.mode !== "semantic_only" &&
+		incoming.target &&
+		active.target &&
+		incoming.target !== active.target
+	) {
 		return "independent";
 	}
 
@@ -288,6 +318,18 @@ function classifyIntent(text: string): { action: string; target?: string } {
 		action: inferIntentAction(normalized),
 		target: explicitTargets[0],
 	};
+}
+
+function usesHeuristicConflictSignals(
+	policy: CategoricalMatcherPolicy,
+): boolean {
+	return policy.mode !== "semantic_only";
+}
+
+function usesSemanticConflictSignals(
+	policy: CategoricalMatcherPolicy,
+): boolean {
+	return policy.mode !== "heuristic_only";
 }
 
 function inferIntentAction(text: string): string {

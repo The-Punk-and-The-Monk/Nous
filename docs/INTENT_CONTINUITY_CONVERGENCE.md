@@ -52,6 +52,8 @@ So the correction is:
 
 We keep the three-way continuity split, but we express it with `Intent`, not `WorkItem`.
 
+Those three layers together are the broader **context continuity** contract. `work continuity` is only the governed execution-restoration slice inside that larger frame.
+
 ### 1. Transport continuity
 
 Owned by the dialogue layer.
@@ -253,8 +255,9 @@ Goal:
 When reasoning about the current Nous architecture:
 
 - **Thread** = communication continuity
-- **Intent** = execution continuity
+- **Intent** = execution / work continuity
 - **Memory** = semantic continuity
+- **Together** = context continuity
 
 That is the correct split.
 

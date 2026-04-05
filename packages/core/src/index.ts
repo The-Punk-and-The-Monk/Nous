@@ -180,6 +180,29 @@ export type {
 	TaskIntake,
 } from "./types/task-intake.ts";
 export type {
+	MatcherMode,
+	HybridMatcherPolicy,
+	CategoricalMatcherPolicy,
+	ScoredMatcherWeights,
+	ScoredMatcherPolicy,
+	InteractionModeHybridRules,
+	InteractionModeMatcherPolicy,
+	ContextContinuityHybridRules,
+	ContextContinuityMatcherPolicy,
+	MemoryRetrievalHybridRules,
+	MemoryRetrievalMatcherPolicy,
+	ConflictHybridRules,
+	ConflictMatcherPolicy,
+	RelationshipPreferenceHybridRules,
+	RelationshipPreferenceMatcherPolicy,
+	MatchingPolicySet,
+	NousMatchingConfig,
+} from "./types/matching.ts";
+export {
+	DEFAULT_MATCHING_POLICY_SET,
+	DEFAULT_NOUS_MATCHING_CONFIG,
+} from "./types/matching.ts";
+export type {
 	Decision,
 	DecisionKind,
 	DecisionStatus,

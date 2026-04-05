@@ -18,6 +18,7 @@ import type {
 	MergeCandidate,
 	ProactiveCandidate,
 	RelationshipBoundary,
+	RelationshipPreferenceMatcherPolicy,
 	TurnResolutionSnapshot,
 	TurnRouteKind,
 } from "@nous/core";
@@ -30,7 +31,7 @@ import {
 	MemoryService,
 	ProactiveRuntimeService,
 	ReflectionService,
-	evaluateWorkContinuationRestoration,
+	evaluateContextContinuityRestoration,
 	renderContextForSystemPrompt,
 } from "@nous/runtime";
 import { createGeneralAgent } from "../agents/general.ts";
@@ -80,12 +81,9 @@ export class NousDaemon {
 	private readonly dialogue: DialogueService;
 	private readonly controller: DaemonController;
 	private readonly supervisor: ProcessSupervisor;
-	private readonly conflicts = new StaticIntentConflictManager();
+	private readonly conflicts: StaticIntentConflictManager;
 	private readonly contextAssembler = new ContextAssembler();
-	private readonly memory = new MemoryService({
-		store: this.backend.memory,
-		agentId: "nous",
-	});
+	private readonly memory: MemoryService;
 	private readonly proactive: ProactiveRuntimeService;
 	private readonly reflection: ReflectionService;
 	private readonly perception: PerceptionService;
@@ -111,6 +109,14 @@ export class NousDaemon {
 	private isShuttingDown = false;
 
 	constructor(private readonly options: NousDaemonOptions) {
+		this.conflicts = new StaticIntentConflictManager({
+			policy: this.nousConfig.matching.conflict,
+		});
+		this.memory = new MemoryService({
+			store: this.backend.memory,
+			agentId: "nous",
+			retrievalPolicy: this.nousConfig.matching.memoryRetrieval,
+		});
 		this.proactive = new ProactiveRuntimeService({
 			store: this.backend.proactive,
 			memory: this.memory,
@@ -130,7 +136,9 @@ export class NousDaemon {
 			workStore: this.backend.work,
 		});
 		this.orchestrator.registerAgent(createGeneralAgent());
-		this.interactionModeClassifier = new InteractionModeClassifier();
+		this.interactionModeClassifier = new InteractionModeClassifier({
+			policy: this.nousConfig.matching.interactionMode,
+		});
 		this.threadInputRouter = new ThreadInputRouter(options.llm);
 		this.threadScopeRouter = new ThreadScopeRouter(options.llm);
 		this.decisionResponseInterpreter = new DecisionResponseInterpreter(
@@ -620,7 +628,7 @@ export class NousDaemon {
 		const pending = this.backend.decisions.getPendingByThread(payload.threadId);
 		if (pending.length === 0) {
 			const restorationCandidate =
-				this.findRestorableWorkContinuationFromMemory(payload);
+				await this.findRestorableContextContinuityFromMemory(payload);
 			const modeDecision = await this.interactionModeClassifier.classify({
 				text: payload.text,
 				activeIntent: this.getLatestControllableIntentForThread(
@@ -638,7 +646,7 @@ export class NousDaemon {
 				restorationAllowed: Boolean(restorationCandidate),
 			});
 			if (modeDecision.mode === "work" && restorationCandidate) {
-				await this.tryRestoreWorkContinuationFromMemory(
+				await this.tryRestoreContextContinuityFromMemory(
 					payload,
 					restorationCandidate,
 				);
@@ -984,69 +992,82 @@ export class NousDaemon {
 		await this.flushPendingDeliveriesForThread(payload.threadId);
 	}
 
-	private findRestorableWorkContinuationFromMemory(payload: {
+	private async findRestorableContextContinuityFromMemory(payload: {
 		threadId: string;
 		messageId: string;
 		text: string;
 		channel: Channel;
 	}) {
-		if (!looksLikeWorkRestorationRequest(payload.text)) {
+		if (!looksLikeContextRestorationRequest(payload.text)) {
 			return undefined;
 		}
 
-		return this.memory
-			.retrieve({
-				query: payload.text,
+		const permissionGranted = hasGrantedCapabilitySet(
+			resolvePermissionCapabilities(loadPermissionPolicy(), {
+				projectRoot: payload.channel.scope.projectRoot,
+			}),
+		);
+
+		for (const result of this.memory.retrieve({
+			query: payload.text,
+			scope: payload.channel.scope,
+			threadId: payload.threadId,
+			tiers: ["semantic"],
+			limit: 5,
+		})) {
+			const verdict = evaluateContextContinuityRestoration({
+				memoryEntry: result.entry,
 				scope: payload.channel.scope,
 				threadId: payload.threadId,
-				tiers: ["semantic"],
-				limit: 5,
-			})
-			.map((result) => ({
-				entry: result.entry,
-				verdict: evaluateWorkContinuationRestoration({
-					memoryEntry: result.entry,
-					scope: payload.channel.scope,
-					permissionGranted: hasGrantedCapabilitySet(
-						resolvePermissionCapabilities(loadPermissionPolicy(), {
-							projectRoot: payload.channel.scope.projectRoot,
-						}),
-					),
-					boundaryAccepted: looksLikeWorkRestorationRequest(payload.text),
-				}),
-			}))
-			.find((candidate) => candidate.verdict.allowed);
+				permissionGranted,
+				boundaryAccepted: looksLikeContextRestorationRequest(payload.text),
+				policy: this.nousConfig.matching.contextContinuity,
+			});
+			if (verdict.allowed) {
+				return {
+					entry: result.entry,
+					verdict,
+				};
+			}
+		}
+
+		return undefined;
 	}
 
-	private async tryRestoreWorkContinuationFromMemory(
+	private async tryRestoreContextContinuityFromMemory(
 		payload: {
 			threadId: string;
 			messageId: string;
 			text: string;
 			channel: Channel;
 		},
-		restored = this.findRestorableWorkContinuationFromMemory(payload),
+		restored?: Awaited<
+			ReturnType<NousDaemon["findRestorableContextContinuityFromMemory"]>
+		>,
 	): Promise<boolean> {
-		if (!restored) {
+		const candidate =
+			restored ??
+			(await this.findRestorableContextContinuityFromMemory(payload));
+		if (!candidate) {
 			return false;
 		}
 
 		this.dialogue.enqueueAssistantMessage({
 			threadId: payload.threadId,
 			content:
-				"I found promoted structured work memory that matched this scene, so I restored this into governed work.",
+				"I found promoted structured context continuity that matched this scene, so I restored this into governed work.",
 			kind: "notification",
 			metadata: {
 				interactionMode: "work",
-				restorationMemoryId: restored.entry.id,
-				restorationReason: restored.verdict.reason,
+				restorationMemoryId: candidate.entry.id,
+				restorationReason: candidate.verdict.reason,
 			},
 		});
 		await this.flushPendingDeliveriesForThread(payload.threadId);
 
 		await this.startIntentExecution({
 			...payload,
-			text: buildRestoredWorkRequest(payload.text, restored.entry),
+			text: buildRestoredWorkRequest(payload.text, candidate.entry),
 		});
 		return true;
 	}
@@ -1825,14 +1846,15 @@ export class NousDaemon {
 
 	private getLatestTrackedIntentForThread(threadId: string) {
 		return this.getTrackedIntentsForThread(threadId).find(
-			(intent) =>
-				intent.status !== "achieved" && intent.status !== "abandoned",
+			(intent) => intent.status !== "achieved" && intent.status !== "abandoned",
 		);
 	}
 
 	private getTrackedIntentsForThread(threadId: string): Intent[] {
 		const trackedIntentIds = new Set<string>();
-		for (const binding of this.backend.work.listFlowThreadBindings({ threadId })) {
+		for (const binding of this.backend.work.listFlowThreadBindings({
+			threadId,
+		})) {
 			const flow = this.backend.work.getFlowById(binding.flowId);
 			if (!flow) {
 				continue;
@@ -1852,7 +1874,9 @@ export class NousDaemon {
 		}
 
 		const snapshot = this.dialogue.getThreadSnapshot({ threadId });
-		const metadataIntentIds = Array.isArray(snapshot?.thread.metadata?.intentIds)
+		const metadataIntentIds = Array.isArray(
+			snapshot?.thread.metadata?.intentIds,
+		)
 			? snapshot.thread.metadata.intentIds.map((value) => String(value))
 			: [];
 		for (const intentId of metadataIntentIds) {
@@ -3090,7 +3114,10 @@ export class NousDaemon {
 		channel: Channel;
 		messageId?: string;
 	}): void {
-		const tags = parseRelationshipPreferenceTags(payload.text);
+		const tags = parseRelationshipPreferenceTags(
+			payload.text,
+			this.nousConfig.matching.relationshipPreference,
+		);
 		if (tags.length === 0) {
 			return;
 		}
@@ -3129,7 +3156,7 @@ export class NousDaemon {
 			outputs,
 		});
 		if (outcome === "intent.achieved" && scope && intent) {
-			this.memory.promoteWorkContinuation({
+			this.memory.promoteContextContinuity({
 				intentId: intentId,
 				summary: intent.goal.summary || text,
 				threadId,
@@ -3794,7 +3821,7 @@ function dedupeStrings(values: string[]): string[] {
 	return [...new Set(values)];
 }
 
-function looksLikeWorkRestorationRequest(text: string): boolean {
+function looksLikeContextRestorationRequest(text: string): boolean {
 	const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
 	return [
 		"continue that",
@@ -3817,12 +3844,15 @@ function buildRestoredWorkRequest(
 		.split("\n")
 		.find((line) => line.trim().length > 0);
 	const summary = summaryLine
-		? summaryLine.replace(/^Structured work continuation:\s*/, "").trim()
+		? summaryLine
+				.replace(/^Structured context continuity \(work\):\s*/, "")
+				.replace(/^Structured work continuation:\s*/, "")
+				.trim()
 		: memoryEntry.content.trim();
 	return [
 		`Restore the governed work item described as: ${summary}`,
 		`User restoration request: ${originalText.trim()}`,
-		"Use the promoted structured work-continuity memory instead of raw conversational inference.",
+		"Use the promoted structured context-continuity memory instead of raw conversational inference.",
 	]
 		.filter(Boolean)
 		.join("\n");
@@ -3832,69 +3862,84 @@ function hasGrantedCapabilitySet(capabilities: CapabilitySet): boolean {
 	return Object.values(capabilities).some((value) => value !== false);
 }
 
-function parseRelationshipPreferenceTags(text: string): string[] {
+function parseRelationshipPreferenceTags(
+	text: string,
+	policy: RelationshipPreferenceMatcherPolicy,
+): string[] {
 	const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-	if (!looksLikeDirectRelationshipPreference(text, normalized)) {
+	const heuristicEnabled =
+		policy.mode === "heuristic_only" || policy.mode === "hybrid";
+	if (
+		!heuristicEnabled ||
+		!looksLikeDirectRelationshipPreference(text, normalized, policy)
+	) {
 		return [];
 	}
 	const tags = new Set<string>();
 
 	if (
-		normalized.includes("digest") ||
-		normalized.includes("batch proactive") ||
-		text.includes("摘要") ||
-		text.includes("合并提醒")
+		policy.hybrid.useDeliveryPreferenceRules &&
+		(normalized.includes("digest") ||
+			normalized.includes("batch proactive") ||
+			text.includes("摘要") ||
+			text.includes("合并提醒"))
 	) {
 		tags.add("relationship:delivery:digest");
 	}
 	if (
-		normalized.includes("notification") ||
-		normalized.includes("notify me") ||
-		text.includes("通知我")
+		policy.hybrid.useDeliveryPreferenceRules &&
+		(normalized.includes("notification") ||
+			normalized.includes("notify me") ||
+			text.includes("通知我"))
 	) {
 		tags.add("relationship:delivery:notification");
 	}
 	if (
-		normalized.includes("in the thread") ||
-		normalized.includes("reply in chat") ||
-		text.includes("在对话里说") ||
-		text.includes("在线程里说")
+		policy.hybrid.useDeliveryPreferenceRules &&
+		(normalized.includes("in the thread") ||
+			normalized.includes("reply in chat") ||
+			text.includes("在对话里说") ||
+			text.includes("在线程里说"))
 	) {
 		tags.add("relationship:delivery:thread");
 	}
 
 	if (
-		normalized.includes("don't auto-execute") ||
-		normalized.includes("do not auto-execute") ||
-		normalized.includes("ask first") ||
-		text.includes("不要自动执行") ||
-		text.includes("先问我")
+		policy.hybrid.useAutonomyPreferenceRules &&
+		(normalized.includes("don't auto-execute") ||
+			normalized.includes("do not auto-execute") ||
+			normalized.includes("ask first") ||
+			text.includes("不要自动执行") ||
+			text.includes("先问我"))
 	) {
 		tags.add("relationship:auto_execute:false");
 	}
 	if (
-		normalized.includes("you can auto-execute") ||
-		normalized.includes("feel free to auto-execute") ||
-		text.includes("可以直接做") ||
-		text.includes("可以自动执行")
+		policy.hybrid.useAutonomyPreferenceRules &&
+		(normalized.includes("you can auto-execute") ||
+			normalized.includes("feel free to auto-execute") ||
+			text.includes("可以直接做") ||
+			text.includes("可以自动执行"))
 	) {
 		tags.add("relationship:auto_execute:true");
 	}
 
 	if (
-		normalized.includes("don't be too proactive") ||
-		normalized.includes("less proactive") ||
-		normalized.includes("be minimally proactive") ||
-		text.includes("别太主动") ||
-		text.includes("少打扰")
+		policy.hybrid.useInitiativePreferenceRules &&
+		(normalized.includes("don't be too proactive") ||
+			normalized.includes("less proactive") ||
+			normalized.includes("be minimally proactive") ||
+			text.includes("别太主动") ||
+			text.includes("少打扰"))
 	) {
 		tags.add("relationship:initiative:minimal");
 	}
 	if (
-		normalized.includes("be more proactive") ||
-		normalized.includes("more proactive") ||
-		text.includes("可以更主动") ||
-		text.includes("更主动一点")
+		policy.hybrid.useInitiativePreferenceRules &&
+		(normalized.includes("be more proactive") ||
+			normalized.includes("more proactive") ||
+			text.includes("可以更主动") ||
+			text.includes("更主动一点"))
 	) {
 		tags.add("relationship:initiative:high");
 	}
@@ -3905,7 +3950,11 @@ function parseRelationshipPreferenceTags(text: string): string[] {
 function looksLikeDirectRelationshipPreference(
 	originalText: string,
 	normalizedText: string,
+	policy: RelationshipPreferenceMatcherPolicy,
 ): boolean {
+	if (!policy.hybrid.useDirectPreferenceMarkers) {
+		return false;
+	}
 	const directMarkers = [
 		"prefer ",
 		"please ",
@@ -3953,6 +4002,7 @@ function looksLikeDirectRelationshipPreference(
 		"这个说法",
 	];
 	if (
+		policy.hybrid.useQuotedExampleGuard &&
 		hypotheticalOrQuotedMarkers.some(
 			(marker) =>
 				originalText.includes(marker) || normalizedText.includes(marker),

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { InteractionModeClassifier } from "../src/intake/interaction-mode-classifier.ts";
+import { DEFAULT_NOUS_MATCHING_CONFIG } from "@nous/core";
+import {
+	InteractionModeClassifier,
+	type InteractionModeDecision,
+} from "../src/intake/interaction-mode-classifier.ts";
 
 describe("InteractionModeClassifier", () => {
 	test("classifies ambiguous conversational follow-up as chat", async () => {
@@ -73,5 +77,48 @@ describe("InteractionModeClassifier", () => {
 
 		expect(result.mode).toBe("chat");
 		expect(result.confidence).toBe("medium");
+	});
+
+	test("semantic-only mode can classify work even without lexical work phrase", async () => {
+		const classifier = new InteractionModeClassifier({
+			policy: {
+				...DEFAULT_NOUS_MATCHING_CONFIG.interactionMode,
+				mode: "semantic_only",
+			},
+			semanticEvaluator: {
+				evaluate: async (): Promise<InteractionModeDecision> => ({
+					mode: "work",
+					confidence: "high",
+					rationale:
+						"Semantic evaluator recognized a concrete governed-work request.",
+				}),
+			},
+		});
+
+		const result = await classifier.classify({
+			text: "Can you pick back up the auth investigation you were doing?",
+		});
+
+		expect(result.mode).toBe("work");
+		expect(result.confidence).toBe("high");
+	});
+
+	test("hybrid mode keeps chat fallback when heuristic sees only ambiguous chat", async () => {
+		const classifier = new InteractionModeClassifier({
+			policy: DEFAULT_NOUS_MATCHING_CONFIG.interactionMode,
+			semanticEvaluator: {
+				evaluate: async (): Promise<InteractionModeDecision> => ({
+					mode: "work",
+					confidence: "medium",
+					rationale: "Semantic evaluator saw possible work intent.",
+				}),
+			},
+		});
+
+		const result = await classifier.classify({
+			text: "continue that",
+		});
+
+		expect(result.mode).toBe("chat");
 	});
 });

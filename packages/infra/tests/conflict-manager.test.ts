@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_NOUS_MATCHING_CONFIG } from "@nous/core";
 import {
 	StaticIntentConflictManager,
 	deriveResourceClaims,
@@ -153,6 +154,35 @@ describe("StaticIntentConflictManager", () => {
 		expect(second.queued).toBe(true);
 		expect(second.verdict).toBe("conflicting");
 		expect(second.requiresReview).toBe(true);
+		await Promise.all([first.completion, second.completion]);
+	});
+
+	test("semantic-only matcher can flag action opposition without resource heuristics", async () => {
+		const manager = new StaticIntentConflictManager({
+			policy: {
+				...DEFAULT_NOUS_MATCHING_CONFIG.conflict,
+				mode: "semantic_only",
+			},
+		});
+		const first = manager.schedule(
+			{
+				text: "Deploy the app",
+				scope: { projectRoot: "/repo" },
+			},
+			async () => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			},
+		);
+		const second = manager.schedule(
+			{
+				text: "Rollback the app",
+				scope: { projectRoot: "/repo" },
+			},
+			async () => {},
+		);
+
+		expect(second.queued).toBe(true);
+		expect(second.verdict).toBe("conflicting");
 		await Promise.all([first.completion, second.completion]);
 	});
 });

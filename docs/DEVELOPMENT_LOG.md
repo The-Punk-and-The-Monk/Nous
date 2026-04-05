@@ -7478,3 +7478,113 @@ For significant sessions, capture:
 - Open questions / follow-ups:
   - `activeIntentId` still exists as a projection. If we keep shrinking, the next question is whether even that should become fully derived instead of persisted.
   - `getTrackedIntentsForThread()` in daemon still keeps metadata `intentIds` as a final fallback for legacy rows; we can remove that only after we are comfortable dropping compatibility with old persisted threads.
+
+## 2026-04-05
+
+### Session: Architecture review formalization + context continuity naming + matcher-governance layer
+
+- Context / Trigger:
+  - User explicitly invoked `$ralph` and asked for three coupled outcomes in one persistent execution lane:
+    1. generate and execute durable system/code architecture review checklists,
+    2. evaluate whether `work continuity` should become `context continuity` and directly apply the result,
+    3. identify heuristic / semantic matching seams and make them configurable through an explicit architecture layer.
+  - The task also required repo-local persistence of task descriptions / goals / status / acceptance criteria plus a supervision loop artifact that stays active until acceptance is reached.
+
+- Problem:
+  - Nous had strong architectural language for continuity, retrieval, and governance, but no durable repo-native review instrument for evaluating them.
+  - The continuity vocabulary had drifted: active docs simultaneously used `semantic continuity`, `work continuity`, and `context continuity` without a crisp top-level hierarchy.
+  - Live judgment logic already mattered in runtime behavior, but it was not represented as one shared matcher-policy surface. Instead it was spread across:
+    - interaction-mode classification,
+    - continuity restoration,
+    - memory retrieval ranking,
+    - conflict analysis,
+    - relationship-preference detection.
+  - Repo-wide lint on the full workspace was also noisy because generated `.omx/` / local state JSON files are not formatter-clean, so verification needed a bounded lint surface for changed source/docs.
+
+- Options considered:
+  - Option A: produce review docs only and leave code untouched.
+    - Rejected because the user explicitly asked to implement the naming and matcher-policy conclusions, not just describe them.
+  - Option B: rename every `work continuity` occurrence blindly to `context continuity`.
+    - Rejected because some uses are genuinely narrower governed-work restoration semantics and should remain precise.
+  - Option C: define `context continuity` as the governing umbrella term, keep `work continuity` as a sub-concept, add a shared matcher-policy/config layer, and update active docs/code accordingly.
+    - Chosen because it preserves conceptual precision while still resolving the naming drift and hidden-matcher debt.
+
+- Decision:
+  - Make **`context continuity` the top-level continuity concept** across transport / execution / semantic carryover.
+  - Keep **`work continuity` as the narrower governed execution-restoration slice** inside that broader context-continuity frame.
+  - Add a repo-wide **matcher-governance layer** in core/runtime/config so live judgment seams can operate in `heuristic_only`, `semantic_only`, or `hybrid` mode with configurable strategies / thresholds / weights.
+  - Persist Ralph execution state in repo-local `.omx/` artifacts:
+    - context snapshot,
+    - PRD + test spec,
+    - task ledger,
+    - supervision-loop state.
+
+- Changes made:
+  - Planning / supervision artifacts
+    - Added `.omx/context/architecture-review-continuity-matcher-governance-20260405T032526Z.md`
+    - Added `.omx/plans/prd-architecture-review-continuity-matcher-governance.md`
+    - Added `.omx/plans/test-spec-architecture-review-continuity-matcher-governance.md`
+    - Added `.omx/state/ralph-review-architecture-continuity/task-ledger.json`
+    - Added `.omx/state/ralph-review-architecture-continuity/supervision-loop.json`
+  - Review artifacts
+    - Added `docs/ARCHITECTURE_REVIEW_CHECKLISTS.md`
+    - Added `docs/ARCHITECTURE_REVIEW_RESULTS.md`
+    - Added `docs/architecture-review-landscape.svg`
+  - Continuity naming / architecture docs
+    - Updated `ARCHITECTURE.md`
+      - clarified that transport + execution + semantic layers together form `context continuity`
+      - reframed the restoration section as `Context continuity and work restoration`
+      - documented matcher-policy modes and live matcher consumers
+    - Updated `docs/INTENT_CONTINUITY_CONVERGENCE.md`
+      - made `context continuity` the umbrella term
+      - kept `Intent` as the execution/work continuity authority
+  - Matcher-governance code layer
+    - Added `packages/core/src/types/matching.ts`
+      - shared matcher-policy contracts and default matching config
+    - Updated `packages/core/src/index.ts`
+      - exported matcher-policy contracts/defaults
+    - Updated `packages/infra/src/config/home.ts`
+      - added `matching` config section and default `matching.json` bootstrapping / loading
+    - Updated `packages/runtime/src/matching/policy.ts`
+      - shared categorical/scored matcher helpers used by runtime seams
+    - Updated `packages/runtime/src/memory/context-continuity.ts`
+      - made continuity restoration explicitly policy-driven under `context continuity`
+    - Updated `packages/runtime/src/memory/service.ts`
+      - promoted structured context continuity memories while keeping `promoteWorkContinuation()` as the narrower compatibility entrypoint
+    - Updated `packages/runtime/src/memory/retrieval.ts`
+      - memory retrieval ranking now obeys configurable matcher thresholds / weights
+    - Updated `packages/infra/src/daemon/conflict-manager.ts`
+      - conflict analysis now consumes shared matcher policy
+    - Updated `packages/infra/src/intake/interaction-mode-classifier.ts`
+      - interaction mode now uses policy-configured heuristic/semantic/hybrid behavior
+      - added optional LLM semantic evaluator path without forcing extra LLM calls when heuristics already settle the route
+    - Updated `packages/infra/src/daemon/server.ts`
+      - wired matcher config into daemon runtime
+      - context-restoration naming/provenance updated toward context continuity
+      - relationship-preference rule families now read the shared matcher config
+  - Tests
+    - Updated `packages/infra/tests/interaction-mode-classifier.test.ts`
+    - Updated `packages/infra/tests/conflict-manager.test.ts`
+    - Updated `packages/runtime/tests/memory-retrieval.test.ts`
+    - Updated `packages/runtime/tests/work-continuity-restoration.test.ts`
+
+- Impact / Result:
+  - Nous now has a **durable architecture review surface** instead of relying on one-off chat analysis.
+  - The repo's active architecture now says clearly:
+    - `context continuity` is the umbrella concept,
+    - `work continuity` is a narrower governed-restoration case,
+    - thread continuity is not semantic truth.
+  - A shared matcher-governance/config layer now exists and is wired into real code paths instead of living only in architecture prose.
+  - The review result is visualized in `docs/architecture-review-landscape.svg`, making the current architecture state legible without opening the full source tree first.
+
+- Verification:
+  - `bun x tsc --noEmit` ✅
+  - `bun test` ✅ (288 pass)
+  - `bunx biome check --write ...changed source/docs...` ✅
+  - `bunx biome check ...changed source/docs...` ✅
+  - `bun run lint` ⚠️ full-repo Biome still fails on generated `.omx/`, `.claude/`, and session/state JSON formatting outside the task-owned diff; bounded source/doc lint for the changed implementation surface is green.
+
+- Open questions / next steps:
+  - Relationship-preference detection now obeys matcher rule-family toggles, but its semantic path is still intentionally shallow relative to interaction mode.
+  - The new matcher layer currently covers the most valuable live seams; future follow-up can extend it to more proactive / control-surface / cross-instance judgment paths.
+  - Repo-wide lint cleanliness for generated `.omx/` state files remains a workspace hygiene issue rather than an architecture-code issue.

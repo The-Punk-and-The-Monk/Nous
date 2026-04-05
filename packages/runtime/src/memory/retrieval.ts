@@ -1,4 +1,10 @@
-import type { ChannelScope, MemoryEntry, MemoryTier } from "@nous/core";
+import {
+	type ChannelScope,
+	DEFAULT_NOUS_MATCHING_CONFIG,
+	type MemoryEntry,
+	type MemoryRetrievalMatcherPolicy,
+	type MemoryTier,
+} from "@nous/core";
 import type { MemoryStore } from "@nous/persistence";
 
 export interface MemoryRetrievalInput {
@@ -53,7 +59,10 @@ export class LocalEmbeddingModel {
 		}
 
 		// CJK character-level n-grams (Chinese/Japanese/Korean)
-		const cjkChars = text.replace(/[^\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, "");
+		const cjkChars = text.replace(
+			/[^\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g,
+			"",
+		);
 		for (let i = 0; i < cjkChars.length; i++) {
 			const ch = cjkChars[i];
 			const hash = hashToken(ch);
@@ -73,10 +82,15 @@ export class LocalEmbeddingModel {
 }
 
 export class HybridMemoryRetriever {
+	private readonly policy: MemoryRetrievalMatcherPolicy;
+
 	constructor(
 		private readonly store: MemoryStore,
 		private readonly embeddingModel = new LocalEmbeddingModel(),
-	) {}
+		policy: MemoryRetrievalMatcherPolicy = DEFAULT_NOUS_MATCHING_CONFIG.memoryRetrieval,
+	) {
+		this.policy = policy;
+	}
 
 	retrieve(input: MemoryRetrievalInput): RetrievedMemory[] {
 		const queryEmbedding = this.embeddingModel.embedText(
@@ -100,12 +114,11 @@ export class HybridMemoryRetriever {
 					threadId: input.threadId,
 					embeddingModel: this.embeddingModel,
 				});
-				const score =
-					bestChunk.semanticScore * 0.45 +
-					bestChunk.lexicalScore * 0.22 +
-					bestChunk.scopeScore * 0.18 +
-					bestChunk.provenanceScore * 0.1 +
-					computeRetentionScore(hydrated) * 0.05;
+				const score = scoreRetrievedMemory(
+					bestChunk,
+					computeRetentionScore(hydrated),
+					this.policy,
+				);
 				return {
 					entry: hydrated,
 					score,
@@ -118,12 +131,7 @@ export class HybridMemoryRetriever {
 					chunkCount: bestChunk.chunkCount,
 				};
 			})
-			.filter(
-				(item) =>
-					item.semanticScore > 0 ||
-					item.lexicalScore > 0 ||
-					item.scopeScore > 0,
-			)
+			.filter((item) => item.score >= this.policy.threshold)
 			.sort((left, right) => {
 				if (right.score !== left.score) return right.score - left.score;
 				return (
@@ -160,10 +168,7 @@ export class HybridMemoryRetriever {
 	}
 
 	private ensureEmbedding(entry: MemoryEntry): MemoryEntry {
-		if (
-			entry.embedding &&
-			entry.embedding.length === EMBEDDING_DIMENSIONS
-		) {
+		if (entry.embedding && entry.embedding.length === EMBEDDING_DIMENSIONS) {
 			return entry;
 		}
 
@@ -174,6 +179,38 @@ export class HybridMemoryRetriever {
 			embedding,
 		};
 	}
+}
+
+function scoreRetrievedMemory(
+	bestChunk: Pick<
+		RetrievedMemory,
+		"semanticScore" | "lexicalScore" | "scopeScore" | "provenanceScore"
+	>,
+	retentionScore: number,
+	policy: MemoryRetrievalMatcherPolicy,
+): number {
+	const weights = policy.weights;
+	if (policy.mode === "heuristic_only") {
+		return (
+			bestChunk.lexicalScore * weights.lexical +
+			retentionScore * weights.retention
+		);
+	}
+	if (policy.mode === "semantic_only") {
+		return (
+			bestChunk.semanticScore * weights.semantic +
+			bestChunk.scopeScore * weights.scope +
+			bestChunk.provenanceScore * weights.provenance +
+			retentionScore * weights.retention
+		);
+	}
+	return (
+		bestChunk.semanticScore * weights.semantic +
+		bestChunk.lexicalScore * weights.lexical +
+		bestChunk.scopeScore * weights.scope +
+		bestChunk.provenanceScore * weights.provenance +
+		retentionScore * weights.retention
+	);
 }
 
 export function renderMemoryHints(results: RetrievedMemory[]): string[] {
@@ -333,8 +370,9 @@ function buildLexicalSearchQuery(query: string): string | undefined {
 		.filter((token) => token.length > 1)
 		.slice(0, 8);
 	// Include CJK segments (multi-char) for FTS matching
-	const cjkSegments = (query.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]{2,}/g) ?? [])
-		.slice(0, 4);
+	const cjkSegments = (
+		query.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]{2,}/g) ?? []
+	).slice(0, 4);
 	const allTerms = [
 		...latinTokens.map((token) => `"${token}"`),
 		...cjkSegments.map((seg) => `"${seg}"`),
@@ -458,8 +496,9 @@ function tokenize(text: string): string[] {
 		.map((token) => normalizeToken(token))
 		.filter((token): token is string => Boolean(token));
 	// Extract CJK characters as individual tokens
-	const cjkTokens = (lower.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g) ?? [])
-		.flatMap((segment) => segment.split(""));
+	const cjkTokens = (
+		lower.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g) ?? []
+	).flatMap((segment) => segment.split(""));
 	return [...latinTokens, ...cjkTokens];
 }
 

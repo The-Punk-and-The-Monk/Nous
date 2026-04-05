@@ -4,6 +4,7 @@ import type {
 	MemoryEntry,
 	MemoryEvidenceRef,
 	MemoryProvenance,
+	MemoryRetrievalMatcherPolicy,
 	MemorySourceKind,
 	MemorySourceRef,
 	MemoryTier,
@@ -26,6 +27,7 @@ export interface MemoryServiceOptions {
 	store: MemoryStore;
 	agentId?: string;
 	retriever?: HybridMemoryRetriever;
+	retrievalPolicy?: MemoryRetrievalMatcherPolicy;
 }
 
 export interface IngestHumanIntentInput {
@@ -87,18 +89,21 @@ export interface StoreManualMemoryNoteInput {
 	confidence?: number;
 }
 
-export interface PromoteWorkContinuationInput {
+export interface PromoteContextContinuityInput {
 	intentId: string;
 	summary: string;
 	threadId?: string;
 	scope?: ChannelScope;
 	sourceSurfaceKind?: string;
+	contextKind?: "work";
 	pendingQuestions?: string[];
 	relevantFacts?: string[];
 	sourceRefs?: MemorySourceRef[];
 	parentMemoryIds?: string[];
 	confidence?: number;
 }
+
+export type PromoteWorkContinuationInput = PromoteContextContinuityInput;
 
 export interface MemoryContextQuery
 	extends Omit<MemoryRetrievalInput, "agentId"> {
@@ -148,7 +153,12 @@ export class MemoryService {
 	constructor(private readonly options: MemoryServiceOptions) {
 		this.agentId = options.agentId ?? DEFAULT_AGENT_ID;
 		this.retriever =
-			options.retriever ?? new HybridMemoryRetriever(this.options.store);
+			options.retriever ??
+			new HybridMemoryRetriever(
+				this.options.store,
+				undefined,
+				options.retrievalPolicy,
+			);
 	}
 
 	ingestHumanIntent(input: IngestHumanIntentInput): MemoryEntry {
@@ -420,15 +430,16 @@ export class MemoryService {
 		});
 	}
 
-	promoteWorkContinuation(input: PromoteWorkContinuationInput): MemoryEntry {
+	promoteContextContinuity(input: PromoteContextContinuityInput): MemoryEntry {
 		const relevantFacts = dedupeStrings(input.relevantFacts ?? []).slice(0, 5);
 		const pendingQuestions = dedupeStrings(input.pendingQuestions ?? []).slice(
 			0,
 			5,
 		);
 		const confidence = clampConfidence(input.confidence ?? 0.82);
+		const contextKind = input.contextKind ?? "work";
 		const content = [
-			`Structured work continuation: ${input.summary.trim()}`,
+			`Structured context continuity (${contextKind}): ${input.summary.trim()}`,
 			`Intent: ${input.intentId}`,
 			relevantFacts.length > 0
 				? `Relevant facts: ${relevantFacts.join(" | ")}`
@@ -447,7 +458,8 @@ export class MemoryService {
 			intentId: input.intentId,
 			scope: input.scope,
 			tags: dedupeStrings([
-				"work_continuity",
+				"context_continuity",
+				`continuity_kind:${contextKind}`,
 				"structured",
 				"double_gate_candidate",
 				input.sourceSurfaceKind ? `surface:${input.sourceSurfaceKind}` : "",
@@ -459,6 +471,13 @@ export class MemoryService {
 			]),
 			parentMemoryIds: input.parentMemoryIds,
 			confidence,
+		});
+	}
+
+	promoteWorkContinuation(input: PromoteWorkContinuationInput): MemoryEntry {
+		return this.promoteContextContinuity({
+			...input,
+			contextKind: input.contextKind ?? "work",
 		});
 	}
 

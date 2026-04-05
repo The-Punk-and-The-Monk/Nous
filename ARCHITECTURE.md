@@ -344,7 +344,7 @@ This correction matters because Nous should not maintain two near-identical work
 
 ### Dialogue Layer (`packages/dialogue`)
 - **Channel Manager**: Manages all connected I/O channels (CLI, IDE, Web, API). Channels connect and disconnect freely — Nous keeps running regardless. Multiple channels can be active simultaneously. Each channel carries a `scope` (CWD, project, focused file) that influences Context Assembly but does NOT isolate memory or state.
-- **Dialogue Manager**: Maintains surface conversation state across all channels. Persists messages inside `DialogueThread`s as surface containers. A thread may span multiple channels (start in CLI, continue in IDE), but the thread itself does **not** prove semantic or work continuity; it only owns replay, delivery, and presentation-local state. All messages are persisted to L3 Message Store — Nous never loses transport history.
+- **Dialogue Manager**: Maintains surface conversation state across all channels. Persists messages inside `DialogueThread`s as surface containers. A thread may span multiple channels (start in CLI, continue in IDE), but the thread itself does **not** prove context continuity or work continuity; it only owns replay, delivery, and presentation-local state. All messages are persisted to L3 Message Store — Nous never loses transport history.
 - **Thread Tracker**: Tracks active surface sessions, thread attachments, and delivery cursors. When a user sends a message, it decides whether the message should continue an existing surface container or start a new one; it must not decide semantic continuity or work identity by itself.
 - **Message Outbox**: Persistent queue for outbound messages (results, notifications, questions). When a channel is disconnected, messages accumulate in the outbox. When the channel reconnects (or any channel connects), pending messages are delivered. (See Message Delivery section below)
 - **Conflict Analyzer**: When a new intent arrives, analyzes potential conflicts with currently active work — resource conflicts (file locks, shared state), semantic conflicts (contradictory goals), and dependency ordering. Uses both static analysis (resource overlap detection) and LLM-assisted semantic analysis. (See Conflict Detection section below)
@@ -2065,7 +2065,7 @@ The wrong framing is now:
 
 That framing made it too easy to:
 
-- treat thread attachment as work-continuity truth
+- treat thread attachment as context-continuity truth
 - route lightweight chat repair into decision / clarification machinery
 - hide transfer semantics inside implicit continuity guesses
 - preserve the illusion of seamless arbitrary-window conversation by growing more router state
@@ -2176,7 +2176,9 @@ To keep the runtime honest, mainline separates **three different kinds of contin
 - **Execution continuity** = Intent / Plan / Task / Decision / cancellation state
 - **Semantic continuity** = layered memory + retrieval + recall packing + decay-aware ranking
 
-Only **semantic continuity** answers questions like:
+Together, these layers form **context continuity** — the broader contract that Nous should preserve across time, surfaces, and governed execution.
+
+Within context continuity, **semantic continuity** answers questions like:
 
 - is this new message about the same responsibility?
 - is this follow-up related to a prior task?
@@ -2184,9 +2186,9 @@ Only **semantic continuity** answers questions like:
 
 `attach`, thread reuse, and reconnect are therefore **transport facts**, not semantic truth.
 
-### Work continuity and restoration
+### Context continuity and work restoration
 
-Mainline still keeps work continuity, but with harder boundaries:
+Mainline now treats **context continuity** as the governing term, while **work continuity** remains the narrower governed-restoration case:
 
 - raw conversational or thread similarity cannot silently continue work across surfaces
 - explicit handoff is a first-class bridge
@@ -2385,7 +2387,7 @@ Nous's clarification/context-loss failures are much closer to the second categor
 - the issue is that the same understanding state is being reconstructed differently at multiple boundaries
 
 So the target is not “one more truncation rule.”
-The target is a shared retrieval / matching contract with explicit continuity invariants.
+The target is a shared retrieval / matching contract with explicit context-continuity invariants.
 
 #### Retrieval / matching stack
 
@@ -2416,6 +2418,29 @@ The shared stack should be understood in three layers:
 Embeddings alone are not retrieval policy.
 Retrieval alone is not equivalent to context packing.
 LLM classification alone is not a replacement for candidate selection.
+
+#### Matcher policy modes
+
+Live judgment seams should expose an explicit matcher-policy mode instead of burying the choice inside local controller logic:
+
+- `heuristic_only`
+- `semantic_only`
+- `hybrid`
+
+`hybrid` is not a magic word. It must also specify:
+
+- combination strategy (`heuristic_first`, `semantic_first`, or weighted blend)
+- minimum confidence thresholds
+- weighting / bias rules
+- rule-family toggles where the seam uses bounded domain rules
+
+Mainline consumers include:
+
+- interaction-mode classification
+- context-continuity restoration
+- memory retrieval ranking
+- conflict analysis
+- relationship-preference detection
 
 #### Shared retrieval / matching contract
 

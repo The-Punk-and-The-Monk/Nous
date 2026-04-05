@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { type MemoryEntry, now, prefixedId } from "@nous/core";
+import {
+	DEFAULT_NOUS_MATCHING_CONFIG,
+	type MemoryEntry,
+	now,
+	prefixedId,
+} from "@nous/core";
 import { SQLiteMemoryStore, initDatabase } from "@nous/persistence";
 import {
 	HybridMemoryRetriever,
@@ -127,5 +132,56 @@ describe("HybridMemoryRetriever", () => {
 		expect(hints).toHaveLength(1);
 		expect(hints[0]).toContain("[episodic intent_outcome");
 		expect(hints[0]).toContain("daemon attach flow");
+	});
+
+	test("matcher policy can tilt ranking between lexical and semantic/structured signals", () => {
+		const store = new SQLiteMemoryStore(initDatabase());
+		storeMemory(store, {
+			content: "auth login issue quick note",
+			metadata: {
+				projectRoot: "/repo/other",
+				sourceKind: "manual_note",
+				provenance: { confidence: 0.4 },
+			},
+		});
+		storeMemory(store, {
+			content: "auth login failure fixed via token refresh flow",
+			metadata: {
+				projectRoot: "/repo/app",
+				sourceKind: "intent_outcome",
+				provenance: { confidence: 0.95, evidenceRefs: [{ kind: "intent" }] },
+			},
+		});
+
+		const heuristicRetriever = new HybridMemoryRetriever(store, undefined, {
+			...DEFAULT_NOUS_MATCHING_CONFIG.memoryRetrieval,
+			mode: "heuristic_only",
+		});
+		const semanticRetriever = new HybridMemoryRetriever(store, undefined, {
+			...DEFAULT_NOUS_MATCHING_CONFIG.memoryRetrieval,
+			mode: "semantic_only",
+		});
+
+		const heuristicResults = heuristicRetriever.retrieve({
+			agentId: "nous",
+			query: "auth login issue",
+			scope: { projectRoot: "/repo/app" },
+			limit: 2,
+		});
+		const semanticResults = semanticRetriever.retrieve({
+			agentId: "nous",
+			query: "auth login issue",
+			scope: { projectRoot: "/repo/app" },
+			limit: 2,
+		});
+
+		expect(
+			(heuristicResults[0]?.entry.metadata as { projectRoot?: string })
+				?.projectRoot,
+		).toBe("/repo/other");
+		expect(
+			(semanticResults[0]?.entry.metadata as { projectRoot?: string })
+				?.projectRoot,
+		).toBe("/repo/app");
 	});
 });
