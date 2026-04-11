@@ -1585,6 +1585,15 @@ interface RecallPack {
 
 This is the architectural place where Nous should concentrate semantic continuity. Dialogue/session layers keep transport state; Intent/Task layers keep live execution state; `RecallPack` decides what prior meaning is relevant now.
 
+If someone uses the phrase **memory continuity**, the more precise current-mainline reading is usually **memory governance**:
+
+- how memory is stored
+- how it keeps provenance / lineage
+- how it is promoted into structured forms
+- how it is retrieved, ranked, decayed, and packed for reuse
+
+That is **not** a fourth peer continuity layer beside transport / execution / semantic continuity. It is the governed substrate that makes semantic continuity trustworthy.
+
 Every memory family in that pack must be **decay-aware** in two ways:
 
 1. **storage decay** — whether it should be pruned, compacted, or metabolized

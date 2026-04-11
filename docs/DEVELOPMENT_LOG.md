@@ -7640,3 +7640,108 @@ For significant sessions, capture:
 
 - Open questions / next steps:
   - If the matcher layer expands to more proactive / control-surface paths, keep the same comment discipline so new seams remain discoverable.
+
+## 2026-04-11
+
+### Session: Refresh continuity terminology across active docs and add a code-level runtime walkthrough
+
+- Context / Trigger:
+  - The user said the older continuity vocabulary across project docs and Obsidian notes was still too hard to internalize.
+  - They explicitly preferred the simpler split:
+    - `transport continuity`
+    - `execution continuity`
+    - `semantic continuity`
+  - They also questioned whether older `memory continuity` wording was really pointing at a different idea:
+    - more like memory governance than a fourth peer continuity layer
+  - The follow-up ask was twofold:
+    - refresh active project docs and Obsidian-facing notes so stale continuity wording is pulled back into the three-layer split
+    - add one detailed, code-level explanation of:
+      - `chat / work / handoff`
+      - what `handoff` actually means
+      - how each continuity layer is implemented in live code
+
+- Problem:
+  - Mainline architecture had already converged on the three-layer continuity split, but the explanation surface was still fragmented:
+    - some active text still said `memory continuity`
+    - some summary surfaces still said `dialogue continuity` or `thread continuity` in places where `transport continuity` would now be clearer
+    - code-level explanation for `chat / work / handoff` and continuity ownership was spread across:
+      - daemon server
+      - classifier
+      - dialogue service
+      - memory service
+      - restoration logic
+      - context assembly
+      - tests
+  - That made the architecture technically consistent but still cognitively expensive to explain.
+
+- Cleanup plan:
+  - Limit project-doc edits to active guidance surfaces instead of rewriting historical records.
+  - Keep `DEVELOPMENT_LOG.md` and earlier review artifacts as history, not as the current canonical wording source.
+  - Refresh the Obsidian notes that are directly used for explanation/interview surfaces.
+  - Add one dedicated runtime walkthrough document rather than bloating `ARCHITECTURE.md` with another long explanatory pass.
+
+- Decision:
+  - Keep the current three peer continuity layers as the canonical runtime explanation:
+    - transport continuity
+    - execution continuity
+    - semantic continuity
+  - Clarify that older `memory continuity` language should now be read as:
+    - **memory governance** beneath semantic continuity
+    - not a fourth peer layer
+  - Add a dedicated runtime walkthrough doc centered on:
+    - `chat / work / handoff`
+    - message-entry routing
+    - handoff capsules
+    - context assembly
+    - promoted continuity restoration
+    - the relevant code and regression tests
+
+- Changes made:
+  - Updated repo docs:
+    - `README.md`
+      - replaced the remaining broad `memory continuity` phrasing with `semantic continuity` backed by memory governance
+      - added the new walkthrough doc to the reading list
+    - `ARCHITECTURE.md`
+      - clarified that `memory continuity` is better read as memory governance under semantic continuity
+    - `docs/INTENT_CONTINUITY_CONVERGENCE.md`
+      - added an explicit terminology note:
+        - `memory continuity` -> memory governance substrate
+        - `Memory` remains the semantic-continuity authority through that governance layer
+  - Added:
+    - `docs/CONTINUITY_RUNTIME_WALKTHROUGH.md`
+      - detailed runtime walkthrough for:
+        - `chat / work / handoff`
+        - transport / execution / semantic continuity
+        - handoff capsules
+        - context assembly
+        - promoted structured restoration
+        - live code/test anchors
+  - Refreshed Obsidian-facing explanation notes:
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/Agents框架全景/07-Nous 面试口述版.md`
+      - replaced `memory continuity` language with `semantic continuity` + memory governance
+      - tightened summary wording toward transport / execution / semantic continuity
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/Agents框架全景/08-Nous 架构主文档.md`
+      - clarified that old `memory continuity` wording should now be read as memory governance
+      - added a pointer to the new repo walkthrough doc for code-level reading
+    - `/Users/joey/Documents/ObsidianVault/阿锋勇闯大模型/Agents框架全景/14-Nous 简历表述与面试问答.md`
+      - changed summary language from thread/work continuity to transport/execution continuity where appropriate
+      - replaced the remaining broad `memory continuity` wording with `semantic continuity` + memory governance
+
+- Impact / Result:
+  - The explanation surface is now more teachable:
+    - thread/session language is cleaner about transport ownership
+    - work continuity is framed as the execution/restoration slice rather than a fuzzy all-purpose continuity bucket
+    - `memory continuity` is demoted into the more precise notion of memory governance
+  - There is now one dedicated document a maintainer can open to answer:
+    - how `chat / work / handoff` works
+    - what `handoff` really is
+    - where continuity actually lives in code
+
+- Verification:
+  - `bun test packages/infra/tests/interaction-mode-classifier.test.ts packages/infra/tests/daemon-interaction-mode.test.ts packages/runtime/tests/work-continuity-restoration.test.ts packages/runtime/tests/context-assembly.test.ts packages/infra/tests/dialogue-service.test.ts` ✅ (34 pass)
+  - `bun x tsc --noEmit` ✅
+  - pending final doc diff checks after this log entry
+
+- Open questions / next steps:
+  - `ARCHITECTURE.md` still contains older historical draft language in deep later sections (`flow = work continuity`, older review passes, etc.). Those are not the current canonical explanation surface, but a later archival/cleanup pass could distinguish historical draft text from active mainline more aggressively.
+  - If users keep preferring the simpler three-layer explanation, future README / demo / CLI help surfaces should probably lean on `transport / execution / semantic continuity` directly instead of more poetic continuity wording.

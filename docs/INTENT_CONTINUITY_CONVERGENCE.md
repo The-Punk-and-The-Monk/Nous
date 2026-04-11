@@ -109,6 +109,11 @@ Questions answered:
 - should this revive an older intent?
 - what prior facts belong in context now?
 
+Terminology note:
+
+- if older discussion says `memory continuity`, read it as the **memory governance substrate** under semantic continuity
+- current mainline does **not** treat `memory continuity` as a fourth peer layer beside transport / execution / semantic continuity
+
 ---
 
 ## Canonical object model
@@ -256,7 +261,7 @@ When reasoning about the current Nous architecture:
 
 - **Thread** = communication continuity
 - **Intent** = execution / work continuity
-- **Memory** = semantic continuity
+- **Memory** = semantic continuity authority through memory governance
 - **Together** = context continuity
 
 That is the correct split.

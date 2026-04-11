@@ -105,7 +105,7 @@ Another way to say it:
 
 - **Codex / Claude Code** are excellent foreground work sessions
 - **OpenClaw** is strong at multi-surface gateway/session routing
-- **Nous** is trying to fuse OS-grade substrate + governed work + memory continuity + proactive assistant behavior
+- **Nous** is trying to fuse OS-grade substrate + governed work + semantic continuity backed by memory governance + proactive assistant behavior
 
 That does make Nous architecturally heavier than a thin tool-calling loop. That is intentional.
 
@@ -298,6 +298,7 @@ This is intentionally narrower than the future relay / P2P architecture: V1 prov
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full architecture and roadmap
 - [`docs/INTENT_CONTINUITY_CONVERGENCE.md`](./docs/INTENT_CONTINUITY_CONVERGENCE.md) — current intent/continuity convergence decision
+- [`docs/CONTINUITY_RUNTIME_WALKTHROUGH.md`](./docs/CONTINUITY_RUNTIME_WALKTHROUGH.md) — detailed chat/work/handoff + continuity runtime walkthrough
 - [`docs/CLI.md`](./docs/CLI.md) — CLI / REPL control surface
 - [`docs/DEVELOPMENT_LOG.md`](./docs/DEVELOPMENT_LOG.md) — engineering trace
 - [`docs/PROGRESS_MATRIX.md`](./docs/PROGRESS_MATRIX.md) — current maturity / roadmap snapshot
