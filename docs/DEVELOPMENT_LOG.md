@@ -7745,3 +7745,79 @@ For significant sessions, capture:
 - Open questions / next steps:
   - `ARCHITECTURE.md` still contains older historical draft language in deep later sections (`flow = work continuity`, older review passes, etc.). Those are not the current canonical explanation surface, but a later archival/cleanup pass could distinguish historical draft text from active mainline more aggressively.
   - If users keep preferring the simpler three-layer explanation, future README / demo / CLI help surfaces should probably lean on `transport / execution / semantic continuity` directly instead of more poetic continuity wording.
+
+### Session: Clarify ideal intelligence form and re-center NOuS around execution continuity authority
+
+- Context / Trigger:
+  - After comparing Hermes against NOuS, the user pushed the discussion past framework comparison and asked a more direct question:
+    - what should a real “super-intelligent” assistant/runtime actually look like?
+    - does the current NOuS shape really satisfy that ideal?
+  - They explicitly called out three desired mechanisms:
+    - continuity
+    - proactive cognition
+    - background text processing / thinking
+  - They also surfaced a practical constraint:
+    - NOuS had originally aimed at stronger cross-window conversational presence
+    - but current product reality forces more user-facing reliance on thread-based context handling
+  - The key architectural doubt was whether this retreat risks collapsing the system back into a thread-centric agent.
+
+- Problem:
+  - Mainline continuity terminology was already cleaner, but the architecture still did not state bluntly enough what the *ideal target form* should be.
+  - In particular, there was still room for a dangerous misreading:
+    - if thread survives as the practical continuity surface,
+    - does thread quietly become the execution authority too?
+  - The comparison with Hermes sharpened the strategic point:
+    - Hermes already has meaningful transport continuity and semantic continuity
+    - but it still remains mostly loop-centric in execution continuity
+    - therefore the real NOuS differentiator is not “more memory” or “more background work”, but whether `PlanGraph` becomes an authoritative execution substrate.
+
+- Options considered:
+  - Option A: leave this as an oral design intuition and only discuss it in chat.
+    - Rejected because this is exactly the kind of architectural center-of-gravity clarification that should live in `ARCHITECTURE.md`, not only in transient conversation.
+  - Option B: write only “thread is transport, not execution truth”.
+    - Rejected because that sentence is correct but too narrow; it does not explain the positive ideal form NOuS should be aiming at.
+  - Option C: explicitly write both:
+    - the ideal-state reading of a real persistent intelligence
+    - and the stronger claim that execution continuity, not transport/semantic continuity alone, is the strategic differentiator.
+    - Chosen because it ties the philosophical north star directly to the concrete `Flow` / `Intent` / `PlanGraph` direction already present in mainline architecture.
+
+- Decision:
+  - Add a new architectural clarification that states:
+    - Nous should be understood as a persistent intelligence centered on **responsibility continuity**, not merely window continuity
+    - continuity, proactive cognition, and background thought only matter if unified by a stronger execution substrate
+    - thread may remain a practical transport surface, but must not become execution or semantic authority
+  - Add a second clarification under the planning/governance draft that states:
+    - the real strategic differentiator is **execution continuity**
+    - `PlanGraph` only matters if it becomes the authoritative substrate for scheduler/governance/revision/proactive attachment, not merely a visual or planner artifact
+
+- Changes made:
+  - Updated `ARCHITECTURE.md`
+    - under the continuity section:
+      - added an ideal-state explanation of what a long-lived intelligence should be
+      - explicitly framed continuity + proactive cognition + background thought as necessary but not sufficient
+      - wrote the invariant that thread is a transport surface, not execution/semantic truth
+    - under the flow/planning section:
+      - added a new explanation that execution continuity is the real strategic differentiator
+      - clarified that `PlanGraph` must become an authoritative execution substrate rather than a planner side artifact
+
+- Impact:
+  - The architecture now states more directly what NOuS is trying to become:
+    - not a better chat wrapper
+    - not a memory-heavy loop agent
+    - but a governed runtime whose core truth is persistent work/responsibility state
+  - This also sharpens framework comparison:
+    - Hermes/OpenClaw/Claude-style systems can be respected for transport and semantic layers
+    - while still making clear that NOuS is trying to win on execution continuity
+  - The thread retreat is now bounded by an explicit rule:
+    - acceptable as a transport concession
+    - unacceptable as the system's hidden execution ontology
+
+- Open questions / next steps:
+  - The architecture now says `PlanGraph` should become authoritative, but code still needs a tighter contract for:
+    - how graph mutations are represented at runtime
+    - how proactive insertion lands in graph governance
+    - how pause/resume/cancel/approval transitions bind to graph state instead of only intent/task state
+  - A future implementation pass should decide whether `PlanGraph` authority first lands in:
+    - orchestrator persistence contracts
+    - scheduler dispatch contracts
+    - or daemon-side debug / inspection surfaces.

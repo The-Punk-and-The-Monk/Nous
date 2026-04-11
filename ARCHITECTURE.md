@@ -2195,6 +2195,60 @@ Within context continuity, **semantic continuity** answers questions like:
 
 `attach`, thread reuse, and reconnect are therefore **transport facts**, not semantic truth.
 
+### Ideal-state reading: what a real long-lived intelligence would actually be
+
+If Nous is taken seriously as more than a chat shell, the target form should not be:
+
+- a better cross-window conversation wrapper
+- a system that merely remembers more history
+- a loop agent that happens to run in the background
+
+The stronger ideal is:
+
+> **a persistent intelligence whose real center is responsibility continuity, not window continuity.**
+
+That means the runtime must hold three things together at once:
+
+1. **continuity**
+   - the system can remain itself across surfaces and time
+2. **proactive cognition**
+   - the system can notice, reflect, and originate governed new work
+3. **background text processing / thought**
+   - the system can silently digest, summarize, compare, plan, and prepare without requiring foreground chat turns
+
+These are necessary, but not sufficient, on their own.
+
+The key architectural question is:
+
+> **what substrate unifies them so they do not collapse back into “just more chat history”?**
+
+The answer cannot be thread reuse alone.
+
+Why:
+
+- a thread can carry transport continuity
+- a thread can help delivery continuity
+- a thread can help user-facing replay
+- but a thread cannot, by itself, authoritatively represent:
+  - what work is still alive
+  - what obligations are pending
+  - what decision is blocking execution
+  - what proactive act attached to which governed responsibility
+
+So the system must preserve a hard rule:
+
+> **thread is a transport surface, not the authority for execution truth or semantic truth.**
+
+This matters especially under practical constraints.
+
+If product reality temporarily forces Nous to retreat from a stronger cross-window conversational vision and use threads as the main user-facing continuity handle, that is acceptable **only if**:
+
+- threads remain transport-facing objects
+- execution continuity stays owned by governed work objects
+- semantic continuity stays owned by memory / retrieval / recall authority
+
+If thread starts becoming the silent authority for all three, Nous will degrade into a more elaborate session agent rather than becoming a genuinely persistent intelligence.
+
 ### Context continuity and work restoration
 
 Mainline now treats **context continuity** as the governing term, while **work continuity** remains the narrower governed-restoration case:
@@ -6684,6 +6738,77 @@ Concretely:
 - `Task` = atomic executable unit
 - `TaskRelation` / `FlowRelation` = typed links between work units
 - `MergeCandidate` = an explicit proposal that two intents/flows/tasks are duplicates / should merge / should supersede
+
+### Why execution continuity is the real strategic differentiator
+
+Other strong agent systems already show that two layers are achievable:
+
+- **transport continuity**
+  - channels, sessions, threads, reconnect, replay, delivery
+- **semantic continuity**
+  - memory, retrieval, recall, procedural accumulation, promoted summaries
+
+Those layers matter and Nous needs them, but they are not where the deepest differentiation lies.
+
+The more decisive layer is:
+
+> **execution continuity — the ability to keep work itself alive, governable, revisable, and attachable over time.**
+
+This is where Nous should aim higher than loop-centric assistants.
+
+Loop-centric systems usually converge on a shape like:
+
+- restore history
+- re-enter a tool/model loop
+- use memory/skills/recall to regain enough context
+- continue the next local execution episode
+
+That is useful, but it still makes the **execution episode** the main authority.
+
+Nous should instead make **work state** authoritative.
+
+Concretely, the architectural aspiration should be:
+
+- every meaningful ongoing responsibility is represented in governed work objects
+- every plan lives as an explicit graph, not only as transient model output
+- every pause / resume / cancel / approval operation lands on that work graph
+- proactive work joins the same governance plane rather than creating a parallel hidden world
+- foreground chat is one way to inspect or influence the graph, not the graph's ontological center
+
+So `PlanGraph` only becomes a true differentiator if it is **not** treated as:
+
+- a visualization
+- a planner debug artifact
+- a one-shot plan dump after intake
+
+It becomes a differentiator only when it is the **authoritative execution-continuity substrate**.
+
+That implies all of the following should eventually anchor to it:
+
+- scheduler dispatch semantics
+- revision / replanning semantics
+- pause / resume / cancellation semantics
+- approval checkpoints
+- rollback boundaries
+- proactive insertion / attachment
+- cross-work dependency and merge analysis
+
+If this succeeds, a tiny user reply like:
+
+- “yes”
+- “continue”
+- “not this part”
+- “do it later”
+
+does not primarily mean “recover the right thread context”.
+
+It instead means:
+
+- locate the active work object or blocking decision
+- apply a governed state transition
+- then let chat delivery reflect that change
+
+That is a fundamentally stronger architecture than “conversation continuity with a smarter loop”.
 
 ### New object slots Nous should reserve now
 
