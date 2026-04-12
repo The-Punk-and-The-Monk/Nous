@@ -7821,3 +7821,56 @@ For significant sessions, capture:
     - orchestrator persistence contracts
     - scheduler dispatch contracts
     - or daemon-side debug / inspection surfaces.
+
+### Session: Make the GitHub landing surface Chinese-first without losing the English architecture narrative
+
+- Context / Trigger:
+  - The repo needed a Chinese-first GitHub landing page while still keeping an English path for readers who discover Nous from outside the current Chinese-speaking collaboration context.
+  - The user explicitly requested:
+    - Chinese-first README on GitHub
+    - an English jump link from the main page
+  - The existing README already carried the correct product/architecture narrative, so the main question was presentation shape rather than product direction.
+
+- Problem:
+  - `README.md` was English-only, which did not match the requested primary audience for the GitHub page.
+  - Simply replacing the English README with a shorter Chinese summary would have made the repo easier to enter for Chinese readers, but would also have weakened the existing English-facing introduction that explains what Nous is and why it differs from other agent frameworks.
+
+- Options considered:
+  - Option A: keep `README.md` in English and add `README.zh-CN.md`.
+    - Rejected because the request was explicit that GitHub should be Chinese-first.
+  - Option B: replace the English README with a much shorter Chinese summary only.
+    - Rejected because the English README already contains useful architecture framing for external readers.
+  - Option C: make `README.md` Chinese-first and preserve the existing English content in `README.en.md`, with bidirectional links.
+    - Chosen because it satisfies the GitHub entry requirement without discarding the stronger existing English explanation surface.
+
+- Decision:
+  - Promote a Chinese-first `README.md` as the GitHub landing page.
+  - Preserve the prior English README as `README.en.md`.
+  - Add explicit cross-links at the top of both files so readers can switch languages immediately.
+  - Keep the Chinese README aligned with the current architecture vocabulary:
+    - daemon-first runtime
+    - transport / execution / semantic continuity
+    - personal-assistant-first current center
+
+- Changes made:
+  - Updated `README.md`
+    - rewrote the landing page in Chinese
+    - kept the same core architecture/product framing
+    - preserved quick-start, provider, runtime-home, and repo-map guidance
+  - Added `README.en.md`
+    - preserved the prior English README content
+    - added a Chinese jump link at the top
+
+- Impact / Result:
+  - The GitHub landing page now matches the requested audience and collaboration language.
+  - English-speaking readers still retain a full README path instead of being dropped to a minimal translation stub.
+  - The repo's public explanation surface is now bilingual with almost no architectural drift between the two entry pages.
+
+- Verification:
+  - Markdown file sanity check pending alongside final repo verification for this multi-repo publish task
+
+- Open questions / follow-ups:
+  - If the repo keeps moving toward bilingual public docs, the next likely surfaces to evaluate are:
+    - `docs/CLI.md`
+    - selected architecture overview docs
+  - For now, only the landing surface was changed; deeper docs remain source-of-truth in their current language mix.
